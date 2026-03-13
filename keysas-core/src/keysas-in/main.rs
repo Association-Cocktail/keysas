@@ -243,7 +243,10 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_t
 
         // Mark all files in batch as completed
         for (file_path, _) in fs.iter().zip(fds.iter()) {
-            let filename = file_path.file_name()?.to_str()?.to_string();
+            let filename = file_path.file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?
+                .to_string();
             progress_tracker.complete_file(true);
             info!("✅ Fichier transmis avec succès: {}", filename);
         }
