@@ -7,6 +7,7 @@
  */
 
 use anyhow::Result;
+use log;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
@@ -147,6 +148,11 @@ impl DaemonProgress {
     }
 
     pub fn update_progress_file(&self, path: &PathBuf) -> Result<()> {
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let json = serde_json::to_string_pretty(self)?;
         let mut file = File::create(path)?;
         file.write_all(json.as_bytes())?;
@@ -203,34 +209,49 @@ pub struct ProgressTracker {
 
 impl ProgressTracker {
     pub fn new(daemon_name: String, progress_file: PathBuf) -> Self {
-        Self {
+        let tracker = Self {
             progress: Arc::new(Mutex::new(DaemonProgress::new(daemon_name))),
             progress_file,
+        };
+
+        // Initialize progress file on creation
+        if let Err(e) = tracker.get_progress().update_progress_file(&tracker.progress_file) {
+            log::error!("Failed to initialize progress file: {}", e);
         }
+
+        tracker
     }
 
     pub fn add_files_to_queue(&self, files: Vec<String>) {
         let mut progress = self.progress.lock().unwrap();
         progress.add_files_to_queue(files);
-        let _ = progress.update_progress_file(&self.progress_file);
+        if let Err(e) = progress.update_progress_file(&self.progress_file) {
+            log::error!("Failed to write progress file: {}", e);
+        }
     }
 
     pub fn start_file(&self, filename: String) {
         let mut progress = self.progress.lock().unwrap();
         progress.start_next_file(filename);
-        let _ = progress.update_progress_file(&self.progress_file);
+        if let Err(e) = progress.update_progress_file(&self.progress_file) {
+            log::error!("Failed to write progress file: {}", e);
+        }
     }
 
     pub fn update_step(&self, step: AnalysisStep) {
         let mut progress = self.progress.lock().unwrap();
         progress.update_current_step(step);
-        let _ = progress.update_progress_file(&self.progress_file);
+        if let Err(e) = progress.update_progress_file(&self.progress_file) {
+            log::error!("Failed to write progress file: {}", e);
+        }
     }
 
     pub fn complete_file(&self, success: bool) {
         let mut progress = self.progress.lock().unwrap();
         progress.complete_current_file(success);
-        let _ = progress.update_progress_file(&self.progress_file);
+        if let Err(e) = progress.update_progress_file(&self.progress_file) {
+            log::error!("Failed to write progress file: {}", e);
+        }
     }
 
     pub fn get_progress(&self) -> DaemonProgress {
