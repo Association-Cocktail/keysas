@@ -81,6 +81,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
     // Still using ABI v2 for now
     let abi = ABI::V2;
     let allow = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir});
+    let allow_write = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir | WriteFile});
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .create()?
@@ -90,6 +91,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
             &[CONFIG_DIRECTORY],
             AccessFs::from_read(abi),
         ))?
+        .add_rule(PathBeneath::new(PathFd::new("/var/lock/keysas")?, allow_write))?
         .restrict_self()?;
     match status.ruleset {
         // The FullyEnforced case must be tested.

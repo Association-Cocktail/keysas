@@ -99,10 +99,15 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         .handle_access(AccessFs::from_all(abi))?
         .set_compatibility(CompatLevel::HardRequirement)
         .create()?
-        // Read-only access.
+        // Read-only access for config and rules directories
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY, &rules.to_string_lossy()],
             AccessFs::from_read(abi),
+        ))?
+        // Read-write access for progress tracking directory
+        .add_rules(path_beneath_rules(
+            &["/var/lock/keysas"],
+            AccessFs::from_read(abi) | AccessFs::from_write(abi),
         ))?
         .restrict_self()?;
     match status.ruleset {

@@ -209,24 +209,17 @@ pub struct ProgressTracker {
 
 impl ProgressTracker {
     pub fn new(daemon_name: String, progress_file: PathBuf) -> Self {
-        let tracker = Self {
+        Self {
             progress: Arc::new(Mutex::new(DaemonProgress::new(daemon_name))),
             progress_file,
-        };
-
-        // Initialize progress file on creation
-        if let Err(e) = tracker.get_progress().update_progress_file(&tracker.progress_file) {
-            log::error!("Failed to initialize progress file: {}", e);
         }
-
-        tracker
     }
 
     pub fn add_files_to_queue(&self, files: Vec<String>) {
         let mut progress = self.progress.lock().unwrap();
         progress.add_files_to_queue(files);
         if let Err(e) = progress.update_progress_file(&self.progress_file) {
-            log::error!("Failed to write progress file: {}", e);
+            log::warn!("Failed to write progress file: {}", e);
         }
     }
 
@@ -234,7 +227,7 @@ impl ProgressTracker {
         let mut progress = self.progress.lock().unwrap();
         progress.start_next_file(filename);
         if let Err(e) = progress.update_progress_file(&self.progress_file) {
-            log::error!("Failed to write progress file: {}", e);
+            log::warn!("Failed to write progress file: {}", e);
         }
     }
 
@@ -242,7 +235,7 @@ impl ProgressTracker {
         let mut progress = self.progress.lock().unwrap();
         progress.update_current_step(step);
         if let Err(e) = progress.update_progress_file(&self.progress_file) {
-            log::error!("Failed to write progress file: {}", e);
+            log::warn!("Failed to write progress file: {}", e);
         }
     }
 
@@ -250,7 +243,7 @@ impl ProgressTracker {
         let mut progress = self.progress.lock().unwrap();
         progress.complete_current_file(success);
         if let Err(e) = progress.update_progress_file(&self.progress_file) {
-            log::error!("Failed to write progress file: {}", e);
+            log::warn!("Failed to write progress file: {}", e);
         }
     }
 
