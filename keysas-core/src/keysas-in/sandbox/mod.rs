@@ -88,7 +88,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
         log::warn!("Failed to create progress directory: {}", e);
     }
 
-    let mut ruleset = Ruleset::default()
+    let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .create()?
         .set_compatibility(CompatLevel::HardRequirement)
@@ -96,16 +96,9 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY],
             AccessFs::from_read(abi),
-        ))?;
-
-    // Try to add rule for progress directory, but don't fail if it doesn't exist
-    if let Ok(path_fd) = PathFd::new("/var/lock/keysas") {
-        ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
-    } else {
-        log::warn!("Could not add Landlock rule for /var/lock/keysas, progress tracking may not work");
-    }
-
-    let status = ruleset.restrict_self()?;
+        ))?
+        .add_rule(PathBeneath::new(PathFd::new("/var/lock/keysas")?, allow_write))?
+        .restrict_self()?;
 
     match status.ruleset {
         // The FullyEnforced case must be tested.
