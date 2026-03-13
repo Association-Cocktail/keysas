@@ -276,7 +276,7 @@ pub fn parse_report(
     )?;
     let cert_pq = validate_signing_certificate(
         certs
-            .remainder()
+            .next()
             .ok_or(anyhow!("No ML-DSA87 certificate"))?,
         ca_cert_pq,
     )?;
@@ -452,9 +452,9 @@ mod tests_out {
         let report = bind_and_sign(&file_data, &meta, Some(&sign_keys), &sign_cert).unwrap();
         // Test the generated report
         // Reconstruct the public keys from the binding certficates
-        let mut certs = report.binding.station_certificate.split('|');
-        let cert_cl = Certificate::from_pem(certs.next().unwrap()).unwrap();
-        let cert_pq = Certificate::from_pem(certs.remainder().unwrap()).unwrap();
+        let parts: Vec<&str> = report.binding.station_certificate.split('|').collect();
+        let cert_cl = Certificate::from_pem(parts[0]).unwrap();
+        let cert_pq = Certificate::from_pem(parts[1]).unwrap();
 
         let mut pub_cl_casted: [u8; 32] = [0u8; 32];
         let pub_cl_bytes = cert_cl

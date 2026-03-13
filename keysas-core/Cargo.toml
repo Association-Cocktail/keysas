@@ -5,7 +5,7 @@
 [package]
 name = "keysas-core"
 version = "2.7.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0"

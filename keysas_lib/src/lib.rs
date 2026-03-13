@@ -8,7 +8,6 @@
 
 //! This module contains utility functions for the rest of Keysas
 
-#![feature(str_split_remainder)]
 use anyhow::Result;
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -28,6 +27,7 @@ pub mod file_report;
 pub mod keysas_hybrid_keypair;
 pub mod keysas_key;
 pub mod pki;
+pub mod progress;
 
 // Init logger
 pub fn init_logger() {

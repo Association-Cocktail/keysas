@@ -30,6 +30,7 @@ use clap::{Arg, ArgAction, Command, crate_version};
 use infer::get;
 use keysas_lib::init_logger;
 use keysas_lib::sha256_digest;
+use keysas_lib::progress::{AnalysisStep, ProgressTracker};
 use log::{error, info, warn};
 use nix::unistd;
 use std::fs::File;
@@ -293,8 +294,12 @@ fn get_extension(buf: Vec<u8>) -> String {
 ///     - Yara rules check
 /// Checks results are marked in file metadata.
 /// This function does not modify the files.
-fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String) {
+fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker) {
     for f in files {
+        // Start tracking this file
+        progress_tracker.start_file(f.md.filename.clone());
+        info!("🔍 Analyse de: {}", f.md.filename);
+
         match unistd::dup2(f.fd, 500) {
             Ok(nfd) => {
                 // Safety: We are using a file descriptor that we know is valid
@@ -315,6 +320,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     }
                 }
                 // Check digest
+                progress_tracker.update_step(AnalysisStep::Hashing);
                 match sha256_digest(&file) {
                     Ok(d) => {
                         f.md.is_digest_ok = f.md.digest.eq(&d);
@@ -336,6 +342,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                 }
 
                 // Check size
+                progress_tracker.update_step(AnalysisStep::CheckingSize);
                 match &file.metadata() {
                     Ok(meta) => {
                         f.md.is_toobig = meta.len().gt(&conf.max_size);
@@ -355,6 +362,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     }
                 }
                 // Check anti-virus
+                progress_tracker.update_step(AnalysisStep::AntivirusScan);
                 match scan(clam_addr.clone(), &mut file, None) {
                     Ok(result) => {
                         f.md.av_pass = !result.is_infected;
@@ -375,6 +383,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     }
                 }
                 // Check yara rules
+                progress_tracker.update_step(AnalysisStep::YaraScan);
                 match &conf.yara_rules {
                     Some(rules) => match rules.scan_fd(&file, conf.yara_timeout) {
                         Ok(results) => match results.is_empty() {
@@ -407,6 +416,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     }
                 }
                 // Check the magic number
+                progress_tracker.update_step(AnalysisStep::CheckingFileType);
                 // Read only 1Mo of the file to be faster and do not read large files
                 let reader = BufReader::new(&file);
                 let limited_reader = &mut reader.take(1024 * 1024);
@@ -435,8 +445,26 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                 process::exit(1);
             }
         };
+
+        // Determine if file passed all checks
+        let passed = f.md.is_digest_ok
+            && !f.md.is_toobig
+            && f.md.is_type_allowed
+            && f.md.av_pass
+            && f.md.yara_pass;
+
+        // Mark file as completed
+        progress_tracker.complete_file(passed);
+        progress_tracker.update_step(if passed {
+            AnalysisStep::Complete
+        } else {
+            AnalysisStep::Failed("Vérifications échouées".to_string())
+        });
+
+        let status = if passed { "✅" } else { "❌" };
         log::info!(
-            "Report for {}: digest_ok: {}, type_allowed: {}, yara_pass: {}, av_pass: {}, too_big: {}",
+            "{} Report for {}: digest_ok: {}, type_allowed: {}, yara_pass: {}, av_pass: {}, too_big: {}",
+            status,
             f.md.filename,
             f.md.is_digest_ok,
             f.md.is_type_allowed,
@@ -448,7 +476,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
 }
 
 /// This functions send the files filedescriptor and metadata to the socket
-fn send_files(files: &Vec<FileData>, stream: &UnixStream) {
+fn send_files(files: &Vec<FileData>, stream: &UnixStream, progress_tracker: &ProgressTracker) {
     let config = bincode::config::standard();
     for file in files {
         // Get metadata
@@ -483,6 +511,10 @@ fn main() -> Result<()> {
 
     // Configure logger
     init_logger();
+
+    // Initialize progress tracker
+    let progress_file = std::path::PathBuf::from("/var/lock/keysas/keysas-transit-progress.json");
+    let progress_tracker = ProgressTracker::new("keysas-transit".to_string(), progress_file);
 
     // Landlock initialization
     match sandbox::landlock_sandbox(&config.rule_path) {
@@ -610,11 +642,15 @@ fn main() -> Result<()> {
         // Parse messages received
         let mut files = parse_messages(ancillary_in.messages(), &buf_in);
 
+        // Add files to progress tracker
+        let filenames: Vec<String> = files.iter().map(|f| f.md.filename.clone()).collect();
+        progress_tracker.add_files_to_queue(filenames);
+
         // Run check on message received
-        check_files(&mut files, &config, url.clone());
+        check_files(&mut files, &config, url.clone(), &progress_tracker);
 
         // Send fd and report to out
-        send_files(&files, &out_stream);
+        send_files(&files, &out_stream, &progress_tracker);
         main_thread::sleep(Duration::from_millis(100));
     }
 }

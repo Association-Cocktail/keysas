@@ -44,7 +44,8 @@ use time::OffsetDateTime;
 mod sandbox;
 mod tests;
 
-use keysas_lib::{convert_ioslice, init_logger, list_files, sha256_digest};
+use keysas_lib::{convert_ioslice, init_logger, list_files, progress, sha256_digest};
+use keysas_lib::progress::{AnalysisStep, ProgressTracker};
 
 const CONFIG_DIRECTORY: &str = "/etc/keysas";
 
@@ -144,7 +145,7 @@ fn is_corrupted(file: PathBuf) -> bool {
     }
 }
 
-fn send_files(files: &[String], stream: &UnixStream, sas_in: &String) -> Result<()> {
+fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_tracker: &ProgressTracker) -> Result<()> {
     //Remove any file starting by .(dot)
     let re = Regex::new(r"^\.([a-z])*")?;
     let mut files = files.to_owned();
@@ -153,7 +154,8 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String) -> Result<
     //let re_ioerror = Regex::new(r"\.ioerror")?;
     //files.retain(|x| !re_ioerror.is_match(x));
     //Max X files per send in .chunks(X)
-    for batch in files.chunks(1) {
+    const BATCH_SIZE: usize = 10;
+    for batch in files.chunks(BATCH_SIZE) {
         let (bufs, fhs, fs): (Vec<Vec<u8>>, Vec<File>, Vec<PathBuf>) = batch
             .iter()
             .map(|f| {
@@ -162,30 +164,42 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String) -> Result<
                 base_path
             })
             .filter_map(|f| {
+                // Start tracking this file
+                let filename = f.file_name()?.to_str()?.to_string();
+                progress_tracker.start_file(filename.clone());
+                progress_tracker.update_step(AnalysisStep::Hashing);
+                info!("🔄 Traitement du fichier: {}", filename);
+
                 // FD is opened in read-only mode
                 let fh = match File::open(&f) {
                     Ok(f) => f,
                     Err(e) => {
                         error!("Failed to open file {}: {e}", f.display());
+                        progress_tracker.complete_file(false);
                         process::exit(1);
                     }
                 };
+                progress_tracker.update_step(AnalysisStep::CheckingSize);
+
                 let digest = match sha256_digest(&fh) {
                     Ok(d) => d,
                     Err(e) => {
                         error!("Failed to compute hash {e}");
+                        progress_tracker.complete_file(false);
                         return None;
                     }
                 };
+                progress_tracker.update_step(AnalysisStep::VerifyingSignature);
+                let now = OffsetDateTime::now_utc();
                 let timestamp = format!(
-                    "{}-{}-{}_{}-{}-{}-{}",
-                    OffsetDateTime::now_utc().day(),
-                    OffsetDateTime::now_utc().month(),
-                    OffsetDateTime::now_utc().year(),
-                    OffsetDateTime::now_utc().hour(),
-                    OffsetDateTime::now_utc().minute(),
-                    OffsetDateTime::now_utc().second(),
-                    OffsetDateTime::now_utc().nanosecond()
+                    "{:02}-{:02}-{}_{:02}-{:02}-{:02}-{:03}",
+                    now.day(),
+                    now.month(),
+                    now.year(),
+                    now.hour(),
+                    now.minute(),
+                    now.second(),
+                    now.nanosecond() / 1_000_000
                 );
 
                 let m = FileMetadata {
@@ -226,6 +240,14 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String) -> Result<
             }
             Err(e) => error!("Failed to send fds: {e}"),
         }
+
+        // Mark all files in batch as completed
+        for (file_path, _) in fs.iter().zip(fds.iter()) {
+            let filename = file_path.file_name()?.to_str()?.to_string();
+            progress_tracker.complete_file(true);
+            info!("✅ Fichier transmis avec succès: {}", filename);
+        }
+
         // Files are unlinked once fds are sent
         for (file_path, &fd) in fs.iter().zip(fds.iter()) {
             match unlinkat(Some(fd), file_path, UnlinkatFlags::NoRemoveDir) {
@@ -241,6 +263,10 @@ fn main() -> Result<()> {
     let mut config = Config::default();
     command_args(&mut config);
     init_logger();
+
+    // Initialize progress tracker
+    let progress_file = PathBuf::from("/var/lock/keysas/keysas-in-progress.json");
+    let progress_tracker = ProgressTracker::new("keysas-in".to_string(), progress_file);
 
     match sandbox::landlock_sandbox(&config.sas_in) {
         Ok(_) => log::info!("Landlock sandbox activated."),
@@ -292,7 +318,13 @@ fn main() -> Result<()> {
             }
         };
 
-        send_files(&files, &unix_stream, &config.sas_in)
+        // Update progress tracker with new files
+        if !files.is_empty() {
+            progress_tracker.add_files_to_queue(files.clone());
+            info!("📁 {} fichier(s) détecté(s) dans la file d'attente", files.len());
+        }
+
+        send_files(&files, &unix_stream, &config.sas_in, &progress_tracker)
             .with_context(|| "Cannot send file descriptors :/")?;
         main_thread::sleep(Duration::from_millis(500));
     }

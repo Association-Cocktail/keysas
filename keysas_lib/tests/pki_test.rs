@@ -16,7 +16,7 @@ use pkcs8::der::Encode;
 use pkcs8::der::asn1::BitString;
 use pkcs8::pkcs5::pbes2;
 use pkcs8::spki::AlgorithmIdentifier;
-use rand_dl::rngs::OsRng;
+use rand::rngs::OsRng;
 use std::fs::read;
 use tempfile::{NamedTempFile, tempdir};
 use x509_cert::name::RdnSequence;

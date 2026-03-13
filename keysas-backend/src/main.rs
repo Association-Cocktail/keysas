@@ -52,6 +52,8 @@ pub struct GlobalStatus {
     has_signed_once: bool,
     keypair_generated: bool,
     ip: Vec<String>,
+    progress_in: Option<serde_json::Value>,
+    progress_transit: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -91,6 +93,17 @@ fn landlock_sandbox() -> Result<(), RulesetError> {
         }
     }
     Ok(())
+}
+
+/// Read progress JSON file if it exists
+fn read_progress_file(path: &str) -> Option<serde_json::Value> {
+    match fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(value) => Some(value),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    }
 }
 
 /// List files in a directory except hidden ones
@@ -221,6 +234,10 @@ fn main() -> Result<()> {
                     has_signed = true;
                 }
 
+                // Read progress files
+                let progress_in = read_progress_file("/var/lock/keysas/keysas-in-progress.json");
+                let progress_transit = read_progress_file("/var/lock/keysas/keysas-transit-progress.json");
+
                 let orders = GlobalStatus {
                     health,
                     guichetin: guichet_state_in,
@@ -229,6 +246,8 @@ fn main() -> Result<()> {
                     has_signed_once: has_signed,
                     keypair_generated: true,
                     ip: get_ip()?,
+                    progress_in,
+                    progress_transit,
                 };
 
                 let serialized = serde_json::to_string(&orders)?;
