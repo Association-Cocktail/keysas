@@ -10,8 +10,8 @@
 use crate::CONFIG_DIRECTORY;
 pub use anyhow::Result;
 use landlock::{
-    ABI, Access, AccessFs, CompatLevel, Compatible, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    RulesetError, RulesetStatus, path_beneath_rules,
+    ABI, Access, AccessFs, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset, RulesetAttr,
+    RulesetCreatedAttr, RulesetError, RulesetStatus, make_bitflags, path_beneath_rules,
 };
 use std::path::Path;
 use std::process;
@@ -81,6 +81,12 @@ pub fn init() -> Result<()> {
     ctx.allow_syscall(Syscall::clock_gettime)?;
     ctx.allow_syscall(Syscall::exit_group)?;
     ctx.allow_syscall(Syscall::fstatfs)?;
+    #[cfg(target_arch = "x86_64")]
+    ctx.allow_syscall(Syscall::mkdir)?;
+    ctx.allow_syscall(Syscall::mkdirat)?;
+    ctx.allow_syscall(Syscall::rmdir)?;
+    ctx.allow_syscall(Syscall::unlink)?;
+    ctx.allow_syscall(Syscall::unlinkat)?;
     ctx.load()?;
     Ok(())
 }
@@ -95,10 +101,9 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         }
     };
     let abi = ABI::V2;
+    let allow_write = make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | MakeReg});
 
-    // Note: Progress directory /var/lock/keysas must exist BEFORE starting the service
-    // The daemon cannot create it due to sandboxing restrictions
-    let status = Ruleset::default()
+    let mut ruleset = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .set_compatibility(CompatLevel::HardRequirement)
         .create()?
@@ -106,8 +111,16 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY, &rules.to_string_lossy()],
             AccessFs::from_read(abi),
-        ))?
-        .restrict_self()?;
+        ))?;
+
+    // Try to add progress directory rule, but don't fail if it doesn't exist
+    if let Ok(path_fd) = PathFd::new("/run/keysas-transit") {
+        ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
+    } else {
+        log::warn!("Could not add Landlock rule for /run/keysas-transit, progress tracking may not work");
+    }
+
+    let status = ruleset.restrict_self()?;
 
     match status.ruleset {
         // The FullyEnforced case must be tested.

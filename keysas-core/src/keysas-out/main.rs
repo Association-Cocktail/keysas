@@ -325,44 +325,52 @@ fn main() -> Result<()> {
         sign_cert.push_str(&pem_pq);
     }
 
-    // Open socket with keysas-transit
     let addr_out = SocketAddr::from_abstract_name(&config.socket_out)?;
-    let sock_out = match UnixStream::connect_addr(&addr_out) {
-        Ok(s) => {
-            info!("Connected to keysas-transit socket.");
-            s
-        }
-        Err(e) => {
-            error!("Failed to open abstract socket with keysas-transit {e}");
-            process::exit(1);
-        }
-    };
 
-    // Allocate buffers for input messages
-    let mut ancillary_buffer_in = [0; 128];
-    let mut ancillary_in = SocketAncillary::new(&mut ancillary_buffer_in[..]);
-
-    // Main loop
-    // 1. receive file descriptor and metadata from transit
-    // 2. Write file and report to output
+    // Outer loop: reconnect to keysas-transit when connection is lost
     loop {
-        // 4128 => filename max 4096 bytes and digest 32 bytes
-        let mut buf_in = [0; 4128];
-        let bufs_in = &mut [IoSliceMut::new(&mut buf_in[..])][..];
+        let sock_out = loop {
+            match UnixStream::connect_addr(&addr_out) {
+                Ok(s) => {
+                    info!("Connected to keysas-transit socket.");
+                    break s;
+                }
+                Err(e) => {
+                    warn!("Failed to connect to keysas-transit ({e}), retrying in 2s...");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        };
 
-        // Listen for message on socket
-        match sock_out.recv_vectored_with_ancillary(bufs_in, &mut ancillary_in) {
-            Ok(_) => (),
-            Err(e) => {
-                warn!("Failed to receive fds from in: {e}");
-                process::exit(1);
+        // Allocate buffers for input messages
+        let mut ancillary_buffer_in = [0; 128];
+        let mut ancillary_in = SocketAncillary::new(&mut ancillary_buffer_in[..]);
+
+        // Inner loop: receive and process files
+        loop {
+            // 4128 => filename max 4096 bytes and digest 32 bytes
+            let mut buf_in = [0; 4128];
+            let bufs_in = &mut [IoSliceMut::new(&mut buf_in[..])][..];
+
+            match sock_out.recv_vectored_with_ancillary(bufs_in, &mut ancillary_in) {
+                Ok(0) => {
+                    warn!("Connection to keysas-transit closed (EOF), reconnecting...");
+                    break;
+                }
+                Ok(_) => (),
+                Err(e) => {
+                    warn!("Failed to receive fds from keysas-transit: {e}, reconnecting...");
+                    break;
+                }
+            }
+
+            // Parse messages received
+            let files = parse_messages(ancillary_in.messages(), &buf_in);
+
+            // Output file
+            if let Err(e) = output_files(files, &config, sign_keys.as_ref(), &sign_cert) {
+                warn!("Error outputting files: {e}");
             }
         }
-
-        // Parse messages received
-        let files = parse_messages(ancillary_in.messages(), &buf_in);
-
-        // Output file
-        output_files(files, &config, sign_keys.as_ref(), &sign_cert)?;
     }
 }

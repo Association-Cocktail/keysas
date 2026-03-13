@@ -81,7 +81,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
     // Still using ABI v2 for now
     let abi = ABI::V2;
     let allow = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir});
-    let allow_write = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir | WriteFile});
+    let allow_write = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir | WriteFile | MakeReg});
 
     let mut ruleset = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
@@ -94,10 +94,10 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
         ))?;
 
     // Try to add progress directory rule, but don't fail if it doesn't exist
-    if let Ok(path_fd) = PathFd::new("/var/lock/keysas") {
+    if let Ok(path_fd) = PathFd::new("/run/keysas-in") {
         ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
     } else {
-        log::warn!("Could not add Landlock rule for /var/lock/keysas, progress tracking may not work");
+        log::warn!("Could not add Landlock rule for /run/keysas-in, progress tracking may not work");
     }
 
     let status = ruleset.restrict_self()?;

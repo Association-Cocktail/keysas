@@ -25,6 +25,8 @@
           :working="analysingIN || analysingTRANSIT || analysingOUT"
           :usb="usb_in"
           :files="filesIN"
+          :progressIN="progressIN"
+          :progressTRANSIT="progressTRANSIT"
           @guichet-in-cleared="onGuichetInCleared"
           />
         </div>
@@ -81,6 +83,8 @@ export default {
     return {
       debug: (process.env.NODE_ENV === 'development'),
       appStarted: false,
+      progressIN: null,
+      progressTRANSIT: null,
       StatusIn: undefined,
       StatusTransit: undefined,
       StatusOut: undefined,
@@ -168,7 +172,9 @@ export default {
           (self.analysingTRANSIT = parsedData.guichettransit),
           (self.nameOUT = parsedData.guichetout.name),
           (self.analysingOUT = parsedData.guichetout.analysing),
-          (self.filesOUT = parsedData.guichetout.files)
+          (self.filesOUT = parsedData.guichetout.files),
+          (self.progressIN = parsedData.progress_in),
+          (self.progressTRANSIT = parsedData.progress_transit)
       };
 
       // DECTIVATED FOR DEV FRONT
@@ -190,6 +196,27 @@ export default {
       this.appStarted = this.appStarted || (this.StatusIn && this.StatusTransit && this.StatusOut);
     }
   },
+  computed: {
+    isWorking() {
+      return this.analysingIN || this.analysingTRANSIT || this.analysingOUT;
+    },
+    wizardMode: function () {
+      return !this.has_signed_once || this.openWizard;
+    },
+    forcedWizardMode: function () {
+      return !this.has_signed_once;
+    }
+  },
+  watch: {
+    isWorking(newVal) {
+      if (!newVal) {
+        setTimeout(() => {
+          this.progressIN = null;
+          this.progressTRANSIT = null;
+        }, 3000);
+      }
+    }
+  },
   created() {
     this.wsUdev();
     this.wsBackend();
@@ -209,14 +236,6 @@ export default {
   updated() {
     this.updateState();
   },
-  computed: {
-    wizardMode: function () {
-      return !this.has_signed_once || this.openWizard;
-    },
-    forcedWizardMode: function () {
-      return !this.has_signed_once;
-    }
-  }
 };
 </script>
 

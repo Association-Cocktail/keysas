@@ -476,7 +476,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
 }
 
 /// This functions send the files filedescriptor and metadata to the socket
-fn send_files(files: &Vec<FileData>, stream: &UnixStream, progress_tracker: &ProgressTracker) {
+fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &ProgressTracker) {
     let config = bincode::config::standard();
     for file in files {
         // Get metadata
@@ -513,7 +513,7 @@ fn main() -> Result<()> {
     init_logger();
 
     // Initialize progress tracker
-    let progress_file = std::path::PathBuf::from("/var/lock/keysas/keysas-transit-progress.json");
+    let progress_file = std::path::PathBuf::from("/run/keysas-transit/progress.json");
     let progress_tracker = ProgressTracker::new("keysas-transit".to_string(), progress_file);
 
     // Landlock initialization

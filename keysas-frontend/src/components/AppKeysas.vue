@@ -23,6 +23,54 @@
           <span class="working-icon" />
           <p>{{ $t('guichet_IN.tasks.analysing_files') }}</p>
         </div>
+
+        <!-- Progress bars -->
+        <div v-if="progressIN || progressTRANSIT" class="AppGuichet-progress">
+
+          <!-- keysas-in: réception -->
+          <div v-if="progressIN && progressIN.total_files > 0" class="progress-section">
+            <div class="progress-label">
+              <span>Réception</span>
+              <span>{{ progressIN.processed_files + progressIN.failed_files }}/{{ progressIN.total_files }} fichiers</span>
+            </div>
+            <div class="progress">
+              <div class="progress-bar progress-bar-in"
+                   role="progressbar"
+                   :style="{ width: overallInPercent + '%' }">
+              </div>
+            </div>
+          </div>
+
+          <!-- keysas-transit: fichier en cours -->
+          <div v-if="progressTRANSIT && progressTRANSIT.current_file" class="progress-section">
+            <div class="progress-label">
+              <span class="progress-filename">{{ progressTRANSIT.current_file.filename }}</span>
+              <span>{{ progressTRANSIT.current_file.percentage }}%</span>
+            </div>
+            <div class="progress-step">{{ progressTRANSIT.current_file.step_description }}</div>
+            <div class="progress">
+              <div class="progress-bar progress-bar-transit"
+                   role="progressbar"
+                   :style="{ width: progressTRANSIT.current_file.percentage + '%' }">
+              </div>
+            </div>
+          </div>
+
+          <!-- keysas-transit: progression globale -->
+          <div v-if="progressTRANSIT && progressTRANSIT.total_files > 0" class="progress-section">
+            <div class="progress-label">
+              <span>Analyse</span>
+              <span>{{ progressTRANSIT.processed_files + progressTRANSIT.failed_files }}/{{ progressTRANSIT.total_files }} fichiers</span>
+            </div>
+            <div class="progress">
+              <div class="progress-bar progress-bar-transit"
+                   role="progressbar"
+                   :style="{ width: overallTransitPercent + '%' }">
+              </div>
+            </div>
+          </div>
+
+        </div>
       </div>
       <div v-else-if="this.listInBackup.length === 0" class="AppGuichet-item AppGuichet-item-inactive AppGuichet-files">
         <div class="AppGuichet-item-head">
@@ -103,7 +151,19 @@ export default {
     "working",
     "usb",
     "files",
+    "progressIN",
+    "progressTRANSIT",
   ],
+  computed: {
+    overallInPercent() {
+      if (!this.progressIN || this.progressIN.total_files === 0) return 0;
+      return Math.round((this.progressIN.processed_files + this.progressIN.failed_files) / this.progressIN.total_files * 100);
+    },
+    overallTransitPercent() {
+      if (!this.progressTRANSIT || this.progressTRANSIT.total_files === 0) return 0;
+      return Math.round((this.progressTRANSIT.processed_files + this.progressTRANSIT.failed_files) / this.progressTRANSIT.total_files * 100);
+    },
+  },
   data() {
     return {
       displayDetail: false,
@@ -369,6 +429,62 @@ export default {
 			padding-left: 5px;
 		}
 	}
+}
+
+.AppGuichet-progress {
+  margin-top: 14px;
+
+  .progress-section {
+    margin-bottom: 10px;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+    opacity: 0.9;
+  }
+
+  .progress-filename {
+    max-width: 70%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .progress-step {
+    font-size: 0.7rem;
+    opacity: 0.75;
+    margin-bottom: 3px;
+    font-style: italic;
+  }
+
+  .progress {
+    height: 6px;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.35);
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+
+    &-in {
+      background-color: $white;
+    }
+
+    &-transit {
+      background-color: $cyan;
+    }
+  }
 }
 
 .AppGuichet-plugMessage {

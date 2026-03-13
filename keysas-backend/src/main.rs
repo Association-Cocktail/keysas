@@ -38,9 +38,9 @@ extern crate regex;
 
 const SAS_IN: &str = "/var/local/in";
 const SAS_OUT: &str = "/var/local/out";
-const LOCK_IN: &str = "/var/lock/keysas/keysas-in";
-const LOCK_TRANSIT: &str = "/var/lock/keysas/keysas-transit";
-const LOCK_OUT: &str = "/var/lock/keysas/keysas-out";
+const LOCK_IN: &str = "/run/keysas-in";
+const LOCK_TRANSIT: &str = "/run/keysas-transit";
+const LOCK_OUT: &str = "/run/keysas-out";
 const NEVER_SIGNED: &str = "/usr/share/keysas/neversigned";
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -207,17 +207,23 @@ fn main() -> Result<()> {
                 fs_in.push(SAS_IN);
                 let is_empty_fs_in = fs_in.read_dir()?.next().is_none();
 
-                let working_in = Path::new(LOCK_IN).exists() || !is_empty_fs_in;
-
                 let working_out = Path::new(LOCK_OUT).exists();
-
-                let working_transit = Path::new(LOCK_TRANSIT).exists();
 
                 let health: Daemons = Daemons {
                     status_in: daemon_status()?[0],
                     status_transit: daemon_status()?[1],
                     status_out: daemon_status()?[2],
                 };
+
+                // Read progress files - only send when actively processing
+                let progress_in = read_progress_file("/run/keysas-in/progress.json")
+                    .filter(|v| v.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false));
+                let progress_transit = read_progress_file("/run/keysas-transit/progress.json")
+                    .filter(|v| v.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false));
+
+                let working_in = progress_in.is_some() || !is_empty_fs_in;
+                let working_transit = progress_transit.is_some();
+
                 let guichet_state_in: GuichetState = GuichetState {
                     name: String::from("GUICHET-IN"),
                     analysing: working_in,
@@ -233,10 +239,6 @@ fn main() -> Result<()> {
                 if !Path::new(NEVER_SIGNED).exists() {
                     has_signed = true;
                 }
-
-                // Read progress files
-                let progress_in = read_progress_file("/var/lock/keysas/keysas-in-progress.json");
-                let progress_transit = read_progress_file("/var/lock/keysas/keysas-transit-progress.json");
 
                 let orders = GlobalStatus {
                     health,

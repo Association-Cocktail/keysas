@@ -148,11 +148,6 @@ impl DaemonProgress {
     }
 
     pub fn update_progress_file(&self, path: &PathBuf) -> Result<()> {
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
         let json = serde_json::to_string_pretty(self)?;
         let mut file = File::create(path)?;
         file.write_all(json.as_bytes())?;

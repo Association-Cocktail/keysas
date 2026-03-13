@@ -11,7 +11,7 @@ Type=simple
 User=keysas-transit
 Group=keysas-transit
 EnvironmentFile=/etc/keysas/keysas-transit.conf
-ExecStart=/usr/bin/keysas-transit -i ${SOCKET_IN} -o ${SOCKET_OUT} -s ${MAX_SIZE} -c ${CLAMAV_IP} -p ${CLAMAV_PORT} -r ${RULES} -t ${YARA_TIMEOUT} -a ${ALLOWED_TYPES}
+ExecStart=/usr/bin/keysas-transit -i ${SOCKET_IN} -o ${SOCKET_OUT} -s ${MAX_SIZE} -c ${CLAMAV_IP} -p ${CLAMAV_PORT} -r ${RULES} -t ${YARA_TIMEOUT} -a ${ALLOWED_TYPES} -m
 Restart=always
 RestartSec=2
 

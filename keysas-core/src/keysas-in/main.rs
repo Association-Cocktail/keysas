@@ -44,7 +44,7 @@ use time::OffsetDateTime;
 mod sandbox;
 mod tests;
 
-use keysas_lib::{convert_ioslice, init_logger, list_files, progress, sha256_digest};
+use keysas_lib::{convert_ioslice, init_logger, list_files, sha256_digest};
 use keysas_lib::progress::{AnalysisStep, ProgressTracker};
 
 const CONFIG_DIRECTORY: &str = "/etc/keysas";
@@ -154,7 +154,7 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_t
     //let re_ioerror = Regex::new(r"\.ioerror")?;
     //files.retain(|x| !re_ioerror.is_match(x));
     //Max X files per send in .chunks(X)
-    const BATCH_SIZE: usize = 10;
+    const BATCH_SIZE: usize = 1;
     for batch in files.chunks(BATCH_SIZE) {
         let (bufs, fhs, fs): (Vec<Vec<u8>>, Vec<File>, Vec<PathBuf>) = batch
             .iter()
@@ -238,7 +238,10 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_t
             Ok(_) => {
                 info!("Chunk of file descriptors has been sent");
             }
-            Err(e) => error!("Failed to send fds: {e}"),
+            Err(e) => {
+                error!("Failed to send fds: {e}");
+                return Err(anyhow::anyhow!("Broken pipe: {e}"));
+            }
         }
 
         // Mark all files in batch as completed
@@ -268,7 +271,7 @@ fn main() -> Result<()> {
     init_logger();
 
     // Initialize progress tracker
-    let progress_file = PathBuf::from("/var/lock/keysas/keysas-in-progress.json");
+    let progress_file = PathBuf::from("/run/keysas-in/progress.json");
     let progress_tracker = ProgressTracker::new("keysas-in".to_string(), progress_file);
 
     match sandbox::landlock_sandbox(&config.sas_in) {
@@ -304,31 +307,38 @@ fn main() -> Result<()> {
             process::exit(1);
         }
     };
-    let (unix_stream, _sck_addr) = match sock.accept() {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Failed to accept connection: {e}");
-            process::exit(1);
-        }
-    };
-
     loop {
-        let files = match list_files(&config.sas_in) {
-            Ok(fs) => fs,
+        let (unix_stream, _sck_addr) = match sock.accept() {
+            Ok(r) => {
+                info!("Accepted new connection from keysas-transit.");
+                r
+            }
             Err(e) => {
-                error!("Failed to list files in directory {}: {e}", &config.sas_in);
+                error!("Failed to accept connection: {e}");
                 process::exit(1);
             }
         };
 
-        // Update progress tracker with new files
-        if !files.is_empty() {
-            progress_tracker.add_files_to_queue(files.clone());
-            info!("📁 {} fichier(s) détecté(s) dans la file d'attente", files.len());
-        }
+        loop {
+            let files = match list_files(&config.sas_in) {
+                Ok(fs) => fs,
+                Err(e) => {
+                    error!("Failed to list files in directory {}: {e}", &config.sas_in);
+                    process::exit(1);
+                }
+            };
 
-        send_files(&files, &unix_stream, &config.sas_in, &progress_tracker)
-            .with_context(|| "Cannot send file descriptors :/")?;
-        main_thread::sleep(Duration::from_millis(500));
+            // Update progress tracker with new files
+            if !files.is_empty() {
+                progress_tracker.add_files_to_queue(files.clone());
+                info!("📁 {} fichier(s) détecté(s) dans la file d'attente", files.len());
+            }
+
+            if let Err(e) = send_files(&files, &unix_stream, &config.sas_in, &progress_tracker) {
+                warn!("Connection to keysas-transit lost ({e}), waiting for reconnection...");
+                break;
+            }
+            main_thread::sleep(Duration::from_millis(500));
+        }
     }
 }
