@@ -96,11 +96,8 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
     };
     let abi = ABI::V2;
 
-    // Create the progress directory if it doesn't exist (before Landlock)
-    if let Err(e) = std::fs::create_dir_all("/var/lock/keysas") {
-        log::warn!("Failed to create progress directory: {}", e);
-    }
-
+    // Note: Progress directory /var/lock/keysas must exist BEFORE starting the service
+    // The daemon cannot create it due to sandboxing restrictions
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .set_compatibility(CompatLevel::HardRequirement)
@@ -109,12 +106,6 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY, &rules.to_string_lossy()],
             AccessFs::from_read(abi),
-        ))?
-        // Try to add read-write access for progress tracking directory
-        // If this fails, the daemon will still work but won't track progress
-        .add_rules(path_beneath_rules(
-            &["/var/lock/keysas"],
-            AccessFs::from_read(abi) | AccessFs::from_write(abi),
         ))?
         .restrict_self()?;
 

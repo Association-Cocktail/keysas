@@ -83,11 +83,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
     let allow = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir});
     let allow_write = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir | WriteFile});
 
-    // Create the progress directory if it doesn't exist (before Landlock)
-    if let Err(e) = std::fs::create_dir_all("/var/lock/keysas") {
-        log::warn!("Failed to create progress directory: {}", e);
-    }
-
+    // Note: Progress directory /var/lock/keysas must exist BEFORE starting the service
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .create()?
