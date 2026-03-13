@@ -83,8 +83,7 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
     let allow = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir});
     let allow_write = make_bitflags!(AccessFs::{RemoveFile | RemoveDir | ReadFile | ReadDir | WriteFile});
 
-    // Note: Progress directory /var/lock/keysas must exist BEFORE starting the service
-    let status = Ruleset::default()
+    let mut ruleset = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .create()?
         .set_compatibility(CompatLevel::HardRequirement)
@@ -92,9 +91,16 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY],
             AccessFs::from_read(abi),
-        ))?
-        .add_rule(PathBeneath::new(PathFd::new("/var/lock/keysas")?, allow_write))?
-        .restrict_self()?;
+        ))?;
+
+    // Try to add progress directory rule, but don't fail if it doesn't exist
+    if let Ok(path_fd) = PathFd::new("/var/lock/keysas") {
+        ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
+    } else {
+        log::warn!("Could not add Landlock rule for /var/lock/keysas, progress tracking may not work");
+    }
+
+    let status = ruleset.restrict_self()?;
 
     match status.ruleset {
         // The FullyEnforced case must be tested.
