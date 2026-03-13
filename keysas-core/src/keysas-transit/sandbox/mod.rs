@@ -95,7 +95,13 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         }
     };
     let abi = ABI::V2;
-    let status = Ruleset::default()
+
+    // Create the progress directory if it doesn't exist (before Landlock)
+    if let Err(e) = std::fs::create_dir_all("/var/lock/keysas") {
+        log::warn!("Failed to create progress directory: {}", e);
+    }
+
+    let mut ruleset = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .set_compatibility(CompatLevel::HardRequirement)
         .create()?
@@ -103,13 +109,27 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY, &rules.to_string_lossy()],
             AccessFs::from_read(abi),
-        ))?
-        // Read-write access for progress tracking directory
-        .add_rules(path_beneath_rules(
-            &["/var/lock/keysas"],
-            AccessFs::from_read(abi) | AccessFs::from_write(abi),
-        ))?
-        .restrict_self()?;
+        ))?;
+
+    // Try to add read-write access for progress tracking directory
+    // Use path_beneath_rules with string paths to avoid PathFd errors
+    match std::fs::metadata("/var/lock/keysas") {
+        Ok(_) => {
+            // Directory exists, add the rule
+            if let Err(e) = ruleset.add_rules(path_beneath_rules(
+                &["/var/lock/keysas"],
+                AccessFs::from_read(abi) | AccessFs::from_write(abi),
+            )) {
+                log::warn!("Could not add Landlock rule for /var/lock/keysas: {}", e);
+            }
+        }
+        Err(_) => {
+            log::warn!("Progress directory /var/lock/keysas does not exist, skipping Landlock rule");
+        }
+    }
+
+    let status = ruleset.restrict_self()?;
+
     match status.ruleset {
         // The FullyEnforced case must be tested.
         RulesetStatus::FullyEnforced => {
