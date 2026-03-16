@@ -20,7 +20,8 @@ build: ## Build the binary files
 	@cp target/release/keysas-in bin/
 	@cp target/release/keysas-transit bin/
 	@cp target/release/keysas-out bin/
-	@echo "build: Keysas-core is now compiled in bin directory !" 
+	@cp target/release/keysas-analyze bin/
+	@echo "build: Keysas-core is now compiled in bin directory !"
 
 clean: ## Remove previous build
 	@if [ -d "bin" ]; then rm -fr bin; fi

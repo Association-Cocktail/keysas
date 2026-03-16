@@ -26,6 +26,9 @@ readonly U_KEYSAS_OUT
 U_KEYSAS_TRANSIT="keysas-transit"
 readonly U_KEYSAS_TRANSIT
 
+U_KEYSAS_ANALYZE="keysas-analyze"
+readonly U_KEYSAS_ANALYZE
+
 U_KEYSAS_ADMIN="keysas"
 readonly U_KEYSAS_ADMIN
 
@@ -47,6 +50,9 @@ add_users() {
 	if ! getent passwd $U_KEYSAS_OUT >/dev/null ; then
 		useradd -r -M --shell /bin/false -d $HOME_KEYSAS_OUT -G $U_KEYSAS_TRANSIT $U_KEYSAS_OUT
 		install -d -m 0750 -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT $HOME_KEYSAS_OUT
+	fi
+	if ! getent passwd $U_KEYSAS_ANALYZE >/dev/null ; then
+		useradd -r -M --shell /bin/false $U_KEYSAS_ANALYZE
 	fi
 	if ! getent passwd $U_KEYSAS_ADMIN >/dev/null ; then
 		useradd -M --shell /bin/bash -d $HOME_KEYSAS_ADMIN -U $U_KEYSAS_ADMIN -G $G_SUDO -p '$6$oFhHZhscHfd1n15H$NvVSbktCLhVe9dnMJarTDNKhctbJ/B9GZoApyH7Lp1s2EjfBsLWUJM/QsdgCeGr62BxohWbQB3Qwm3rimH4O01' 
@@ -77,6 +83,13 @@ install_bin() {
 			echo "Binary ../bin/keysas-out cannot be found !"
 		fi
 	fi
+	if [ -d "/usr/bin" ]; then
+		if [ -f "../bin/keysas-analyze" ]; then
+			install -v -o $U_KEYSAS_ANALYZE -g $U_KEYSAS_ANALYZE -m 0500 ../bin/keysas-analyze /usr/bin/
+		else
+			echo "Binary ../bin/keysas-analyze cannot be found !"
+		fi
+	fi
 }
 
 # Install systemd units.
@@ -86,25 +99,24 @@ install_systemd_units(){
 		install -v -o root -g root -m 0644 debian/keysas-in.service /etc/systemd/system/keysas-in.service
 		install -v -o root -g root -m 0644 debian/keysas-transit.service /etc/systemd/system/keysas-transit.service
 		install -v -o root -g root -m 0644 debian/keysas-out.service /etc/systemd/system/keysas-out.service
+		install -v -o root -g root -m 0644 debian/keysas-analyze.service /etc/systemd/system/keysas-analyze.service
 		install -v -o root -g root -m 0644 debian/clamav-daemon.socket /etc/systemd/system/clamav-daemon.socket
 
-		if [ ! -d "/etc/systemd/system/keysas-in.service.d/" ]; then
-			install -d -m 0750 -o root -g root /etc/systemd/system/keysas-in.service.d/
-			if [ -f debian/keysas-in.security ]; then
-				install -v -o root -g root -m 0644 debian/keysas-in.security /etc/systemd/system/keysas-in.service.d/security.conf
-			fi
+		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-in.service.d/
+		if [ -f debian/keysas-in.security ]; then
+			install -v -o root -g root -m 0644 debian/keysas-in.security /etc/systemd/system/keysas-in.service.d/security.conf
 		fi
-		if [ ! -d "/etc/systemd/system/keysas-transit.service.d/" ]; then
-			install -d -m 0750 -o root -g root /etc/systemd/system/keysas-transit.service.d/
-			if [ -f debian/keysas-transit.security ]; then
-				install -v -o root -g root -m 0644 debian/keysas-transit.security /etc/systemd/system/keysas-transit.service.d/security.conf
-			fi
+		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-transit.service.d/
+		if [ -f debian/keysas-transit.security ]; then
+			install -v -o root -g root -m 0644 debian/keysas-transit.security /etc/systemd/system/keysas-transit.service.d/security.conf
 		fi
-		if [ ! -d "/etc/systemd/system/keysas-out.service.d/" ]; then
-			install -d -m 0750 -o root -g root /etc/systemd/system/keysas-out.service.d/
-			if [ -f debian/keysas-out.security ]; then
-				install -v -o root -g root -m 0644 debian/keysas-out.security /etc/systemd/system/keysas-out.service.d/security.conf
-			fi
+		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-out.service.d/
+		if [ -f debian/keysas-out.security ]; then
+			install -v -o root -g root -m 0644 debian/keysas-out.security /etc/systemd/system/keysas-out.service.d/security.conf
+		fi
+		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-analyze.service.d/
+		if [ -f debian/keysas-analyze.security ]; then
+			install -v -o root -g root -m 0644 debian/keysas-analyze.security /etc/systemd/system/keysas-analyze.service.d/security.conf
 		fi
 	else
 		echo "Path /etc/systemd/system/ not found, this system isprobably not using systemd !"
@@ -122,6 +134,7 @@ install_config() {
 		install -v -o $U_KEYSAS_IN -g $U_KEYSAS_IN -m 0600 debian/keysas-in.default /etc/keysas/keysas-in.conf
 		install -v -o $U_KEYSAS_TRANSIT -g $U_KEYSAS_TRANSIT -m 0600 debian/keysas-transit.default /etc/keysas/keysas-transit.conf
 		install -v -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT -m 0600 debian/keysas-out.default /etc/keysas/keysas-out.conf
+		install -v -o $U_KEYSAS_ANALYZE -g $U_KEYSAS_ANALYZE -m 0600 debian/keysas-analyze.default /etc/keysas/keysas-analyze.conf
 	fi
 	if [ -d "/etc/sudoers.d" ]; then
 		install -v -o root -g root -m 0644 debian/keysas-sudoconfig /etc/sudoers.d/010_keysas
@@ -187,6 +200,7 @@ enable_systemd() {
 	systemctl enable keysas-in.service
 	systemctl enable keysas-out.service
 	systemctl enable keysas-transit.service
+	systemctl enable keysas-analyze.service
 	systemctl enable keysas.service --now | true
 	systemctl restart clamav-daemon
 }

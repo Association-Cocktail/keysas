@@ -105,6 +105,12 @@ pub struct FileReport {
     pub corrupted: bool,
     /// True if the file size is too big
     pub toobig: bool,
+    /// True if specialized analysis passed (or was not performed)
+    pub specialized_pass: bool,
+    /// Name of the specialized analyzer used (empty if none)
+    pub specialized_analyzer: String,
+    /// Summary of the specialized analysis findings (empty if none)
+    pub specialized_summary: String,
 }
 
 /// Structure that holds a file metadata
@@ -136,6 +142,12 @@ pub struct FileMetadata {
     pub is_corrupted: bool,
     /// Type of the file
     pub file_type: String,
+    /// True if specialized analysis passed (or was not performed)
+    pub specialized_pass: bool,
+    /// Name of the specialized analyzer used (empty if none)
+    pub specialized_analyzer: String,
+    /// Summary of the specialized analysis findings
+    pub specialized_summary: String,
 }
 
 /// Wrapper around the report metadata creation
@@ -162,6 +174,9 @@ pub fn generate_report_metadata(f: &FileMetadata) -> MetaData {
         size: f.size,
         corrupted: f.is_corrupted,
         toobig: f.is_toobig,
+        specialized_pass: f.specialized_pass,
+        specialized_analyzer: f.specialized_analyzer.clone(),
+        specialized_summary: f.specialized_summary.clone(),
     };
 
     MetaData {
@@ -173,7 +188,8 @@ pub fn generate_report_metadata(f: &FileMetadata) -> MetaData {
             && !f.is_toobig
             && !f.is_corrupted
             && f.is_digest_ok
-            && f.is_type_allowed,
+            && f.is_type_allowed
+            && f.specialized_pass,
         report: new_file_report,
     }
 }
@@ -399,6 +415,9 @@ mod tests_out {
             timestamp: "timestamp".to_string(),
             is_corrupted: false,
             file_type: "txt".to_string(),
+            specialized_pass: true,
+            specialized_analyzer: "".to_string(),
+            specialized_summary: "".to_string(),
         };
 
         // Generate report metadata
@@ -445,6 +464,9 @@ mod tests_out {
             timestamp: "timestamp".to_string(),
             is_corrupted: false,
             file_type: "txt".to_string(),
+            specialized_pass: true,
+            specialized_analyzer: "".to_string(),
+            specialized_summary: "".to_string(),
         };
 
         let meta = generate_report_metadata(&file_data);

@@ -50,6 +50,98 @@ use std::time::Duration;
 use yara::*;
 mod sandbox;
 
+/// Request sent to keysas-analyze
+#[derive(bincode::Encode, Debug)]
+struct AnalyzeRequest {
+    filename: String,
+    file_type: String,
+}
+
+/// Response received from keysas-analyze
+#[derive(bincode::Decode, Debug)]
+struct AnalyzeResponse {
+    performed: bool,
+    passed: bool,
+    analyzer: String,
+    summary: String,
+}
+
+/// Send a file descriptor + metadata to keysas-analyze and get back the analysis result.
+/// Returns (pass=true, empty) when keysas-analyze is unreachable (fail-open).
+fn call_specialized_analyzer(
+    socket_name: &str,
+    fd: i32,
+    filename: &str,
+    file_type: &str,
+) -> (bool, String, String) {
+    let addr = match SocketAddr::from_abstract_name(socket_name) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("keysas-analyze: cannot build socket address: {e}");
+            return (true, String::new(), String::new());
+        }
+    };
+
+    let stream = match UnixStream::connect_addr(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("keysas-analyze unavailable: {e}");
+            return (true, String::new(), String::new());
+        }
+    };
+
+    // Send FD via SCM_RIGHTS + bincode request
+    let req = AnalyzeRequest {
+        filename: filename.to_string(),
+        file_type: file_type.to_string(),
+    };
+    let config = bincode::config::standard();
+    let data = match bincode::encode_to_vec(&req, config) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("keysas-analyze: encode error: {e}");
+            return (true, String::new(), String::new());
+        }
+    };
+
+    let bufs = &[IoSlice::new(&data[..])];
+    let mut ancillary_buffer = [0; 128];
+    let mut ancillary = SocketAncillary::new(&mut ancillary_buffer);
+    ancillary.add_fds(&[fd][..]);
+
+    if let Err(e) = stream.send_vectored_with_ancillary(bufs, &mut ancillary) {
+        warn!("keysas-analyze: send error: {e}");
+        return (true, String::new(), String::new());
+    }
+
+    // Receive response
+    let mut buf = [0u8; 4096];
+    let bufs_in = &mut [IoSliceMut::new(&mut buf[..])][..];
+    let mut ancillary_buf_in = [0u8; 128];
+    let mut ancillary_in = SocketAncillary::new(&mut ancillary_buf_in[..]);
+
+    match stream.recv_vectored_with_ancillary(bufs_in, &mut ancillary_in) {
+        Ok(0) | Err(_) => {
+            warn!("keysas-analyze: no response received");
+            return (true, String::new(), String::new());
+        }
+        Ok(_) => {}
+    }
+
+    match bincode::decode_from_slice::<AnalyzeResponse, _>(&buf, config) {
+        Ok((resp, _)) => {
+            if resp.performed {
+                info!("Specialized analysis by {}: pass={}, summary={}", resp.analyzer, resp.passed, resp.summary);
+            }
+            (resp.passed, resp.analyzer, resp.summary)
+        }
+        Err(e) => {
+            warn!("keysas-analyze: decode error: {e}");
+            (true, String::new(), String::new())
+        }
+    }
+}
+
 const CONFIG_DIRECTORY: &str = "/etc/keysas";
 
 #[derive(bincode::Decode, Debug)]
@@ -75,6 +167,9 @@ struct FileMetadata {
     timestamp: String,
     is_corrupted: bool,
     file_type: String,
+    specialized_pass: bool,
+    specialized_analyzer: String,
+    specialized_summary: String,
 }
 
 #[derive(Debug)]
@@ -85,15 +180,16 @@ struct FileData {
 
 /// Daemon configuration arguments
 struct Configuration {
-    socket_in: String,         // path for the socket with keysas-in
-    socket_out: String,        // path for the socket with keysas-out
-    max_size: u64,             // Maximum size for files
-    magic_list: Vec<String>,   // List of allowed file type
-    clamav_ip: String,         // ClamAV IP address
-    clamav_port: u16,          // ClamAV port number
-    rule_path: String,         // Path to yara rules
-    yara_timeout: i32,         // Timeout for yara
-    yara_rules: Option<Rules>, // Yara rules
+    socket_in: String,            // path for the socket with keysas-in
+    socket_out: String,           // path for the socket with keysas-out
+    socket_analyze: Option<String>, // path for the socket with keysas-analyze (optional)
+    max_size: u64,                // Maximum size for files
+    magic_list: Vec<String>,      // List of allowed file type
+    clamav_ip: String,            // ClamAV IP address
+    clamav_port: u16,             // ClamAV port number
+    rule_path: String,            // Path to yara rules
+    yara_timeout: i32,            // Timeout for yara
+    yara_rules: Option<Rules>,    // Yara rules
     type_off: bool,
 }
 
@@ -186,6 +282,14 @@ fn parse_args() -> Configuration {
                 .help("Disable the magic number check"),
         )
          .arg(
+            Arg::new("socket_analyze")
+                .short('A')
+                .long("socket_analyze")
+                .value_name("<NAMESPACE>")
+                .action(ArgAction::Set)
+                .help("Abstract socket name for keysas-analyze (leave unset to disable)"),
+        )
+         .arg(
             Arg::new("version")
                 .short('v')
                 .long("version")
@@ -198,6 +302,9 @@ fn parse_args() -> Configuration {
     Configuration {
         socket_in: matches.get_one::<String>("socket_in").unwrap().to_string(),
         socket_out: matches.get_one::<String>("socket_out").unwrap().to_string(),
+        socket_analyze: matches
+            .get_one::<String>("socket_analyze")
+            .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
         max_size: *matches.get_one::<u64>("max_size").unwrap(),
         magic_list: matches
             .get_one::<String>("allowed_formats")
@@ -258,6 +365,9 @@ fn parse_messages(messages: Messages, buffer: &[u8]) -> Vec<FileData> {
                             timestamp: meta.0.timestamp,
                             is_corrupted: meta.0.is_corrupted,
                             file_type: "Unknown".into(),
+                            specialized_pass: true,
+                            specialized_analyzer: String::new(),
+                            specialized_summary: String::new(),
                         },
                     })
                 }
@@ -294,7 +404,7 @@ fn get_extension(buf: Vec<u8>) -> String {
 ///     - Yara rules check
 /// Checks results are marked in file metadata.
 /// This function does not modify the files.
-fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker) {
+fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>) {
     for f in files {
         // Start tracking this file
         progress_tracker.start_file(f.md.filename.clone());
@@ -415,6 +525,24 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                         process::exit(1);
                     }
                 }
+                // Specialized analysis (oletools, peepdf, die, etc.)
+                if let Some(sock) = socket_analyze {
+                    progress_tracker.update_step(AnalysisStep::SpecializedAnalysis);
+                    let (pass, analyzer, summary) = call_specialized_analyzer(
+                        sock, nfd, &f.md.filename, &f.md.file_type,
+                    );
+                    f.md.specialized_pass = pass;
+                    f.md.specialized_analyzer = analyzer;
+                    f.md.specialized_summary = summary;
+                    // Seek back after FD was sent to analyze
+                    match unistd::lseek(nfd, 0, unistd::Whence::SeekSet) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            error!("Unable to lseek after specialized analysis: {e:?}, killing myself.");
+                            process::exit(1);
+                        }
+                    }
+                }
                 // Check the magic number
                 progress_tracker.update_step(AnalysisStep::CheckingFileType);
                 // Read only 1Mo of the file to be faster and do not read large files
@@ -451,7 +579,8 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
             && !f.md.is_toobig
             && f.md.is_type_allowed
             && f.md.av_pass
-            && f.md.yara_pass;
+            && f.md.yara_pass
+            && f.md.specialized_pass;
 
         // Mark file as completed
         progress_tracker.complete_file(passed);
@@ -647,7 +776,7 @@ fn main() -> Result<()> {
         progress_tracker.add_files_to_queue(filenames);
 
         // Run check on message received
-        check_files(&mut files, &config, url.clone(), &progress_tracker);
+        check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref());
 
         // Send fd and report to out
         send_files(&files, &out_stream, &progress_tracker);
