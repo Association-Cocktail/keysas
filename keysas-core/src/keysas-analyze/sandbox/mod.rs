@@ -116,14 +116,21 @@ pub fn init() -> Result<()> {
 pub fn landlock_sandbox(tmp_dir: &str) -> Result<(), RulesetError> {
     let abi = ABI::V2;
     let allow_write = make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | MakeReg | RemoveFile});
+    // External tools (diec, strings, python, olevba, pdfid) need Execute in addition to Read
+    let allow_exec = make_bitflags!(AccessFs::{ReadFile | ReadDir | Execute});
 
     let mut ruleset = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))?
         .set_compatibility(CompatLevel::HardRequirement)
         .create()?
-        // Read-only: system libs, Python, external tools
+        // Read + execute: binaries, shared libraries, Python environments
         .add_rules(path_beneath_rules(
-            &["/usr", "/lib", "/lib64", "/etc/ld.so.cache", "/etc/keysas"],
+            &["/usr", "/lib", "/lib64", "/opt"],
+            allow_exec,
+        ))?
+        // Read-only: configuration files (no execute needed)
+        .add_rules(path_beneath_rules(
+            &["/etc"],
             AccessFs::from_read(abi),
         ))?;
 

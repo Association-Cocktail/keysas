@@ -180,13 +180,46 @@ set_acls(){
 	fi
 }
 
-# Install a simple "demo" Yara rule.
+# Install Yara rules.
+# On first install: create the directory and install the minimal index.yar.
+# Always: apply overrides (modified versions of upstream rules with false-positive fixes)
+# and patch index.yar to disable rules that generate systematic false positives.
 install_yara_rule(){
 	if [ ! -d "/usr/share/keysas/" ]; then
 		echo "Installing a minimal YARA index.yar in /usr/share/keysas/"
 		install -d -m 0755 -o root -g root /usr/share/keysas/
 		install -d -m 0755 -o root -g root /usr/share/keysas/rules
-		install -v -m 0644 -o root -g root  yara/index.yar /usr/share/keysas/rules/index.yar
+		install -v -m 0644 -o root -g root yara/index.yar /usr/share/keysas/rules/index.yar
+	fi
+
+	# Always install override files (false-positive fixes for upstream YARA rules).
+	# These overrides are authoritative: they replace the upstream versions on every install.
+	if [ -d "yara/overrides" ] && [ -d "/usr/share/keysas/rules" ]; then
+		echo "Applying YARA rule overrides (false-positive fixes)..."
+		# maldocs overrides
+		if [ -d "yara/overrides/maldocs" ]; then
+			install -d -m 0755 -o root -g root /usr/share/keysas/rules/maldocs
+			for f in yara/overrides/maldocs/*.yar; do
+				[ -f "$f" ] && install -v -m 0644 -o root -g root "$f" \
+					"/usr/share/keysas/rules/maldocs/$(basename "$f")"
+			done
+		fi
+		# packers overrides
+		if [ -d "yara/overrides/packers" ]; then
+			install -d -m 0755 -o root -g root /usr/share/keysas/rules/packers
+			for f in yara/overrides/packers/*.yar; do
+				[ -f "$f" ] && install -v -m 0644 -o root -g root "$f" \
+					"/usr/share/keysas/rules/packers/$(basename "$f")"
+			done
+		fi
+		echo "YARA overrides applied."
+	fi
+
+	# Patch index.yar: disable crypto_signatures (generates FP on all software using TLS/crypto).
+	# This is idempotent: sed only acts if the include line is not already commented out.
+	INDEX="/usr/share/keysas/rules/index.yar"
+	if [ -f "$INDEX" ]; then
+		sed -i 's|^include "\./crypto/crypto_signatures\.yar"|// crypto_signatures.yar disabled: crypto constants present in all TLS/crypto software\n// include "./crypto/crypto_signatures.yar"|' "$INDEX"
 	fi
 }
 
@@ -195,74 +228,62 @@ install_yara_rule(){
 install_analyzer_tools() {
 	echo "--- Installing keysas-analyze external tools ---"
 
-	# Ensure pip is available
-	if ! command -v pip3 >/dev/null 2>&1 && ! python3 -m pip --version >/dev/null 2>&1; then
-		apt-get install -y python3-pip || true
-	fi
-
-	# Determine pip invocation
-	if command -v pip3 >/dev/null 2>&1; then
-		PIP="pip3"
-	elif python3 -m pip --version >/dev/null 2>&1; then
-		PIP="python3 -m pip"
-	else
-		PIP=""
-	fi
-
 	# binutils (strings) — usually present, ensure it is
 	if ! command -v strings >/dev/null 2>&1; then
 		apt-get install -y binutils || \
 			echo "WARNING: binutils not installed. PE string analysis disabled."
 	fi
 
-	# oletools: olevba, oleobj, rtfobj — Office document analysis
+	# oletools: olevba — Office document analysis
+	# Use pipx for isolated install without --break-system-packages
 	if ! command -v olevba >/dev/null 2>&1; then
 		echo "Installing oletools..."
-		if [ -n "$PIP" ]; then
-			# --break-system-packages needed on Debian 12+ / 13
-			$PIP install --break-system-packages oletools 2>/dev/null || \
-			$PIP install oletools 2>/dev/null || \
-			apt-get install -y python3-oletools 2>/dev/null || \
-				echo "WARNING: oletools not installed. Office analysis disabled."
-		else
-			apt-get install -y python3-oletools 2>/dev/null || \
-				echo "WARNING: oletools not installed. Office analysis disabled."
-		fi
+		apt-get install -y python3-oletools 2>/dev/null || \
+		( apt-get install -y pipx 2>/dev/null && \
+		  PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install oletools 2>/dev/null ) || \
+			echo "WARNING: oletools not installed. Office analysis disabled."
 	else
 		echo "oletools already installed."
 	fi
 
-	# peepdf — PDF analysis
-	if ! command -v peepdf >/dev/null 2>&1; then
-		echo "Installing peepdf..."
-		if [ -n "$PIP" ]; then
-			$PIP install --break-system-packages peepdf2 2>/dev/null || \
-			$PIP install peepdf2 2>/dev/null || \
-				echo "WARNING: peepdf not installed. PDF analysis disabled."
+	# pdfid (Didier Stevens) — PDF analysis
+	# peepdf is unmaintained and incompatible with Python 3.13+
+	# pdfid is a pure-Python replacement installed via venv (no --break-system-packages needed)
+	if ! command -v pdfid >/dev/null 2>&1; then
+		echo "Installing pdfid..."
+		if python3 -m venv /opt/pdfid-venv 2>/dev/null \
+			&& /opt/pdfid-venv/bin/pip install pdfid 2>/dev/null; then
+			printf '#!/bin/sh\nexec /opt/pdfid-venv/bin/python3 -m pdfid "$@"\n' \
+				> /usr/local/bin/pdfid
+			chmod +x /usr/local/bin/pdfid
+			echo "pdfid installed."
 		else
-			echo "WARNING: pip not available, peepdf not installed. PDF analysis disabled."
+			echo "WARNING: pdfid not installed. PDF analysis disabled."
 		fi
 	else
-		echo "peepdf already installed."
+		echo "pdfid already installed."
 	fi
 
 	# diec (Detect-It-Easy) — PE/executable analysis
 	if ! command -v diec >/dev/null 2>&1; then
 		echo "Installing diec (Detect-It-Easy)..."
-		# Try apt first (custom repo or future packaging)
+		# Try apt first
 		if apt-get install -y diec 2>/dev/null; then
 			echo "diec installed via apt."
 		else
-			# Download .deb from GitHub releases
-			DIEC_VER="3.09"
+			# Query GitHub API for latest release, use Debian 12 .deb (compatible with Debian 13)
 			DIEC_ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
-			DIEC_DEB="die_${DIEC_VER}_${DIEC_ARCH}.deb"
+			DIEC_VER=$(curl -fsSL --max-time 10 \
+				"https://api.github.com/repos/horsicq/DIE-engine/releases/latest" 2>/dev/null \
+				| python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null \
+				|| echo "3.10")
+			DIEC_DEB="die_${DIEC_VER}_Debian_12_${DIEC_ARCH}.deb"
 			DIEC_URL="https://github.com/horsicq/DIE-engine/releases/download/${DIEC_VER}/${DIEC_DEB}"
 			TMP_DEB=$(mktemp /tmp/diec_XXXXXX.deb)
 			echo "Downloading ${DIEC_DEB} from GitHub..."
-			if curl -fsSL --max-time 60 "${DIEC_URL}" -o "${TMP_DEB}" 2>/dev/null \
+			if curl -fsSL --max-time 120 "${DIEC_URL}" -o "${TMP_DEB}" 2>/dev/null \
 				&& [ -s "${TMP_DEB}" ]; then
-				dpkg -i "${TMP_DEB}" 2>/dev/null || apt-get install -f -y 2>/dev/null || true
+				dpkg -i "${TMP_DEB}" 2>/dev/null; apt-get install -f -y 2>/dev/null || true
 				rm -f "${TMP_DEB}"
 				if command -v diec >/dev/null 2>&1; then
 					echo "diec installed."
@@ -284,7 +305,7 @@ install_analyzer_tools() {
 	echo "--- Analyzer tools installation complete ---"
 	echo "Tool status:"
 	printf "  olevba  : "; command -v olevba  >/dev/null 2>&1 && echo "OK" || echo "MISSING (Office analysis disabled)"
-	printf "  peepdf  : "; command -v peepdf  >/dev/null 2>&1 && echo "OK" || echo "MISSING (PDF analysis disabled)"
+	printf "  pdfid   : "; command -v pdfid   >/dev/null 2>&1 && echo "OK" || echo "MISSING (PDF analysis disabled)"
 	printf "  diec    : "; command -v diec    >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE entropy/packer analysis disabled)"
 	printf "  strings : "; command -v strings >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE string analysis disabled)"
 }

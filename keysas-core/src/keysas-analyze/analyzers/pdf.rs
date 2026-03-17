@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /*
- * PDF analysis using peepdf.
+ * PDF analysis using pdfid (Didier Stevens).
+ * pdfid text output: one keyword per line, format: " /Keyword    N"
  */
 
 use std::fs::File;
 use std::io::{Read, Write};
 use std::process::Command;
 
-/// Blocking patterns: presence means the PDF can execute code or exfiltrate data
-const BLOCKING_PATTERNS: &[&str] = &[
+/// Blocking keywords: if count > 0 the PDF can execute code or exfiltrate data
+const BLOCKING_KEYWORDS: &[&str] = &[
     "/JavaScript",
     "/JS",
     "/OpenAction",
     "/Launch",
     "/RichMedia",
     "/XFA",
-    "shellcode",
+    "/JBIG2Decode",
 ];
 
-/// Informational patterns: suspicious but not blocking alone
-const INFO_PATTERNS: &[&str] = &[
+/// Informational keywords: suspicious but not blocking alone
+const INFO_KEYWORDS: &[&str] = &[
     "/AA",
     "/EmbeddedFile",
     "/AcroForm",
     "/Encrypt",
-    "/URI",
-    "/SubmitForm",
+    "/ObjStm",
 ];
 
 pub fn analyze(fd: i32, filename: &str, tmp_dir: &str) -> (bool, String) {
@@ -40,47 +40,42 @@ pub fn analyze(fd: i32, filename: &str, tmp_dir: &str) -> (bool, String) {
     let mut passed = true;
     let mut tool_available = false;
 
-    match Command::new("peepdf").args(["-j", &tmp_path]).output() {
+    // pdfid text output: lines like " /JavaScript    1"
+    match Command::new("pdfid").arg(&tmp_path).output() {
         Ok(output) => {
             tool_available = true;
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
 
-            if !stderr.is_empty() {
-                log::debug!("peepdf stderr: {stderr}");
-            }
+            let counts = parse_pdfid_output(&stdout);
 
-            for pattern in BLOCKING_PATTERNS {
-                if stdout.contains(pattern) {
-                    blocking_findings.push((*pattern).to_string());
+            for kw in BLOCKING_KEYWORDS {
+                if counts.get(*kw).copied().unwrap_or(0) > 0 {
+                    blocking_findings.push((*kw).to_string());
                     passed = false;
                 }
             }
-            for pattern in INFO_PATTERNS {
-                if stdout.contains(pattern) && !blocking_findings.contains(&pattern.to_string()) {
-                    info_findings.push((*pattern).to_string());
+            for kw in INFO_KEYWORDS {
+                if counts.get(*kw).copied().unwrap_or(0) > 0 {
+                    info_findings.push((*kw).to_string());
                 }
             }
 
-            // Report page count and version count if extractable
-            if let Some(pages) = extract_pdf_stat(&stdout, "\"pages\"") {
-                info_findings.push(format!("{pages} page(s)"));
-            }
-            if let Some(versions) = extract_pdf_stat(&stdout, "\"versions\"") {
-                if versions > 1 {
-                    info_findings.push(format!("{versions} PDF version(s)"));
+            // Report /Page count for context
+            if let Some(&pages) = counts.get("/Page") {
+                if pages > 0 {
+                    info_findings.push(format!("{pages} page(s)"));
                 }
             }
         }
         Err(e) => {
-            log::warn!("peepdf not available or failed: {e}");
+            log::warn!("pdfid not available or failed: {e}");
         }
     }
 
     let _ = std::fs::remove_file(&tmp_path);
 
     let summary = if !tool_available {
-        "peepdf unavailable - analysis skipped".to_string()
+        "pdfid unavailable - analysis skipped".to_string()
     } else {
         build_summary(&blocking_findings, &info_findings)
     };
@@ -88,13 +83,24 @@ pub fn analyze(fd: i32, filename: &str, tmp_dir: &str) -> (bool, String) {
     (passed, summary)
 }
 
-/// Extract a numeric value from a JSON-like key in peepdf output.
-/// e.g. `"pages": 3` → Some(3)
-fn extract_pdf_stat(text: &str, key: &str) -> Option<u64> {
-    let pos = text.find(key)?;
-    let after = text[pos + key.len()..].trim_start_matches([' ', ':']);
-    let end = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
-    after[..end].parse().ok()
+/// Parse pdfid text output into a map of keyword → count.
+/// Each relevant line looks like: " /JavaScript    1"
+fn parse_pdfid_output(text: &str) -> std::collections::HashMap<&str, u64> {
+    let mut map = std::collections::HashMap::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(slash_pos) = trimmed.find('/') {
+            let rest = &trimmed[slash_pos..];
+            // split on whitespace: keyword then count
+            let mut parts = rest.split_whitespace();
+            if let (Some(kw), Some(count_str)) = (parts.next(), parts.next()) {
+                if let Ok(n) = count_str.parse::<u64>() {
+                    map.insert(kw, n);
+                }
+            }
+        }
+    }
+    map
 }
 
 /// Build a human-readable summary.

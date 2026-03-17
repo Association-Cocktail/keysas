@@ -120,9 +120,9 @@
       <a @click="this.displayErrors = false" :class="(this.displayErrors ? null : 'AppGuichet-switcher-active') + ' AppGuichet-switcher-first'">
         {{ $tc('guichet_OUT.files.x_files_verified_available', this.listOutOK.length) }}
       </a>
-      <!--<a @click="this.displayErrors = true" :class="this.displayErrors ? 'AppGuichet-switcher-active' : null">
+      <a v-if="this.listOutError.length > 0" @click="this.displayErrors = true" :class="this.displayErrors ? 'AppGuichet-switcher-active' : null">
         {{ $tc('guichet_OUT.files.x_files_refused', this.listOutError.length) }}
-      </a>-->
+      </a>
     </h5>
 
     <!-- List Detail -->
@@ -133,7 +133,10 @@
       <li class="list-group-item list-out" v-for="(file, index) in this.listOutOK" v-bind:key="index">{{ file.filename }}<span class="file-error">{{ file.error ? $t(file.error) : '' }}</span></li>
     </ul>
     <ul v-if="this.type === 'OUT' && this.listOutError.length > 0 && this.displayErrors" class="AppGuichet-list list-group">
-      <li class="list-group-item list-out-error" v-for="(file, index) in this.listOutError" v-bind:key="index">{{ file.filename }}<!--<span class="file-error">{{ $t(file.error) }}</span>--></li>
+      <li class="list-group-item list-out-error" v-for="(file, index) in this.listOutError" v-bind:key="index">
+        <span class="file-name">{{ file.filename }}</span>
+        <span class="file-error">{{ file.reason ? $t('guichet_OUT.files.error.reason.' + file.reason) : '' }}<span v-if="file.detail" class="file-detail"> — {{ file.detail }}</span></span>
+      </li>
     </ul>
 
     <!-- USB IN Help placeholder -->
@@ -188,10 +191,6 @@ export default {
   },
   watch: {
     files(val, oldVal) {
-      let errorsMessages = {
-        '.ioerror': 'guichet_OUT.files.error.reason.ioerror',
-      };
-
       if(this.type === 'IN') {
         if(val.length === 0 && oldVal.length > 0) {
           setTimeout(() => {
@@ -201,13 +200,10 @@ export default {
         }
 
         val.forEach(element => {
-          let failed = element.endsWith('.ioerror');
-          let slicedElement = failed ? element.substring(0, element.indexOf('.ioerror')) : element;
-
-          if(!this.listInBackup.map(x => x.filename).includes(slicedElement)) {
+          if(!this.listInBackup.map(x => x.filename).includes(element.filename)) {
             this.listInBackup.push({
-              filename: slicedElement,
-              error: failed ? errorsMessages['.ioerror'] : null
+              filename: element.filename,
+              error: element.is_valid ? null : ('guichet_OUT.files.error.reason.' + (element.reason || 'unknown'))
             });
           }
         });
@@ -221,26 +217,18 @@ export default {
         }
 
         val.forEach(element => {
-
-          let fileProcessed = false;
-          Object.entries(errorsMessages).forEach(([key,message]) => {
-            if(element.endsWith(key)) {
-              let slicedElement = element.substring(0, element.indexOf(key));
-              if(!this.listOutError.map(x => x.filename).includes(slicedElement)) {
-                this.listOutError.push({
-                  filename: slicedElement,
-                  error: message
-                });
-              }
-              fileProcessed = true;
+          if(element.is_valid) {
+            if(!this.listOutOK.map(x => x.filename).includes(element.filename)) {
+              this.listOutOK.push({ filename: element.filename, reason: null, detail: null });
             }
-          })
-
-          if (!fileProcessed && !this.listOutOK.map(x => x.filename).includes(element)) {
-            this.listOutOK.push({
-              filename: element,
-              error: null,
-            });
+          } else {
+            if(!this.listOutError.map(x => x.filename).includes(element.filename)) {
+              this.listOutError.push({
+                filename: element.filename,
+                reason: element.reason || 'unknown',
+                detail: element.detail || null,
+              });
+            }
           }
         });
       }
@@ -424,9 +412,24 @@ export default {
 		display: flex;
 		justify-content: space-between;
 
+		.file-name {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			flex-shrink: 1;
+			min-width: 0;
+		}
+
 		.file-error {
 			color: indianred;
-			padding-left: 5px;
+			padding-left: 8px;
+			white-space: nowrap;
+			flex-shrink: 0;
+		}
+
+		.file-detail {
+			opacity: 0.75;
+			font-style: italic;
 		}
 	}
 }
