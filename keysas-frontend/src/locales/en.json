@@ -38,6 +38,9 @@
           "yara": "potential virus detected",
           "toobig": "file too big",
           "ioerror": "I/O error",
+          "corrupted": "corrupted file",
+          "specialized": "dangerous content detected",
+          "digest": "integrity error",
           "unknown": "unknown error"
         }
       }

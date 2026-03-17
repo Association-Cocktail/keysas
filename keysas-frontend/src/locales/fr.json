@@ -39,6 +39,9 @@
           "yara": "virus potentiel détecté",
           "toobig": "fichier trop gros",
           "ioerror": "erreur de transfert",
+          "corrupted": "fichier corrompu",
+          "specialized": "contenu dangereux détecté",
+          "digest": "erreur d'intégrité",
           "unknown": "erreur inconnue"
         }
       }

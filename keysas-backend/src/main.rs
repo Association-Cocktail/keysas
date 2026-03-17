@@ -63,11 +63,19 @@ pub struct Daemons {
     pub status_out: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FileStatus {
+    pub filename: String,
+    pub is_valid: bool,
+    pub reason: Option<String>,
+    pub detail: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GuichetState {
     pub name: String,
     pub analysing: bool,
-    pub files: Vec<String>,
+    pub files: Vec<FileStatus>,
 }
 
 fn landlock_sandbox() -> Result<(), RulesetError> {
@@ -106,22 +114,122 @@ fn read_progress_file(path: &str) -> Option<serde_json::Value> {
     }
 }
 
-/// List files in a directory except hidden ones
-pub fn list_files(directory: &str) -> Result<Vec<String>> {
-    let paths: std::fs::ReadDir = fs::read_dir(directory)?;
-    let mut names = paths
-        .filter_map(|entry| {
-            entry.ok().and_then(|e| {
-                e.path()
-                    .file_name()
-                    .and_then(|n| n.to_str().map(String::from))
-            })
-        })
-        .collect::<Vec<String>>();
-    // Not sending any files starting with dot like .bashrc
-    let re = Regex::new(r"^\.([a-z])*")?;
-    names.retain(|x| !re.is_match(x));
-    Ok(names)
+/// List files from the IN directory as FileStatus, handling .ioerror suffix
+pub fn list_files_in(directory: &str) -> Result<Vec<FileStatus>> {
+    let re = Regex::new(r"^\.")?;
+    let mut result = Vec::new();
+    for entry in fs::read_dir(directory)?.filter_map(|e| e.ok()) {
+        let name = match entry.path().file_name().and_then(|n| n.to_str().map(String::from)) {
+            Some(n) => n,
+            None => continue,
+        };
+        if re.is_match(&name) { continue; }
+        if name.ends_with(".ioerror") {
+            let filename = name[..name.len() - ".ioerror".len()].to_string();
+            result.push(FileStatus { filename, is_valid: false, reason: Some("ioerror".to_string()), detail: None });
+        } else {
+            result.push(FileStatus { filename: name, is_valid: true, reason: None, detail: None });
+        }
+    }
+    Ok(result)
+}
+
+/// List files from the OUT directory as FileStatus, parsing .krp reports for KO files.
+///
+/// Two cases in OUT:
+/// - OK file: data file present, no .krp (KrpMode::FailOnly) or with .krp (KrpMode::Always)
+/// - KO file: only a .krp present, no data file (file was blocked, not copied)
+pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
+    let re = Regex::new(r"^\.")?;
+    let mut data_files: Vec<String> = Vec::new();
+    let mut krp_files: Vec<String> = Vec::new();
+
+    for entry in fs::read_dir(directory)?.filter_map(|e| e.ok()) {
+        let name = match entry.path().file_name().and_then(|n| n.to_str().map(String::from)) {
+            Some(n) => n,
+            None => continue,
+        };
+        if re.is_match(&name) { continue; }
+        if name.ends_with(".sha256") { continue; }
+        if name.ends_with(".krp") {
+            krp_files.push(name);
+        } else {
+            data_files.push(name);
+        }
+    }
+
+    let data_set: std::collections::HashSet<&str> = data_files.iter().map(|s| s.as_str()).collect();
+    let mut result = Vec::new();
+
+    // Data files: present = passed (look up .krp only if KrpMode::Always wrote one)
+    for name in &data_files {
+        let krp_path = format!("{}/{}.krp", directory, name);
+        let (is_valid, reason, detail) = if std::path::Path::new(&krp_path).exists() {
+            parse_krp(&krp_path)
+        } else {
+            (true, None, None)
+        };
+        result.push(FileStatus { filename: name.clone(), is_valid, reason, detail });
+    }
+
+    // .krp-only files: blocked files (data file was not copied to OUT)
+    for krp_name in &krp_files {
+        let original = krp_name[..krp_name.len() - 4].to_string();
+        if data_set.contains(original.as_str()) { continue; } // already handled above
+        let krp_path = format!("{}/{}", directory, krp_name);
+        let (_, reason, detail) = parse_krp(&krp_path);
+        result.push(FileStatus {
+            filename: original,
+            is_valid: false,
+            reason: reason.or(Some("unknown".to_string())),
+            detail,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Parse a .krp JSON report and return (is_valid, reason_key, detail)
+fn parse_krp(krp_path: &str) -> (bool, Option<String>, Option<String>) {
+    let content = match fs::read_to_string(krp_path) {
+        Ok(c) => c,
+        Err(_) => return (true, None, None),
+    };
+    let v: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return (true, None, None),
+    };
+    let meta = &v["metadata"];
+    let is_valid = meta["is_valid"].as_bool().unwrap_or(true);
+    if is_valid {
+        return (true, None, None);
+    }
+    let report = &meta["report"];
+    if report["corrupted"].as_bool() == Some(true) {
+        return (false, Some("corrupted".to_string()), None);
+    }
+    if report["toobig"].as_bool() == Some(true) {
+        return (false, Some("toobig".to_string()), None);
+    }
+    if report["type_allowed"].as_bool() == Some(false) {
+        let detail = meta["file_type"].as_str().filter(|s| !s.is_empty()).map(String::from);
+        return (false, Some("forbidden".to_string()), detail);
+    }
+    if let Some(av_arr) = report["av"].as_array() {
+        if !av_arr.is_empty() {
+            let detail = av_arr.first().and_then(|s| s.as_str()).map(String::from);
+            return (false, Some("antivirus".to_string()), detail);
+        }
+    }
+    let yara = report["yara"].as_str().unwrap_or("");
+    if !yara.is_empty() {
+        return (false, Some("yara".to_string()), Some(yara.chars().take(80).collect()));
+    }
+    if report["specialized_pass"].as_bool() == Some(false) {
+        let detail = report["specialized_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
+        return (false, Some("specialized".to_string()), detail);
+    }
+    (false, Some("digest".to_string()), None)
 }
 
 pub fn daemon_status() -> Result<[bool; 3]> {
@@ -200,8 +308,8 @@ fn main() -> Result<()> {
             let mut websocket = accept_hdr(stream, callback)?;
 
             loop {
-                let files_in = list_files(SAS_IN);
-                let files_out = list_files(SAS_OUT);
+                let files_in = list_files_in(SAS_IN);
+                let files_out = list_files_out(SAS_OUT);
 
                 let mut fs_in = PathBuf::new();
                 fs_in.push(SAS_IN);

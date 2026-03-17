@@ -180,14 +180,171 @@ set_acls(){
 	fi
 }
 
-# Install a simple "demo" Yara rule.
+# Install Yara rules.
+# On first install: create the directory and install the minimal index.yar.
+# Always: apply targeted patches to upstream rules to fix systematic false positives.
+# Patches are idempotent (safe to run multiple times) and surgical (no full-file duplication).
 install_yara_rule(){
 	if [ ! -d "/usr/share/keysas/" ]; then
 		echo "Installing a minimal YARA index.yar in /usr/share/keysas/"
 		install -d -m 0755 -o root -g root /usr/share/keysas/
 		install -d -m 0755 -o root -g root /usr/share/keysas/rules
-		install -v -m 0644 -o root -g root  yara/index.yar /usr/share/keysas/rules/index.yar
+		install -v -m 0644 -o root -g root yara/index.yar /usr/share/keysas/rules/index.yar
 	fi
+
+	[ -d "/usr/share/keysas/rules" ] || return 0
+
+	echo "Applying YARA false-positive patches..."
+
+	# --- index.yar ---
+	# Disable crypto_signatures: detects crypto constants (CRC32, SHA, MD5, AES S-boxes)
+	# present in all software using TLS/crypto — zero detection value, 100% FP rate.
+	INDEX="/usr/share/keysas/rules/index.yar"
+	if [ -f "$INDEX" ]; then
+		sed -i \
+			's|^include "\./crypto/crypto_signatures\.yar"|// crypto_signatures disabled: crypto constants in all TLS software — FP only\n// include "./crypto/crypto_signatures.yar"|' \
+			"$INDEX"
+	fi
+
+	# --- packer_compiler_signatures.yar ---
+	# Make all PECheck helper rules private: they characterize PE structure (IsPE32, IsPE64,
+	# IsDLL, HasOverlay, HasDigitalSignature, ImportTableIsBad, etc.) and are designed to be
+	# used as conditions in other rules, not as standalone detections.
+	# Making them private: they still work as conditions but no longer fire alone.
+	PACKERS="/usr/share/keysas/rules/packers/packer_compiler_signatures.yar"
+	if [ -f "$PACKERS" ]; then
+		sed -i \
+			's/^rule \([A-Za-z_][A-Za-z0-9_]*\) : PECheck$/private rule \1 : PECheck/' \
+			"$PACKERS"
+	fi
+
+	# --- Maldoc_PDF.yar ---
+	# Disable invalid_trailer_structure: triggers on all scanned PDFs (no xref table).
+	# Disable multiple_versions: triggers on every incrementally-saved PDF (standard feature).
+	# Both rules were commented by their own author as having no detection value.
+	PDF_MALDOC="/usr/share/keysas/rules/maldocs/Maldoc_PDF.yar"
+	if [ -f "$PDF_MALDOC" ]; then
+		python3 - "$PDF_MALDOC" <<'PYEOF'
+import sys, re
+
+def disable_rule(content, rule_name, reason):
+    """Wrap a YARA rule block in /* ... */ — idempotent."""
+    # Skip if already disabled
+    if f'// {rule_name} disabled' in content:
+        return content
+    # Match: rule declaration line up to the standalone closing brace
+    # The closing } of a YARA rule is always on its own line (no indentation in these files)
+    pattern = (
+        r'(^rule ' + re.escape(rule_name) + r'(?:[ \t]*:[ \t]*\w+)*[ \t]*\n'
+        r'\{(?:[^}]|\}(?!\n))*\}[ \t]*\n?)'
+    )
+    m = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+    if not m:
+        print(f'  {rule_name}: not found (already patched or not present)')
+        return content
+    original = m.group(1)
+    patched = f'// {rule_name} disabled: {reason}\n/*\n{original}*/\n'
+    print(f'  {rule_name}: disabled')
+    return content.replace(original, patched, 1)
+
+path = sys.argv[1]
+content = open(path).read()
+content = disable_rule(content, 'invalid_trailer_structure',
+    'triggers on scanned PDFs (no xref table) — high FP rate')
+content = disable_rule(content, 'multiple_versions',
+    'triggers on every incrementally-saved PDF (standard feature) — FP on all edited docs')
+open(path, 'w').write(content)
+PYEOF
+	fi
+
+	echo "YARA patches applied."
+}
+
+# Install external tools required by keysas-analyze.
+# Non-fatal: missing tools reduce analysis capability but do not break keysas.
+install_analyzer_tools() {
+	echo "--- Installing keysas-analyze external tools ---"
+
+	# binutils (strings) — usually present, ensure it is
+	if ! command -v strings >/dev/null 2>&1; then
+		apt-get install -y binutils || \
+			echo "WARNING: binutils not installed. PE string analysis disabled."
+	fi
+
+	# oletools: olevba — Office document analysis
+	# Use pipx for isolated install without --break-system-packages
+	if ! command -v olevba >/dev/null 2>&1; then
+		echo "Installing oletools..."
+		apt-get install -y python3-oletools 2>/dev/null || \
+		( apt-get install -y pipx 2>/dev/null && \
+		  PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install oletools 2>/dev/null ) || \
+			echo "WARNING: oletools not installed. Office analysis disabled."
+	else
+		echo "oletools already installed."
+	fi
+
+	# pdfid (Didier Stevens) — PDF analysis
+	# peepdf is unmaintained and incompatible with Python 3.13+
+	# pdfid is a pure-Python replacement installed via venv (no --break-system-packages needed)
+	if ! command -v pdfid >/dev/null 2>&1; then
+		echo "Installing pdfid..."
+		if python3 -m venv /opt/pdfid-venv 2>/dev/null \
+			&& /opt/pdfid-venv/bin/pip install pdfid 2>/dev/null; then
+			printf '#!/bin/sh\nexec /opt/pdfid-venv/bin/python3 -m pdfid "$@"\n' \
+				> /usr/local/bin/pdfid
+			chmod +x /usr/local/bin/pdfid
+			echo "pdfid installed."
+		else
+			echo "WARNING: pdfid not installed. PDF analysis disabled."
+		fi
+	else
+		echo "pdfid already installed."
+	fi
+
+	# diec (Detect-It-Easy) — PE/executable analysis
+	if ! command -v diec >/dev/null 2>&1; then
+		echo "Installing diec (Detect-It-Easy)..."
+		# Try apt first
+		if apt-get install -y diec 2>/dev/null; then
+			echo "diec installed via apt."
+		else
+			# Query GitHub API for latest release, use Debian 12 .deb (compatible with Debian 13)
+			DIEC_ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
+			DIEC_VER=$(curl -fsSL --max-time 10 \
+				"https://api.github.com/repos/horsicq/DIE-engine/releases/latest" 2>/dev/null \
+				| python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" 2>/dev/null \
+				|| echo "3.10")
+			DIEC_DEB="die_${DIEC_VER}_Debian_12_${DIEC_ARCH}.deb"
+			DIEC_URL="https://github.com/horsicq/DIE-engine/releases/download/${DIEC_VER}/${DIEC_DEB}"
+			TMP_DEB=$(mktemp /tmp/diec_XXXXXX.deb)
+			echo "Downloading ${DIEC_DEB} from GitHub..."
+			if curl -fsSL --max-time 120 "${DIEC_URL}" -o "${TMP_DEB}" 2>/dev/null \
+				&& [ -s "${TMP_DEB}" ]; then
+				dpkg -i "${TMP_DEB}" 2>/dev/null; apt-get install -f -y 2>/dev/null || true
+				rm -f "${TMP_DEB}"
+				if command -v diec >/dev/null 2>&1; then
+					echo "diec installed."
+				else
+					echo "WARNING: diec install failed. PE analysis disabled."
+					echo "         Manual: https://github.com/horsicq/DIE-engine/releases"
+				fi
+			else
+				rm -f "${TMP_DEB}"
+				echo "WARNING: Could not download diec (no internet or URL changed)."
+				echo "         PE analysis disabled."
+				echo "         Manual: https://github.com/horsicq/DIE-engine/releases"
+			fi
+		fi
+	else
+		echo "diec already installed."
+	fi
+
+	echo "--- Analyzer tools installation complete ---"
+	echo "Tool status:"
+	printf "  olevba  : "; command -v olevba  >/dev/null 2>&1 && echo "OK" || echo "MISSING (Office analysis disabled)"
+	printf "  pdfid   : "; command -v pdfid   >/dev/null 2>&1 && echo "OK" || echo "MISSING (PDF analysis disabled)"
+	printf "  diec    : "; command -v diec    >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE entropy/packer analysis disabled)"
+	printf "  strings : "; command -v strings >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE string analysis disabled)"
 }
 
 # Enable systemd units.
@@ -212,6 +369,7 @@ main() {
 	install_systemd_units
 	install_config
 	#install_apparmor_profiles
+	install_analyzer_tools
 	set_acls
 	install_yara_rule
 	enable_systemd
