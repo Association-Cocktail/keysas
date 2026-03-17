@@ -182,8 +182,8 @@ set_acls(){
 
 # Install Yara rules.
 # On first install: create the directory and install the minimal index.yar.
-# Always: apply overrides (modified versions of upstream rules with false-positive fixes)
-# and patch index.yar to disable rules that generate systematic false positives.
+# Always: apply targeted patches to upstream rules to fix systematic false positives.
+# Patches are idempotent (safe to run multiple times) and surgical (no full-file duplication).
 install_yara_rule(){
 	if [ ! -d "/usr/share/keysas/" ]; then
 		echo "Installing a minimal YARA index.yar in /usr/share/keysas/"
@@ -192,35 +192,72 @@ install_yara_rule(){
 		install -v -m 0644 -o root -g root yara/index.yar /usr/share/keysas/rules/index.yar
 	fi
 
-	# Always install override files (false-positive fixes for upstream YARA rules).
-	# These overrides are authoritative: they replace the upstream versions on every install.
-	if [ -d "yara/overrides" ] && [ -d "/usr/share/keysas/rules" ]; then
-		echo "Applying YARA rule overrides (false-positive fixes)..."
-		# maldocs overrides
-		if [ -d "yara/overrides/maldocs" ]; then
-			install -d -m 0755 -o root -g root /usr/share/keysas/rules/maldocs
-			for f in yara/overrides/maldocs/*.yar; do
-				[ -f "$f" ] && install -v -m 0644 -o root -g root "$f" \
-					"/usr/share/keysas/rules/maldocs/$(basename "$f")"
-			done
-		fi
-		# packers overrides
-		if [ -d "yara/overrides/packers" ]; then
-			install -d -m 0755 -o root -g root /usr/share/keysas/rules/packers
-			for f in yara/overrides/packers/*.yar; do
-				[ -f "$f" ] && install -v -m 0644 -o root -g root "$f" \
-					"/usr/share/keysas/rules/packers/$(basename "$f")"
-			done
-		fi
-		echo "YARA overrides applied."
-	fi
+	[ -d "/usr/share/keysas/rules" ] || return 0
 
-	# Patch index.yar: disable crypto_signatures (generates FP on all software using TLS/crypto).
-	# This is idempotent: sed only acts if the include line is not already commented out.
+	echo "Applying YARA false-positive patches..."
+
+	# --- index.yar ---
+	# Disable crypto_signatures: detects crypto constants (CRC32, SHA, MD5, AES S-boxes)
+	# present in all software using TLS/crypto — zero detection value, 100% FP rate.
 	INDEX="/usr/share/keysas/rules/index.yar"
 	if [ -f "$INDEX" ]; then
-		sed -i 's|^include "\./crypto/crypto_signatures\.yar"|// crypto_signatures.yar disabled: crypto constants present in all TLS/crypto software\n// include "./crypto/crypto_signatures.yar"|' "$INDEX"
+		sed -i \
+			's|^include "\./crypto/crypto_signatures\.yar"|// crypto_signatures disabled: crypto constants in all TLS software — FP only\n// include "./crypto/crypto_signatures.yar"|' \
+			"$INDEX"
 	fi
+
+	# --- packer_compiler_signatures.yar ---
+	# Make all PECheck helper rules private: they characterize PE structure (IsPE32, IsPE64,
+	# IsDLL, HasOverlay, HasDigitalSignature, ImportTableIsBad, etc.) and are designed to be
+	# used as conditions in other rules, not as standalone detections.
+	# Making them private: they still work as conditions but no longer fire alone.
+	PACKERS="/usr/share/keysas/rules/packers/packer_compiler_signatures.yar"
+	if [ -f "$PACKERS" ]; then
+		sed -i \
+			's/^rule \([A-Za-z_][A-Za-z0-9_]*\) : PECheck$/private rule \1 : PECheck/' \
+			"$PACKERS"
+	fi
+
+	# --- Maldoc_PDF.yar ---
+	# Disable invalid_trailer_structure: triggers on all scanned PDFs (no xref table).
+	# Disable multiple_versions: triggers on every incrementally-saved PDF (standard feature).
+	# Both rules were commented by their own author as having no detection value.
+	PDF_MALDOC="/usr/share/keysas/rules/maldocs/Maldoc_PDF.yar"
+	if [ -f "$PDF_MALDOC" ]; then
+		python3 - "$PDF_MALDOC" <<'PYEOF'
+import sys, re
+
+def disable_rule(content, rule_name, reason):
+    """Wrap a YARA rule block in /* ... */ — idempotent."""
+    # Skip if already disabled
+    if f'// {rule_name} disabled' in content:
+        return content
+    # Match: rule declaration line up to the standalone closing brace
+    # The closing } of a YARA rule is always on its own line (no indentation in these files)
+    pattern = (
+        r'(^rule ' + re.escape(rule_name) + r'(?:[ \t]*:[ \t]*\w+)*[ \t]*\n'
+        r'\{(?:[^}]|\}(?!\n))*\}[ \t]*\n?)'
+    )
+    m = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+    if not m:
+        print(f'  {rule_name}: not found (already patched or not present)')
+        return content
+    original = m.group(1)
+    patched = f'// {rule_name} disabled: {reason}\n/*\n{original}*/\n'
+    print(f'  {rule_name}: disabled')
+    return content.replace(original, patched, 1)
+
+path = sys.argv[1]
+content = open(path).read()
+content = disable_rule(content, 'invalid_trailer_structure',
+    'triggers on scanned PDFs (no xref table) — high FP rate')
+content = disable_rule(content, 'multiple_versions',
+    'triggers on every incrementally-saved PDF (standard feature) — FP on all edited docs')
+open(path, 'w').write(content)
+PYEOF
+	fi
+
+	echo "YARA patches applied."
 }
 
 # Install external tools required by keysas-analyze.
