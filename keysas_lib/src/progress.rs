@@ -30,6 +30,8 @@ pub enum AnalysisStep {
     AntivirusScan,
     /// Scanning with YARA rules
     YaraScan,
+    /// Specialized deep analysis (oletools, peepdf, die, etc.)
+    SpecializedAnalysis,
     /// Verifying digital signature
     VerifyingSignature,
     /// File analysis complete
@@ -99,6 +101,7 @@ impl AnalysisStep {
             AnalysisStep::CheckingFileType => "Vérification du type de fichier...".to_string(),
             AnalysisStep::AntivirusScan => "Scan antivirus en cours...".to_string(),
             AnalysisStep::YaraScan => "Scan YARA en cours...".to_string(),
+            AnalysisStep::SpecializedAnalysis => "Analyse spécialisée en cours...".to_string(),
             AnalysisStep::VerifyingSignature => "Vérification de la signature...".to_string(),
             AnalysisStep::Complete => "Analyse terminée".to_string(),
             AnalysisStep::Failed(reason) => format!("Échec: {}", reason),
@@ -112,7 +115,8 @@ impl AnalysisStep {
             AnalysisStep::CheckingSize => 20,
             AnalysisStep::CheckingFileType => 30,
             AnalysisStep::AntivirusScan => 50,
-            AnalysisStep::YaraScan => 75,
+            AnalysisStep::YaraScan => 65,
+            AnalysisStep::SpecializedAnalysis => 80,
             AnalysisStep::VerifyingSignature => 90,
             AnalysisStep::Complete => 100,
             AnalysisStep::Failed(_) => 0,

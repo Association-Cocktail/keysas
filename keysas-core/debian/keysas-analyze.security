@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# systemd security hardening for keysas-analyze
+
+[Service]
+User=keysas-analyze
+Group=keysas-analyze
+RuntimeDirectory=keysas-analyze
+RuntimeDirectoryMode=0700
+# No network access needed
+IPAddressDeny=any
+ProtectSystem=strict
+PrivateDevices=true
+NoNewPrivileges=true

@@ -1,0 +1,7 @@
+# keysas-analyze configuration
+
+# Abstract socket name (must match ANALYZE_SOCKET in keysas-transit.default)
+SOCKET_ANALYZE=socket_analyze
+
+# Temporary directory for subprocess file analysis
+TMP_DIR=/run/keysas-analyze

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=Keysas-analyze specialized file analysis daemon
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/keysas/keysas-analyze.conf
+ExecStart=/usr/bin/keysas-analyze \
+    --socket_analyze ${SOCKET_ANALYZE} \
+    --tmp_dir ${TMP_DIR}
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

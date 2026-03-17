@@ -47,3 +47,6 @@ CLAMAV_PORT=3310
 # ALLOWED_TYPES="deb,rpm"
 # See https://keysas.fr/administration.html#keysas-transit for more information.
 ALLOWED_TYPES="jpg,png,bmp,mp4,m4v,avi,wmv,mpg,flv,mp3,wav,ogg,epub,mobi,doc,docx,xls,xlsx,ppt,pptx"
+
+# Socket for keysas-analyze specialized analysis (leave empty to disable)
+SOCKET_ANALYZE=socket_analyze

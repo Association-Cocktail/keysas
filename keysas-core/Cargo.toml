@@ -27,6 +27,7 @@ pkcs8 =  {version = "0.10", features = ["encryption", "pem"] }
 landlock = "0.4"
 syscallz = "0.17"
 yara = "0.31"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"
@@ -42,6 +43,10 @@ path = "src/keysas-transit/main.rs"
 [[bin]]
 name = "keysas-out"
 path = "src/keysas-out/main.rs"
+
+[[bin]]
+name = "keysas-analyze"
+path = "src/keysas-analyze/main.rs"
 
 [profile.release]
 lto = true
