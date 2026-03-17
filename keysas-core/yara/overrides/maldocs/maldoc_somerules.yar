@@ -106,10 +106,6 @@ rule maldoc_find_kernel32_base_method_3 : maldoc
         for any i in (1..#a): (((uint8(@a[i] + 5) & 0x07) == (uint8(@a[i] + 8) & 0x07)) and (uint8(@a[i] + 8) <= 0x3F) and (((uint8(@a[i] + 8) & 0x38) >> 3) != (uint8(@a[i] + 8) & 0x07)))
 }
 
-// maldoc_getEIP_method_1 disabled: {E8 00 00 00 00} (call $+5; pop reg) is common in
-// legitimate Position-Independent Code (EFI bootloaders, ISO boot sectors, PIC compilers)
-// — triggers on GRUB, Ubuntu ISO, and other boot code.
-/*
 rule maldoc_getEIP_method_1 : maldoc
 {
     meta:
@@ -119,7 +115,6 @@ rule maldoc_getEIP_method_1 : maldoc
     condition:
         $a
 }
-*/
 
 rule maldoc_getEIP_method_4 : maldoc
 {
