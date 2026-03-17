@@ -11,3 +11,11 @@ SOCKET_OUT=socket_out
 # Pay attention to add a slash at the end
 SAS_OUT=/var/local/out/
 
+# Génération des fichiers de rapport .krp
+# Valeurs possibles :
+#   always    — toujours générer le .krp (défaut, audit complet)
+#   never     — ne jamais générer de .krp
+#   pass_only — .krp uniquement pour les fichiers acceptés
+#   fail_only — .krp uniquement pour les fichiers rejetés
+KRP_MODE=always
+

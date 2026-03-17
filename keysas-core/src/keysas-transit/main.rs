@@ -604,8 +604,9 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
     }
 }
 
-/// This functions send the files filedescriptor and metadata to the socket
-fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &ProgressTracker) {
+/// This functions send the files filedescriptor and metadata to the socket.
+/// Returns Err if the connection to keysas-out is broken (e.g. broken pipe).
+fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &ProgressTracker) -> Result<()> {
     let config = bincode::config::standard();
     for file in files {
         // Get metadata
@@ -624,7 +625,12 @@ fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &Pr
         ancillary.add_fds(&[file.fd][..]);
         match stream.send_vectored_with_ancillary(&bufs[..], &mut ancillary) {
             Ok(_) => info!("File {} sent to Keysas-out.", file.md.filename),
-            Err(e) => error!("Failed to send file {e}."),
+            Err(e) => {
+                error!("Failed to send file to keysas-out: {e}");
+                // Close remaining FD before returning error
+                let _ = unistd::close(file.fd);
+                return Err(anyhow::anyhow!("Broken pipe to keysas-out: {e}"));
+            }
         }
         // Close the file descriptor
         match unistd::close(file.fd) {
@@ -632,6 +638,7 @@ fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &Pr
             Err(e) => error!("Failed to close file descriptor {} for file {}: {e}", file.fd, file.md.filename),
         }
     }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -737,49 +744,60 @@ fn main() -> Result<()> {
         }
     };
 
-    // Wait to be connected with keysas-out before starting to accept files in
-    let (out_stream, _sck_addr) = match sock_out.accept() {
-        Ok(r) => r,
-        Err(e) => {
-            error!("Failed to accept connection: {e}");
-            process::exit(1);
-        }
-    };
-
-    // Allocate buffers for input messages
-    let mut ancillary_buffer_in = [0; 128];
-    let mut ancillary_in = SocketAncillary::new(&mut ancillary_buffer_in[..]);
-
-    // Main loop
-    // 1. receive file descriptors from in
-    // 2. run check on the file
-    // 3. send fd and report to out
+    // Outer loop: re-accept keysas-out connection whenever it reconnects
     loop {
-        // 4128 => filename max 4096 bytes and digest 32 bytes
-        let mut buf_in = [0; 4128];
-        let bufs_in = &mut [IoSliceMut::new(&mut buf_in[..])][..];
-
-        // Listen for message on socket
-        match sock_in.recv_vectored_with_ancillary(bufs_in, &mut ancillary_in) {
-            Ok(size) => info!("Receiving data from keysas-in, message size: {size}"),
-            Err(e) => {
-                warn!("Failed to receive fds from in: {e}");
-                process::exit(1);
+        info!("Waiting for keysas-out to connect...");
+        let (out_stream, _sck_addr) = match sock_out.accept() {
+            Ok(r) => {
+                info!("Keysas-out connected.");
+                r
             }
+            Err(e) => {
+                warn!("Failed to accept keysas-out connection: {e}, retrying...");
+                main_thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+        };
+
+        // Allocate buffers for input messages
+        let mut ancillary_buffer_in = [0; 128];
+        let mut ancillary_in = SocketAncillary::new(&mut ancillary_buffer_in[..]);
+
+        // Inner loop
+        // 1. receive file descriptors from in
+        // 2. run check on the file
+        // 3. send fd and report to out
+        // Break back to outer loop on broken pipe to keysas-out
+        loop {
+            // 4128 => filename max 4096 bytes and digest 32 bytes
+            let mut buf_in = [0; 4128];
+            let bufs_in = &mut [IoSliceMut::new(&mut buf_in[..])][..];
+
+            // Listen for message on socket
+            match sock_in.recv_vectored_with_ancillary(bufs_in, &mut ancillary_in) {
+                Ok(size) => info!("Receiving data from keysas-in, message size: {size}"),
+                Err(e) => {
+                    warn!("Failed to receive fds from in: {e}");
+                    process::exit(1);
+                }
+            }
+
+            // Parse messages received
+            let mut files = parse_messages(ancillary_in.messages(), &buf_in);
+
+            // Add files to progress tracker
+            let filenames: Vec<String> = files.iter().map(|f| f.md.filename.clone()).collect();
+            progress_tracker.add_files_to_queue(filenames);
+
+            // Run check on message received
+            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref());
+
+            // Send fd and report to out; break to re-accept if connection is broken
+            if let Err(e) = send_files(&files, &out_stream, &progress_tracker) {
+                warn!("Lost keysas-out connection: {e}, waiting for reconnect...");
+                break;
+            }
+            main_thread::sleep(Duration::from_millis(100));
         }
-
-        // Parse messages received
-        let mut files = parse_messages(ancillary_in.messages(), &buf_in);
-
-        // Add files to progress tracker
-        let filenames: Vec<String> = files.iter().map(|f| f.md.filename.clone()).collect();
-        progress_tracker.add_files_to_queue(filenames);
-
-        // Run check on message received
-        check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref());
-
-        // Send fd and report to out
-        send_files(&files, &out_stream, &progress_tracker);
-        main_thread::sleep(Duration::from_millis(100));
     }
 }
