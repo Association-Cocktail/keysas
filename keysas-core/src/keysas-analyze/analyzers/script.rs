@@ -91,8 +91,9 @@ pub fn analyze(fd: i32, filename: &str) -> (bool, String) {
     let mut info_findings: Vec<String> = Vec::new();
     let mut passed = true;
 
+    let content_lower = content.to_lowercase();
     for (pattern, blocking, description) in patterns {
-        if content.contains(pattern) {
+        if content_lower.contains(&pattern.to_lowercase()) {
             if *blocking {
                 blocking_findings.push(format!("{pattern} ({description})"));
                 passed = false;

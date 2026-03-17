@@ -241,7 +241,7 @@ pub fn daemon_status() -> Result<[bool; 3]> {
         .output()
         .expect("failed to get status for keysas-in");
     let status_in = String::from_utf8_lossy(&output.stdout);
-    let re = Regex::new(r"Active:")?;
+    let re = Regex::new(r"Active: active")?;
     state[0] = re.is_match(&status_in);
 
     let output = Command::new("systemctl")
@@ -250,7 +250,7 @@ pub fn daemon_status() -> Result<[bool; 3]> {
         .output()
         .expect("failed to get status for keysas-transit");
     let status_in = String::from_utf8_lossy(&output.stdout);
-    let re = Regex::new(r"Active:")?;
+    let re = Regex::new(r"Active: active")?;
     state[1] = re.is_match(&status_in);
 
     let output = Command::new("systemctl")

@@ -172,7 +172,7 @@ fn dispatch(fd: i32, filename: &str, file_type: &str, tmp_dir: &str) -> AnalyzeR
             AnalyzeResponse {
                 performed: true,
                 passed,
-                analyzer: "peepdf".to_string(),
+                analyzer: "pdfid".to_string(),
                 summary,
             }
         }
