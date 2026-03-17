@@ -101,6 +101,39 @@ const KEY_PASSWD: &str = "Keysas007";
 /// Directory containing the station configuration
 const CONFIG_DIRECTORY: &str = "/etc/keysas";
 
+/// Controls when .krp report files are written to the output directory
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KrpMode {
+    /// Always write the .krp (default — full audit trail)
+    Always,
+    /// Never write the .krp
+    Never,
+    /// Write the .krp only for files that passed all checks
+    PassOnly,
+    /// Write the .krp only for files that failed at least one check
+    FailOnly,
+}
+
+impl KrpMode {
+    fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "never"     => KrpMode::Never,
+            "pass_only" => KrpMode::PassOnly,
+            "fail_only" => KrpMode::FailOnly,
+            _           => KrpMode::Always,
+        }
+    }
+
+    fn should_write(&self, is_valid: bool) -> bool {
+        match self {
+            KrpMode::Always    => true,
+            KrpMode::Never     => false,
+            KrpMode::PassOnly  => is_valid,
+            KrpMode::FailOnly  => !is_valid,
+        }
+    }
+}
+
 /// Daemon configuration arguments
 struct Configuration {
     /// Path to the socket with keysas-transit
@@ -109,6 +142,8 @@ struct Configuration {
     sas_out: String,
     /// True if the file are allowed to pass even if yara failed
     yara_clean: bool,
+    /// Controls when .krp report files are written
+    krp_mode: KrpMode,
 }
 
 /// This function parse the command arguments into a structure
@@ -143,6 +178,15 @@ fn parse_args() -> Configuration {
                 .help("Remove the file if a Yara rule matched"),
         )
         .arg(
+            Arg::new("krp_mode")
+                .short('k')
+                .long("krp_mode")
+                .value_name("<MODE>")
+                .default_value("always")
+                .action(ArgAction::Set)
+                .help("When to write .krp reports: always | never | pass_only | fail_only"),
+        )
+        .arg(
             Arg::new("version")
                 .short('v')
                 .long("version")
@@ -156,6 +200,7 @@ fn parse_args() -> Configuration {
         socket_out: matches.get_one::<String>("socket_out").unwrap().to_string(),
         sas_out: matches.get_one::<String>("sas_out").unwrap().to_string(),
         yara_clean: matches.get_flag("yara_clean"),
+        krp_mode: KrpMode::from_str(matches.get_one::<String>("krp_mode").unwrap()),
     }
 }
 
@@ -209,26 +254,28 @@ fn output_files(
             f.md.is_digest_ok = false;
         }
 
-        // Generate a report
+        // Generate a report (always computed, needed for is_valid and file output decision)
         let report_meta = generate_report_metadata(&f.md);
 
         // Bind the report to the file and sign it
         let new_report = bind_and_sign(&f.md, &report_meta, sign_keys, sign_cert)?;
 
-        // Write the report to disk
-        let mut path = PathBuf::new();
-        path.push(conf.sas_out.clone());
-        path.push(&f.md.filename);
-        let path = append_ext("krp", path);
-        let mut report = File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)?;
         let json_report = serde_json::to_string_pretty(&new_report)?;
-
         info!("{json_report}");
-        writeln!(report, "{json_report}")?;
+
+        // Write the .krp report to disk according to krp_mode
+        if conf.krp_mode.should_write(report_meta.is_valid) {
+            let mut path = PathBuf::new();
+            path.push(conf.sas_out.clone());
+            path.push(&f.md.filename);
+            let path = append_ext("krp", path);
+            let mut report = File::options()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)?;
+            writeln!(report, "{json_report}")?;
+        }
 
         // Test if the check passed, if yes write the file to sas_out
         if f.md.is_digest_ok
