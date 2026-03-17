@@ -22,6 +22,7 @@ build: ## Build the binary files
 	@cp target/release/${PROJECT_NAME}-in ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-transit ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-out ${BUILD_DIR}
+	@cp target/release/${PROJECT_NAME}-analyze ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-sign ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-backend ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-io ${BUILD_DIR}
