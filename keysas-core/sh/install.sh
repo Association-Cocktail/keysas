@@ -190,6 +190,105 @@ install_yara_rule(){
 	fi
 }
 
+# Install external tools required by keysas-analyze.
+# Non-fatal: missing tools reduce analysis capability but do not break keysas.
+install_analyzer_tools() {
+	echo "--- Installing keysas-analyze external tools ---"
+
+	# Ensure pip is available
+	if ! command -v pip3 >/dev/null 2>&1 && ! python3 -m pip --version >/dev/null 2>&1; then
+		apt-get install -y python3-pip || true
+	fi
+
+	# Determine pip invocation
+	if command -v pip3 >/dev/null 2>&1; then
+		PIP="pip3"
+	elif python3 -m pip --version >/dev/null 2>&1; then
+		PIP="python3 -m pip"
+	else
+		PIP=""
+	fi
+
+	# binutils (strings) — usually present, ensure it is
+	if ! command -v strings >/dev/null 2>&1; then
+		apt-get install -y binutils || \
+			echo "WARNING: binutils not installed. PE string analysis disabled."
+	fi
+
+	# oletools: olevba, oleobj, rtfobj — Office document analysis
+	if ! command -v olevba >/dev/null 2>&1; then
+		echo "Installing oletools..."
+		if [ -n "$PIP" ]; then
+			# --break-system-packages needed on Debian 12+ / 13
+			$PIP install --break-system-packages oletools 2>/dev/null || \
+			$PIP install oletools 2>/dev/null || \
+			apt-get install -y python3-oletools 2>/dev/null || \
+				echo "WARNING: oletools not installed. Office analysis disabled."
+		else
+			apt-get install -y python3-oletools 2>/dev/null || \
+				echo "WARNING: oletools not installed. Office analysis disabled."
+		fi
+	else
+		echo "oletools already installed."
+	fi
+
+	# peepdf — PDF analysis
+	if ! command -v peepdf >/dev/null 2>&1; then
+		echo "Installing peepdf..."
+		if [ -n "$PIP" ]; then
+			$PIP install --break-system-packages peepdf2 2>/dev/null || \
+			$PIP install peepdf2 2>/dev/null || \
+				echo "WARNING: peepdf not installed. PDF analysis disabled."
+		else
+			echo "WARNING: pip not available, peepdf not installed. PDF analysis disabled."
+		fi
+	else
+		echo "peepdf already installed."
+	fi
+
+	# diec (Detect-It-Easy) — PE/executable analysis
+	if ! command -v diec >/dev/null 2>&1; then
+		echo "Installing diec (Detect-It-Easy)..."
+		# Try apt first (custom repo or future packaging)
+		if apt-get install -y diec 2>/dev/null; then
+			echo "diec installed via apt."
+		else
+			# Download .deb from GitHub releases
+			DIEC_VER="3.09"
+			DIEC_ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
+			DIEC_DEB="die_${DIEC_VER}_${DIEC_ARCH}.deb"
+			DIEC_URL="https://github.com/horsicq/DIE-engine/releases/download/${DIEC_VER}/${DIEC_DEB}"
+			TMP_DEB=$(mktemp /tmp/diec_XXXXXX.deb)
+			echo "Downloading ${DIEC_DEB} from GitHub..."
+			if curl -fsSL --max-time 60 "${DIEC_URL}" -o "${TMP_DEB}" 2>/dev/null \
+				&& [ -s "${TMP_DEB}" ]; then
+				dpkg -i "${TMP_DEB}" 2>/dev/null || apt-get install -f -y 2>/dev/null || true
+				rm -f "${TMP_DEB}"
+				if command -v diec >/dev/null 2>&1; then
+					echo "diec installed."
+				else
+					echo "WARNING: diec install failed. PE analysis disabled."
+					echo "         Manual: https://github.com/horsicq/DIE-engine/releases"
+				fi
+			else
+				rm -f "${TMP_DEB}"
+				echo "WARNING: Could not download diec (no internet or URL changed)."
+				echo "         PE analysis disabled."
+				echo "         Manual: https://github.com/horsicq/DIE-engine/releases"
+			fi
+		fi
+	else
+		echo "diec already installed."
+	fi
+
+	echo "--- Analyzer tools installation complete ---"
+	echo "Tool status:"
+	printf "  olevba  : "; command -v olevba  >/dev/null 2>&1 && echo "OK" || echo "MISSING (Office analysis disabled)"
+	printf "  peepdf  : "; command -v peepdf  >/dev/null 2>&1 && echo "OK" || echo "MISSING (PDF analysis disabled)"
+	printf "  diec    : "; command -v diec    >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE entropy/packer analysis disabled)"
+	printf "  strings : "; command -v strings >/dev/null 2>&1 && echo "OK" || echo "MISSING (PE string analysis disabled)"
+}
+
 # Enable systemd units.
 enable_systemd() {
 	echo "Reloading units..."
@@ -212,6 +311,7 @@ main() {
 	install_systemd_units
 	install_config
 	#install_apparmor_profiles
+	install_analyzer_tools
 	set_acls
 	install_yara_rule
 	enable_systemd
