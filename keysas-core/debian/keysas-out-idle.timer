@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Runs keysas-out-idle.service periodically to purge stale files from OUT.
+
+[Unit]
+Description=keysas OUT idle cleanup timer
+PartOf=keysas.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+AccuracySec=30s
+
+[Install]
+WantedBy=keysas.service

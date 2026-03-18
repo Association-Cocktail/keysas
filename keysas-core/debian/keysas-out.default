@@ -19,3 +19,8 @@ SAS_OUT=/var/local/out/
 #   fail_only — .krp uniquement pour les fichiers rejetés (défaut)
 KRP_MODE=fail_only
 
+# Idle timeout: delete all files in OUT if no transfer has occurred for this many minutes.
+# This prevents sensitive files from accumulating unattended on the device.
+# Set to 0 to disable.
+OUT_IDLE_TIMEOUT=30
+
