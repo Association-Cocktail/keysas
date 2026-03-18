@@ -1,13 +1,42 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # systemd security hardening for keysas-analyze
+# Note: MemoryDenyWriteExecute is NOT set because keysas-analyze spawns Python tools
+# (olevba, pdfid, diec) that require writable+executable memory (JIT, native extensions).
+# Note: @process is required in SystemCallFilter because keysas-analyze uses execve()
+# to launch external analyzer tools.
 
 [Service]
 User=keysas-analyze
 Group=keysas-analyze
 RuntimeDirectory=keysas-analyze
 RuntimeDirectoryMode=0700
+# Syscall filtering: allow file I/O, process management (execve for tools), IPC
+SystemCallFilter=@basic-io @file-system @io-event @process @ipc @system-service seccomp landlock_create_ruleset landlock_add_rule landlock_restrict_self
+SystemCallFilter=~@privileged
+SystemCallFilter=~@resources
+# Drop all capabilities
+CapabilityBoundingSet=
+# Kernel protection
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+# Filesystem protection
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
 # No network access needed
 IPAddressDeny=any
-ProtectSystem=strict
-PrivateDevices=true
-NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+# Process isolation
+PrivateDevices=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+PrivateIPC=yes
+ProtectClock=yes
+InaccessiblePaths=/proc

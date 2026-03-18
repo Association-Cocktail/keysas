@@ -47,7 +47,7 @@
               <span class="progress-filename">{{ progressTRANSIT.current_file.filename }}</span>
               <span>{{ progressTRANSIT.current_file.percentage }}%</span>
             </div>
-            <div class="progress-step">{{ progressTRANSIT.current_file.step_description }}</div>
+            <div class="progress-step">{{ $t(progressTRANSIT.current_file.step_description, progressTRANSIT.current_file.step_description) }}</div>
             <div class="progress">
               <div class="progress-bar progress-bar-transit"
                    role="progressbar"

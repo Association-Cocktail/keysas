@@ -380,11 +380,59 @@ fn parse_messages(messages: Messages, buffer: &[u8]) -> Vec<FileData> {
         .collect()
 }
 
-/// This function returns true if the file type is in the list provided
-fn check_is_extension_allowed(buf: &[u8], conf: &Configuration) -> bool {
+/// Returns true if the buffer looks like plain text (no null bytes, valid UTF-8).
+/// Used as a fallback when infer cannot identify a magic number: text files (.txt, .py,
+/// .csv, .xml, .json, .sh, .ps1, ...) have no binary signature but are legitimate.
+/// Executables always contain null bytes or invalid UTF-8 sequences.
+fn is_likely_text(buf: &[u8]) -> bool {
+    if buf.is_empty() {
+        return true;
+    }
+    let sample = &buf[..buf.len().min(8192)];
+    !sample.contains(&0u8) && std::str::from_utf8(sample).is_ok()
+}
+
+/// ZIP-based formats: infer returns "zip" for all of them because they share the PK magic.
+/// We allow them when the *declared* extension is in the whitelist AND the magic is ZIP.
+/// This means a `malware.zip` renamed to `foo.jar` is allowed only if `jar` is whitelisted,
+/// but keysas-analyze and ClamAV still scan the content.
+const ZIP_BASED_EXTENSIONS: &[&str] = &[
+    "jar", "war", "ear",            // Java archives
+    "docx", "xlsx", "pptx",         // Office Open XML
+    "odt", "ods", "odp",            // LibreOffice
+    "epub",                         // eBook
+    "apk",                          // Android (not whitelisted by default)
+];
+
+/// This function returns true if the file type is in the list provided.
+/// For files with a recognisable magic number, the type must be in the whitelist.
+/// For ZIP-based formats (jar, war, docx…), infer returns "zip": we cross-check
+/// the declared filename extension against the whitelist.
+/// For files without a magic number (plain text), is_likely_text() acts as a guard.
+fn check_is_extension_allowed(buf: &[u8], filename: &str, conf: &Configuration) -> bool {
+    let declared_ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
     match get(buf) {
-        Some(info) => conf.magic_list.contains(&info.extension().to_string()),
-        None => false,
+        Some(info) => {
+            let magic_ext = info.extension().to_string();
+            // Direct magic match
+            if conf.magic_list.contains(&magic_ext) {
+                return true;
+            }
+            // ZIP magic + ZIP-based format declared extension in whitelist
+            if magic_ext == "zip"
+                && ZIP_BASED_EXTENSIONS.contains(&declared_ext.as_str())
+                && conf.magic_list.contains(&declared_ext)
+            {
+                return true;
+            }
+            false
+        }
+        None => is_likely_text(buf),
     }
 }
 /// This function returns true if the file type is in the list provided
@@ -552,7 +600,7 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                 match limited_reader.read_to_end(&mut buffer) {
                     Ok(_) => {
                         if !conf.type_off {
-                            f.md.is_type_allowed = check_is_extension_allowed(&buffer, conf);
+                            f.md.is_type_allowed = check_is_extension_allowed(&buffer, &f.md.filename, conf);
                             f.md.file_type = get_extension(buffer);
                         } else {
                             f.md.is_type_allowed = true;

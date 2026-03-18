@@ -147,6 +147,19 @@ fn detect_category(filename: &str, file_type: &str) -> &'static str {
     ) {
         return "script";
     }
+    // Archive
+    if matches!(
+        ext.as_str(),
+        "zip" | "jar" | "war" | "ear" | "tar" | "gz" | "tgz" | "bz2" | "tbz2" | "xz" | "txz"
+    ) || ft.contains("application/zip")
+        || ft.contains("application/x-tar")
+        || ft.contains("application/gzip")
+        || ft.contains("application/x-bzip2")
+        || ft.contains("application/x-xz")
+        || ft.contains("application/x-gzip")
+    {
+        return "archive";
+    }
 
     "unknown"
 }
@@ -203,6 +216,16 @@ fn dispatch(fd: i32, filename: &str, file_type: &str, tmp_dir: &str) -> AnalyzeR
                 performed: true,
                 passed,
                 analyzer: "lnk-parser".to_string(),
+                summary,
+            }
+        }
+        "archive" => {
+            info!("Dispatching {} to archive analyzer", filename);
+            let (passed, summary) = analyzers::archive::analyze(fd, filename, tmp_dir);
+            AnalyzeResponse {
+                performed: true,
+                passed,
+                analyzer: "archive-scanner".to_string(),
                 summary,
             }
         }

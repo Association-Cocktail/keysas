@@ -42,11 +42,15 @@ CLAMAV_IP=127.0.0.1
 # Clamd server port
 CLAMAV_PORT=3310
 
-# Set here a whitelist (comma separated) of allowed file types
-# For example:
-# ALLOWED_TYPES="deb,rpm"
+# Set here a whitelist (comma separated) of allowed file types.
+# Types with a binary magic number are verified against the file content (not just extension).
+# ZIP-based formats (jar, war, docx, xlsx, pptx, epub, odt…) are verified as ZIP magic + extension.
+# Plain text files (sh, yml, md, jnlp, tf, json, xml, py, csv…) pass automatically
+# via UTF-8/null-byte heuristic — no need to list them here.
+# Archives (zip, tar, gz, bz2, xz, tgz) are content-scanned by keysas-analyze:
+#   encrypted entries and entries containing executables are blocked.
 # See https://keysas.fr/administration.html#keysas-transit for more information.
-ALLOWED_TYPES="jpg,png,bmp,mp4,m4v,avi,wmv,mpg,flv,mp3,wav,ogg,epub,mobi,doc,docx,xls,xlsx,ppt,pptx"
+ALLOWED_TYPES="jpg,png,gif,bmp,webp,tiff,mp4,mkv,avi,wmv,mpg,mov,flv,mp3,wav,ogg,flac,m4a,pdf,epub,mobi,doc,docx,xls,xlsx,ppt,pptx,odt,ods,odp,jar,war,ear,zip,tar,gz,bz2,xz,tgz"
 
 # Socket for keysas-analyze specialized analysis (leave empty to disable)
 SOCKET_ANALYZE=socket_analyze

@@ -67,7 +67,7 @@ impl FileProgress {
         Self {
             filename,
             step: AnalysisStep::Pending,
-            step_description: "En attente de traitement".to_string(),
+            step_description: "progress.pending".to_string(),
             percentage: 0,
             start_time: time_str.clone(),
             current_time: time_str,
@@ -93,18 +93,21 @@ impl FileProgress {
 }
 
 impl AnalysisStep {
+    /// Returns an i18n key for known steps (e.g. "progress.hashing").
+    /// For Failed, returns the raw reason string — displayed as-is since it contains
+    /// dynamic content that cannot be pre-translated.
     pub fn description(&self) -> String {
         match self {
-            AnalysisStep::Pending => "En attente de traitement".to_string(),
-            AnalysisStep::Hashing => "Calcul du hash SHA256...".to_string(),
-            AnalysisStep::CheckingSize => "Vérification de la taille...".to_string(),
-            AnalysisStep::CheckingFileType => "Vérification du type de fichier...".to_string(),
-            AnalysisStep::AntivirusScan => "Scan antivirus en cours...".to_string(),
-            AnalysisStep::YaraScan => "Scan YARA en cours...".to_string(),
-            AnalysisStep::SpecializedAnalysis => "Analyse spécialisée en cours...".to_string(),
-            AnalysisStep::VerifyingSignature => "Vérification de la signature...".to_string(),
-            AnalysisStep::Complete => "Analyse terminée".to_string(),
-            AnalysisStep::Failed(reason) => format!("Échec: {}", reason),
+            AnalysisStep::Pending            => "progress.pending".to_string(),
+            AnalysisStep::Hashing            => "progress.hashing".to_string(),
+            AnalysisStep::CheckingSize       => "progress.checking_size".to_string(),
+            AnalysisStep::CheckingFileType   => "progress.checking_file_type".to_string(),
+            AnalysisStep::AntivirusScan      => "progress.antivirus_scan".to_string(),
+            AnalysisStep::YaraScan           => "progress.yara_scan".to_string(),
+            AnalysisStep::SpecializedAnalysis => "progress.specialized_analysis".to_string(),
+            AnalysisStep::VerifyingSignature => "progress.verifying_signature".to_string(),
+            AnalysisStep::Complete           => "progress.complete".to_string(),
+            AnalysisStep::Failed(reason)     => reason.clone(),
         }
     }
 

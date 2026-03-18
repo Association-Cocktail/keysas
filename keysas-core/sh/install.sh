@@ -9,7 +9,7 @@ HOME_KEYSAS_IN="/var/local/in"
 readonly HOME_KEYSAS_IN
 
 HOME_KEYSAS_TRANSIT="/var/local/transit"
-readonly HOME_KEYSAS_IN
+readonly HOME_KEYSAS_TRANSIT
 
 HOME_KEYSAS_OUT="/var/local/out"
 readonly HOME_KEYSAS_OUT
