@@ -50,7 +50,7 @@ CLAMAV_PORT=3310
 # Archives (zip, tar, gz, bz2, xz, tgz) are content-scanned by keysas-analyze:
 #   encrypted entries and entries containing executables are blocked.
 # See https://keysas.fr/administration.html#keysas-transit for more information.
-ALLOWED_TYPES="jpg,png,gif,bmp,webp,tiff,mp4,mkv,avi,wmv,mpg,mov,flv,mp3,wav,ogg,flac,m4a,pdf,epub,mobi,doc,docx,xls,xlsx,ppt,pptx,odt,ods,odp,jar,war,ear,zip,tar,gz,bz2,xz,tgz"
+ALLOWED_TYPES="jpg,png,gif,bmp,webp,tiff,mp4,mkv,avi,wmv,mpg,mov,flv,mp3,wav,ogg,flac,m4a,pdf,epub,mobi,doc,docx,xls,xlsx,ppt,pptx,odt,ods,odp,jar,war,ear,zip,tar,gz,bz2,xz,tgz,iso,kdbx"
 
 # Socket for keysas-analyze specialized analysis (leave empty to disable)
 SOCKET_ANALYZE=socket_analyze

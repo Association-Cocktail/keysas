@@ -432,7 +432,17 @@ fn check_is_extension_allowed(buf: &[u8], filename: &str, conf: &Configuration) 
             }
             false
         }
-        None => is_likely_text(buf),
+        None => {
+            // KeePass database (.kdbx) — binary, not recognised by infer
+            if declared_ext == "kdbx"
+                && conf.magic_list.contains(&"kdbx".to_string())
+                && (buf.starts_with(&[0x03, 0xd9, 0xa2, 0x9a])
+                    || buf.starts_with(&[0x03, 0xd9, 0xa2, 0x9b]))
+            {
+                return true;
+            }
+            is_likely_text(buf)
+        }
     }
 }
 /// This function returns true if the file type is in the list provided
