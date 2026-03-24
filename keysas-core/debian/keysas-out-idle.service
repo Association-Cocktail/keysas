@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Triggered by keysas-out-idle.timer
+# Deletes files in the OUT directory that are older than OUT_IDLE_TIMEOUT minutes.
+
+[Unit]
+Description=keysas OUT idle cleanup
+After=keysas-out.service
+
+[Service]
+Type=oneshot
+User=keysas-out
+Group=keysas-out
+EnvironmentFile=/etc/keysas/keysas-out.conf
+ExecStart=/bin/sh -c '[ "${OUT_IDLE_TIMEOUT:-0}" -gt 0 ] && find "${SAS_OUT}" -mindepth 1 -type f -mmin "+${OUT_IDLE_TIMEOUT}" -delete -print | while read f; do logger -t keysas-out-idle "purged: $f"; done || true'

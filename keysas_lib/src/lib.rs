@@ -113,7 +113,7 @@ pub fn list_files(directory: &str) -> Result<Vec<String>> {
         })
         .collect::<Vec<String>>();
     // Not sending any files starting with dot like .bashrc
-    let re = Regex::new(r"^\.([a-z])*")?;
+    let re = Regex::new(r"^\.")?;
     names.retain(|x| !re.is_match(x));
     Ok(names)
 }

@@ -133,17 +133,17 @@ export default {
         ;
       };
 
-      //DEACTIVATED FOR DEV FRONT
+      // DEACTIVATED FOR DEV FRONT
       if(!this.debug) {
         //Connection error
         this.connection_udev.onerror = function () {
-          console.log("wsUdev: connection error. Reconnecting...");
-          self.wsUdev();
+          console.log("wsUdev: connection error. Reconnecting in 2s...");
+          setTimeout(() => self.wsUdev(), 2000);
         };
         //Connection closed
         this.connection_udev.onclose = function () {
-          console.log("wsUdev: connection closed. Reconnecting...");
-          self.wsUdev();
+          console.log("wsUdev: connection closed. Reconnecting in 2s...");
+          setTimeout(() => self.wsUdev(), 2000);
         };
       }
     },
@@ -177,17 +177,18 @@ export default {
           (self.progressTRANSIT = parsedData.progress_transit)
       };
 
-      // DECTIVATED FOR DEV FRONT
+      // DEACTIVATED FOR DEV FRONT
       if(!this.debug) {
         //Connection error
         this.connection_backend.onerror = function () {
-          console.log("wsBackend: connection error. Reconnecting...");
-          self.wsBackend();
+          console.log("wsBackend: connection error. Reconnecting in 2s...");
+          setTimeout(() => self.wsBackend(), 2000);
         };
         //Connection closed
         this.connection_backend.onclose = function () {
-          console.log("wsBackend: connection closed. Reconnecting...");
-          self.wsBackend();
+          console.log("wsBackend: connection closed. Reconnecting in 2s...");
+          self.appStarted = false;
+          setTimeout(() => self.wsBackend(), 2000);
         };
       }
     },

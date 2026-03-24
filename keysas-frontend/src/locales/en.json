@@ -105,6 +105,17 @@
       "Reload": "Reload",
       "show_wizard": "Show help",
       "close_wizard": "Close help"
+    },
+    "progress": {
+      "pending": "Waiting to be processed",
+      "hashing": "Computing SHA256 hash...",
+      "checking_size": "Checking file size...",
+      "checking_file_type": "Checking file type...",
+      "antivirus_scan": "Antivirus scan in progress...",
+      "yara_scan": "YARA scan in progress...",
+      "specialized_analysis": "Deep analysis in progress...",
+      "verifying_signature": "Verifying signature...",
+      "complete": "Analysis complete"
     }
   }
 }

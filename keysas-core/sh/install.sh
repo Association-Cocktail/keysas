@@ -9,7 +9,7 @@ HOME_KEYSAS_IN="/var/local/in"
 readonly HOME_KEYSAS_IN
 
 HOME_KEYSAS_TRANSIT="/var/local/transit"
-readonly HOME_KEYSAS_IN
+readonly HOME_KEYSAS_TRANSIT
 
 HOME_KEYSAS_OUT="/var/local/out"
 readonly HOME_KEYSAS_OUT
@@ -99,6 +99,8 @@ install_systemd_units(){
 		install -v -o root -g root -m 0644 debian/keysas-in.service /etc/systemd/system/keysas-in.service
 		install -v -o root -g root -m 0644 debian/keysas-transit.service /etc/systemd/system/keysas-transit.service
 		install -v -o root -g root -m 0644 debian/keysas-out.service /etc/systemd/system/keysas-out.service
+		install -v -o root -g root -m 0644 debian/keysas-out-idle.service /etc/systemd/system/keysas-out-idle.service
+		install -v -o root -g root -m 0644 debian/keysas-out-idle.timer /etc/systemd/system/keysas-out-idle.timer
 		install -v -o root -g root -m 0644 debian/keysas-analyze.service /etc/systemd/system/keysas-analyze.service
 		install -v -o root -g root -m 0644 debian/clamav-daemon.socket /etc/systemd/system/clamav-daemon.socket
 
@@ -356,6 +358,8 @@ enable_systemd() {
 	systemctl enable clamav-daemon.socket
 	systemctl enable keysas-in.service
 	systemctl enable keysas-out.service
+	systemctl enable keysas-out-idle.timer
+	systemctl start keysas-out-idle.timer
 	systemctl enable keysas-transit.service
 	systemctl enable keysas-analyze.service
 	systemctl enable keysas.service --now | true

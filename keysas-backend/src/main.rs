@@ -241,7 +241,7 @@ pub fn daemon_status() -> Result<[bool; 3]> {
         .output()
         .expect("failed to get status for keysas-in");
     let status_in = String::from_utf8_lossy(&output.stdout);
-    let re = Regex::new(r"Active:")?;
+    let re = Regex::new(r"Active: active")?;
     state[0] = re.is_match(&status_in);
 
     let output = Command::new("systemctl")
@@ -250,7 +250,7 @@ pub fn daemon_status() -> Result<[bool; 3]> {
         .output()
         .expect("failed to get status for keysas-transit");
     let status_in = String::from_utf8_lossy(&output.stdout);
-    let re = Regex::new(r"Active:")?;
+    let re = Regex::new(r"Active: active")?;
     state[1] = re.is_match(&status_in);
 
     let output = Command::new("systemctl")
@@ -272,12 +272,13 @@ fn parse_ip(s: &str) -> IResult<&str, &str> {
 fn get_ip() -> Result<Vec<String>> {
     let mut ips = Vec::new();
     let addrs = nix::ifaddrs::getifaddrs()?;
-    let re = Regex::new(r"eth|enp")?;
+    // Exclude loopback and virtual/internal interfaces; keep all physical/virtual ethernet
+    let exclude = Regex::new(r"^(lo|docker|virbr|veth|tun|tap)")?;
     for ifaddr in addrs {
         if let Some(address) = ifaddr.address {
             let addr = address.to_string();
             let (_, ip) = parse_ip(&addr).unwrap();
-            if re.is_match(&ifaddr.interface_name) && ip.parse::<Ipv4Addr>().is_ok() {
+            if !exclude.is_match(&ifaddr.interface_name) && ip.parse::<Ipv4Addr>().is_ok() {
                 ips.push(ip.to_string());
             }
         }
@@ -317,10 +318,11 @@ fn main() -> Result<()> {
 
                 let working_out = Path::new(LOCK_OUT).exists();
 
+                let daemon_states = daemon_status()?;
                 let health: Daemons = Daemons {
-                    status_in: daemon_status()?[0],
-                    status_transit: daemon_status()?[1],
-                    status_out: daemon_status()?[2],
+                    status_in: daemon_states[0],
+                    status_transit: daemon_states[1],
+                    status_out: daemon_states[2],
                 };
 
                 // Read progress files - only send when actively processing
@@ -354,7 +356,8 @@ fn main() -> Result<()> {
                     guichettransit: working_transit,
                     guichetout: guichet_state_out,
                     has_signed_once: has_signed,
-                    keypair_generated: true,
+                    keypair_generated: Path::new("/etc/keysas/file-sign-cl.p8").exists()
+                        && Path::new("/etc/keysas/file-sign-pq.p8").exists(),
                     ip: get_ip()?,
                     progress_in,
                     progress_transit,

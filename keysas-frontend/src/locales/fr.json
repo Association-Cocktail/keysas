@@ -106,6 +106,17 @@
       "reload": "Recharger",
       "show_wizard": "Afficher l'aide",
       "close_wizard": "Fermer l'aide"
+    },
+    "progress": {
+      "pending": "En attente de traitement",
+      "hashing": "Calcul du hash SHA256...",
+      "checking_size": "Vérification de la taille...",
+      "checking_file_type": "Vérification du type de fichier...",
+      "antivirus_scan": "Scan antivirus en cours...",
+      "yara_scan": "Scan YARA en cours...",
+      "specialized_analysis": "Analyse spécialisée en cours...",
+      "verifying_signature": "Vérification de la signature...",
+      "complete": "Analyse terminée"
     }
   }
 }

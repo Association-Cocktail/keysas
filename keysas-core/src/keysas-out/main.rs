@@ -182,7 +182,7 @@ fn parse_args() -> Configuration {
                 .short('k')
                 .long("krp_mode")
                 .value_name("<MODE>")
-                .default_value("always")
+                .default_value("fail_only")
                 .action(ArgAction::Set)
                 .help("When to write .krp reports: always | never | pass_only | fail_only"),
         )
@@ -284,6 +284,7 @@ fn output_files(
             && f.md.av_pass
             && !f.md.is_corrupted
             && (f.md.yara_pass || !conf.yara_clean)
+            && f.md.specialized_pass
         {
             // Output file
             let mut reader = BufReader::new(&file);
