@@ -130,12 +130,34 @@
       <li class="list-group-item list-in" v-for="(file, index) in this.listInBackup" v-bind:key="index">{{ file.filename }}<span class="file-error">{{ file.error ? $t(file.error) : '' }}</span></li>
     </ul>
     <ul v-if="this.type === 'OUT' && this.listOutOK.length > 0 && !this.displayErrors" class="AppGuichet-list list-group">
-      <li class="list-group-item list-out" v-for="(file, index) in this.listOutOK" v-bind:key="index">{{ file.filename }}<span class="file-error">{{ file.error ? $t(file.error) : '' }}</span></li>
+      <li class="list-group-item list-out" v-for="(file, index) in this.listOutOK" v-bind:key="index">
+        <span class="file-name">{{ file.filename }}</span>
+        <span v-if="file.checks" class="file-checks">
+          <span
+            v-for="(pass, key) in file.checks"
+            :key="key"
+            class="check-badge"
+            :class="pass ? 'check-badge-ok' : 'check-badge-ko'"
+            :title="$t('checks.' + key)"
+          >{{ checkIcon(key) }}</span>
+        </span>
+      </li>
     </ul>
     <ul v-if="this.type === 'OUT' && this.listOutError.length > 0 && this.displayErrors" class="AppGuichet-list list-group">
       <li class="list-group-item list-out-error" v-for="(file, index) in this.listOutError" v-bind:key="index">
         <span class="file-name">{{ file.filename }}</span>
-        <span class="file-error">{{ file.reason ? $t('guichet_OUT.files.error.reason.' + file.reason) : '' }}<span v-if="file.detail" class="file-detail"> — {{ file.detail }}</span></span>
+        <span class="file-right">
+          <span v-if="file.checks" class="file-checks">
+            <span
+              v-for="(pass, key) in file.checks"
+              :key="key"
+              class="check-badge"
+              :class="pass ? 'check-badge-ok' : 'check-badge-ko'"
+              :title="$t('checks.' + key)"
+            >{{ checkIcon(key) }}</span>
+          </span>
+          <span class="file-error">{{ file.reason ? $t('guichet_OUT.files.error.reason.' + file.reason) : '' }}<span v-if="file.detail" class="file-detail"> — {{ file.detail }}</span></span>
+        </span>
       </li>
     </ul>
 
@@ -187,7 +209,11 @@ export default {
     clearListIn() {
       this.listInBackup = [];
       return;
-    }
+    },
+    checkIcon(key) {
+      const icons = { hash: '#', size: '⊙', type: 'T', av: '☣', yara: 'Y', specialized: 'S', vt: 'V' };
+      return icons[key] || key.charAt(0).toUpperCase();
+    },
   },
   watch: {
     files(val, oldVal) {
@@ -219,7 +245,12 @@ export default {
         val.forEach(element => {
           if(element.is_valid) {
             if(!this.listOutOK.map(x => x.filename).includes(element.filename)) {
-              this.listOutOK.push({ filename: element.filename, reason: null, detail: null });
+              this.listOutOK.push({
+                filename: element.filename,
+                reason: null,
+                detail: null,
+                checks: element.checks || null,
+              });
             }
           } else {
             if(!this.listOutError.map(x => x.filename).includes(element.filename)) {
@@ -227,6 +258,7 @@ export default {
                 filename: element.filename,
                 reason: element.reason || 'unknown',
                 detail: element.detail || null,
+                checks: element.checks || null,
               });
             }
           }
@@ -411,6 +443,8 @@ export default {
 	.list-out {
 		display: flex;
 		justify-content: space-between;
+		align-items: center;
+		gap: 6px;
 
 		.file-name {
 			overflow: hidden;
@@ -420,9 +454,39 @@ export default {
 			min-width: 0;
 		}
 
+		.file-right {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			flex-shrink: 0;
+		}
+
+		.file-checks {
+			display: flex;
+			gap: 3px;
+			flex-shrink: 0;
+		}
+
+		.check-badge {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 16px;
+			height: 16px;
+			border-radius: 3px;
+			font-size: 0.6rem;
+			font-weight: 700;
+			line-height: 1;
+			color: white;
+			cursor: default;
+			user-select: none;
+
+			&-ok  { background-color: #4caf50; }
+			&-ko  { background-color: #e53935; }
+		}
+
 		.file-error {
 			color: indianred;
-			padding-left: 8px;
 			white-space: nowrap;
 			flex-shrink: 0;
 		}
