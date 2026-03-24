@@ -285,6 +285,7 @@ fn output_files(
             && !f.md.is_corrupted
             && (f.md.yara_pass || !conf.yara_clean)
             && f.md.specialized_pass
+            && f.md.vt_pass
         {
             // Output file
             let mut reader = BufReader::new(&file);

@@ -54,3 +54,23 @@ ALLOWED_TYPES="jpg,png,gif,bmp,webp,tiff,mp4,mkv,avi,wmv,mpg,mov,flv,mp3,wav,ogg
 
 # Socket for keysas-analyze specialized analysis (leave empty to disable)
 SOCKET_ANALYZE=socket_analyze
+
+# VirusTotal integration (optional)
+# Leave VT_API_KEY empty to disable VirusTotal lookups entirely.
+# Only SHA256 hashes are sent — files are never uploaded.
+# VT_API_KEY         → VirusTotal API key
+# VT_API_URL         → base URL for the VT files API (change for on-prem/proxy deployments)
+# VT_FAIL_OPEN       → true = pass the file if VT is unreachable; false = block
+# VT_BLOCK_THRESHOLD → minimum number of malicious detections to block a file
+# VT_TIMEOUT_MS      → HTTP timeout in milliseconds for VT API calls
+# VT_PROBE_HOST      → host:port used to check internet connectivity before each VT call
+# VT_PROBE_TIMEOUT_MS→ timeout in ms for the connectivity probe
+# VT_CACHE_TTL_SECS  → how long (in seconds) VT results are cached in memory
+VT_API_KEY=
+VT_API_URL=https://www.virustotal.com/api/v3/files
+VT_FAIL_OPEN=true
+VT_BLOCK_THRESHOLD=3
+VT_TIMEOUT_MS=3000
+VT_PROBE_HOST=8.8.8.8:53
+VT_PROBE_TIMEOUT_MS=2000
+VT_CACHE_TTL_SECS=3600

@@ -32,6 +32,8 @@ pub enum AnalysisStep {
     YaraScan,
     /// Specialized deep analysis (oletools, peepdf, die, etc.)
     SpecializedAnalysis,
+    /// VirusTotal hash lookup
+    VirusTotalScan,
     /// Verifying digital signature
     VerifyingSignature,
     /// File analysis complete
@@ -105,6 +107,7 @@ impl AnalysisStep {
             AnalysisStep::AntivirusScan      => "progress.antivirus_scan".to_string(),
             AnalysisStep::YaraScan           => "progress.yara_scan".to_string(),
             AnalysisStep::SpecializedAnalysis => "progress.specialized_analysis".to_string(),
+            AnalysisStep::VirusTotalScan     => "progress.virustotal_scan".to_string(),
             AnalysisStep::VerifyingSignature => "progress.verifying_signature".to_string(),
             AnalysisStep::Complete           => "progress.complete".to_string(),
             AnalysisStep::Failed(reason)     => reason.clone(),
@@ -119,8 +122,9 @@ impl AnalysisStep {
             AnalysisStep::CheckingFileType => 30,
             AnalysisStep::AntivirusScan => 50,
             AnalysisStep::YaraScan => 65,
-            AnalysisStep::SpecializedAnalysis => 80,
-            AnalysisStep::VerifyingSignature => 90,
+            AnalysisStep::SpecializedAnalysis => 75,
+            AnalysisStep::VirusTotalScan     => 85,
+            AnalysisStep::VerifyingSignature => 93,
             AnalysisStep::Complete => 100,
             AnalysisStep::Failed(_) => 0,
         }

@@ -229,6 +229,10 @@ fn parse_krp(krp_path: &str) -> (bool, Option<String>, Option<String>) {
         let detail = report["specialized_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
         return (false, Some("specialized".to_string()), detail);
     }
+    if report["vt_pass"].as_bool() == Some(false) {
+        let detail = report["vt_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
+        return (false, Some("virustotal".to_string()), detail);
+    }
     (false, Some("digest".to_string()), None)
 }
 
