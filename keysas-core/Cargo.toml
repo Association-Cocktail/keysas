@@ -54,6 +54,10 @@ path = "src/keysas-out/main.rs"
 name = "keysas-analyze"
 path = "src/keysas-analyze/main.rs"
 
+[[bin]]
+name = "keysas-virustotal"
+path = "src/keysas-virustotal/main.rs"
+
 [profile.release]
 lto = true
 opt-level = 3
