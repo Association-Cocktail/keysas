@@ -211,7 +211,7 @@ export default {
       return;
     },
     checkIcon(key) {
-      const icons = { hash: '#', size: '⊙', type: 'T', av: '☣', yara: 'Y', specialized: '🛡', vt: '☢' };
+      const icons = { hash: '#', size: '⊙', type: 'T', av: '☣', yara: '🏷', specialized: '🛡', vt: '☢' };
       return icons[key] || key.charAt(0).toUpperCase();
     },
   },
