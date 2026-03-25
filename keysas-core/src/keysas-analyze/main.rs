@@ -160,6 +160,10 @@ fn detect_category(filename: &str, file_type: &str) -> &'static str {
     {
         return "archive";
     }
+    // ISO 9660
+    if ext == "iso" || ft.contains("iso9660") || ft.contains("x-iso") {
+        return "iso";
+    }
 
     "unknown"
 }
@@ -175,7 +179,7 @@ fn dispatch(fd: i32, filename: &str, file_type: &str, tmp_dir: &str) -> AnalyzeR
             AnalyzeResponse {
                 performed: true,
                 passed,
-                analyzer: "oletools".to_string(),
+                analyzer: "office-native".to_string(),
                 summary,
             }
         }
@@ -195,7 +199,7 @@ fn dispatch(fd: i32, filename: &str, file_type: &str, tmp_dir: &str) -> AnalyzeR
             AnalyzeResponse {
                 performed: true,
                 passed,
-                analyzer: "die+strings".to_string(),
+                analyzer: "goblin".to_string(),
                 summary,
             }
         }
@@ -226,6 +230,16 @@ fn dispatch(fd: i32, filename: &str, file_type: &str, tmp_dir: &str) -> AnalyzeR
                 performed: true,
                 passed,
                 analyzer: "archive-scanner".to_string(),
+                summary,
+            }
+        }
+        "iso" => {
+            info!("Dispatching {} to ISO analyzer", filename);
+            let (passed, summary) = analyzers::iso::analyze(fd, filename, tmp_dir);
+            AnalyzeResponse {
+                performed: true,
+                passed,
+                analyzer: "iso-scanner".to_string(),
                 summary,
             }
         }

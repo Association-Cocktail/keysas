@@ -74,6 +74,9 @@ pub struct FileStatus {
     /// Absent = check not available (no .krp) or check not performed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checks: Option<std::collections::HashMap<String, bool>>,
+    /// Human-readable detail per check (shown on icon click in the UI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_details: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -131,9 +134,9 @@ pub fn list_files_in(directory: &str) -> Result<Vec<FileStatus>> {
         if re.is_match(&name) { continue; }
         if name.ends_with(".ioerror") {
             let filename = name[..name.len() - ".ioerror".len()].to_string();
-            result.push(FileStatus { filename, is_valid: false, reason: Some("ioerror".to_string()), detail: None, checks: None });
+            result.push(FileStatus { filename, is_valid: false, reason: Some("ioerror".to_string()), detail: None, checks: None, check_details: None });
         } else {
-            result.push(FileStatus { filename: name, is_valid: true, reason: None, detail: None, checks: None });
+            result.push(FileStatus { filename: name, is_valid: true, reason: None, detail: None, checks: None, check_details: None });
         }
     }
     Ok(result)
@@ -169,12 +172,12 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
     // Data files: present = passed (look up .krp only if KrpMode::Always wrote one)
     for name in &data_files {
         let krp_path = format!("{}/{}.krp", directory, name);
-        let (is_valid, reason, detail, checks) = if std::path::Path::new(&krp_path).exists() {
+        let (is_valid, reason, detail, checks, check_details) = if std::path::Path::new(&krp_path).exists() {
             parse_krp(&krp_path)
         } else {
-            (true, None, None, None)
+            (true, None, None, None, None)
         };
-        result.push(FileStatus { filename: name.clone(), is_valid, reason, detail, checks });
+        result.push(FileStatus { filename: name.clone(), is_valid, reason, detail, checks, check_details });
     }
 
     // .krp-only files: blocked files (data file was not copied to OUT)
@@ -182,13 +185,14 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
         let original = krp_name[..krp_name.len() - 4].to_string();
         if data_set.contains(original.as_str()) { continue; } // already handled above
         let krp_path = format!("{}/{}", directory, krp_name);
-        let (_, reason, detail, checks) = parse_krp(&krp_path);
+        let (_, reason, detail, checks, check_details) = parse_krp(&krp_path);
         result.push(FileStatus {
             filename: original,
             is_valid: false,
             reason: reason.or(Some("unknown".to_string())),
             detail,
             checks,
+            check_details,
         });
     }
 
@@ -196,87 +200,130 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
 }
 
 /// Parse a .krp JSON report.
-/// Returns `(is_valid, reason_key, detail, checks)` where `checks` maps each
-/// check identifier to its pass/fail result (true = passed).
-fn parse_krp(krp_path: &str) -> (bool, Option<String>, Option<String>, Option<std::collections::HashMap<String, bool>>) {
+/// Returns `(is_valid, reason_key, detail, checks, check_details)`.
+fn parse_krp(krp_path: &str) -> (
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<std::collections::HashMap<String, bool>>,
+    Option<std::collections::HashMap<String, String>>,
+) {
     let content = match fs::read_to_string(krp_path) {
         Ok(c) => c,
-        Err(_) => return (true, None, None, None),
+        Err(_) => return (true, None, None, None, None),
     };
     let v: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return (true, None, None, None),
+        Err(_) => return (true, None, None, None, None),
     };
     let meta = &v["metadata"];
     let report = &meta["report"];
     let is_valid = meta["is_valid"].as_bool().unwrap_or(true);
 
-    // Build per-check map
+    // Build per-check pass/fail map
     let mut checks = std::collections::HashMap::new();
+    // Build per-check human-readable detail map
+    let mut check_details = std::collections::HashMap::new();
 
     let av_ok = report["av"].as_array().map(|a| a.is_empty()).unwrap_or(true);
     checks.insert("av".to_string(), av_ok);
+    if !av_ok {
+        let av_detail = report["av"].as_array()
+            .map(|a| a.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        check_details.insert("av".to_string(), av_detail);
+    }
 
-    let yara_ok = report["yara"].as_str().unwrap_or("").is_empty();
+    let yara_str = report["yara"].as_str().unwrap_or("");
+    let yara_ok = yara_str.is_empty();
     checks.insert("yara".to_string(), yara_ok);
+    if !yara_ok {
+        check_details.insert("yara".to_string(), yara_str.to_string());
+    }
 
-    checks.insert("type".to_string(), report["type_allowed"].as_bool().unwrap_or(true));
-    checks.insert("size".to_string(), !report["toobig"].as_bool().unwrap_or(false));
+    let type_ok = report["type_allowed"].as_bool().unwrap_or(true);
+    checks.insert("type".to_string(), type_ok);
+    if !type_ok {
+        let file_type = meta["file_type"].as_str().unwrap_or("").to_string();
+        check_details.insert("type".to_string(), format!("Type refusé: {file_type}"));
+    }
+
+    let size_ok = !report["toobig"].as_bool().unwrap_or(false);
+    checks.insert("size".to_string(), size_ok);
+    if !size_ok {
+        let size_val = report["size"].as_u64().unwrap_or(0);
+        check_details.insert("size".to_string(), format!("Fichier trop grand: {size_val} octets"));
+    }
 
     let digest_ok = report["is_digest_ok"].as_bool().unwrap_or(true);
     let not_corrupted = !report["corrupted"].as_bool().unwrap_or(false);
     checks.insert("hash".to_string(), digest_ok && not_corrupted);
+    if !not_corrupted {
+        check_details.insert("hash".to_string(), "Fichier corrompu".to_string());
+    } else if !digest_ok {
+        check_details.insert("hash".to_string(), "Empreinte invalide".to_string());
+    }
 
     // Specialized — only if actually performed
     let analyzer = report["specialized_analyzer"].as_str().unwrap_or("");
     if !analyzer.is_empty() || report["specialized_pass"].as_bool() == Some(false) {
         checks.insert("specialized".to_string(), report["specialized_pass"].as_bool().unwrap_or(true));
+        let sp_summary = report["specialized_summary"].as_str().unwrap_or("");
+        check_details.insert("specialized".to_string(),
+            if analyzer.is_empty() { sp_summary.to_string() }
+            else if sp_summary.is_empty() { analyzer.to_string() }
+            else { format!("{analyzer}: {sp_summary}") });
     }
 
     // VirusTotal — only if a lookup was actually done (non-empty summary)
     let vt_summary = report["vt_summary"].as_str().unwrap_or("");
     if !vt_summary.is_empty() {
-        checks.insert("vt".to_string(), report["vt_pass"].as_bool().unwrap_or(true));
+        let vt_pass = report["vt_pass"].as_bool().unwrap_or(true);
+        checks.insert("vt".to_string(), vt_pass);
+        let vt_detections = report["vt_detections"].as_u64().unwrap_or(0);
+        check_details.insert("vt".to_string(),
+            if vt_detections > 0 { format!("{vt_detections} détection(s) — {vt_summary}") }
+            else { vt_summary.to_string() });
     }
 
     if is_valid {
-        return (true, None, None, Some(checks));
+        return (true, None, None, Some(checks), Some(check_details));
     }
 
     // Primary failure reason
     if !not_corrupted {
-        return (false, Some("corrupted".to_string()), None, Some(checks));
+        return (false, Some("corrupted".to_string()), None, Some(checks), Some(check_details));
     }
     if report["toobig"].as_bool() == Some(true) {
-        return (false, Some("toobig".to_string()), None, Some(checks));
+        return (false, Some("toobig".to_string()), None, Some(checks), Some(check_details));
     }
     if !digest_ok {
-        return (false, Some("digest".to_string()), None, Some(checks));
+        return (false, Some("digest".to_string()), None, Some(checks), Some(check_details));
     }
     if report["type_allowed"].as_bool() == Some(false) {
         let detail = meta["file_type"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("forbidden".to_string()), detail, Some(checks));
+        return (false, Some("forbidden".to_string()), detail, Some(checks), Some(check_details));
     }
     if !av_ok {
         let detail = report["av"].as_array()
             .and_then(|a| a.first())
             .and_then(|s| s.as_str())
             .map(String::from);
-        return (false, Some("antivirus".to_string()), detail, Some(checks));
+        return (false, Some("antivirus".to_string()), detail, Some(checks), Some(check_details));
     }
     if !yara_ok {
-        let detail = Some(report["yara"].as_str().unwrap_or("").chars().take(80).collect());
-        return (false, Some("yara".to_string()), detail, Some(checks));
+        let detail = Some(yara_str.chars().take(80).collect());
+        return (false, Some("yara".to_string()), detail, Some(checks), Some(check_details));
     }
     if report["specialized_pass"].as_bool() == Some(false) {
         let detail = report["specialized_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("specialized".to_string()), detail, Some(checks));
+        return (false, Some("specialized".to_string()), detail, Some(checks), Some(check_details));
     }
     if report["vt_pass"].as_bool() == Some(false) {
         let detail = report["vt_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("virustotal".to_string()), detail, Some(checks));
+        return (false, Some("virustotal".to_string()), detail, Some(checks), Some(check_details));
     }
-    (false, Some("digest".to_string()), None, Some(checks))
+    (false, Some("digest".to_string()), None, Some(checks), Some(check_details))
 }
 
 pub fn daemon_status() -> Result<[bool; 3]> {

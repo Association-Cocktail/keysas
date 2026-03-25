@@ -1,140 +1,274 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /*
- * Office document analysis using oletools (olevba, oleobj, rtfobj).
+ * Office document analysis — native Rust, no external tools.
+ *
+ * OOXML (.docx/.xlsx/.pptx): ZIP-based; detect vbaProject.bin, scan XML.
+ * OLE  (.doc/.xls/.ppt/.rtf): CFB parser (cfb crate) + byte scan for VBA.
+ * RTF: byte scan for \object / \objocx.
  */
 
 use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::process::Command;
+use std::io::{Cursor, Read};
 
-/// High-risk olevba indicators (blocking)
-const HIGH_RISK_INDICATORS: &[&str] = &[
-    "AutoExec",
-    "Shell",
-    "WScript",
-    "Dropper",
-    "VBA stomping",
-    "Auto_Open",
-    "AutoOpen",
-    "Document_Open",
-    "Workbook_Open",
+/// VBA patterns blocking when found in macro code or stream bytes.
+const HIGH_RISK_PATTERNS: &[&[u8]] = &[
+    b"AutoExec",
+    b"AutoOpen",
+    b"Auto_Open",
+    b"Document_Open",
+    b"Workbook_Open",
+    b"Shell",
+    b"WScript",
+    b"CreateObject",
+    b"VBA stomping",
 ];
 
-/// Informational olevba indicators (non-blocking, worth reporting)
-const INFO_INDICATORS: &[&str] = &[
-    "Base64 String",
-    "Hex String",
-    "Dridex",
-    "IOC",
-    "Suspicious",
-    "CreateObject",
-    "Chr(",
-    "StrReverse",
+/// Informational patterns — suspicious but not blocking alone.
+const INFO_PATTERNS: &[&[u8]] = &[
+    b"Base64",
+    b"StrReverse",
+    b"Chr(",
+    b"Hex(",
+    b"URLDownloadToFile",
+    b"WinExec",
+    b"CreateRemoteThread",
 ];
 
-pub fn analyze(fd: i32, filename: &str, tmp_dir: &str) -> (bool, String) {
-    let tmp_path = format!("{}/analyze_{}", tmp_dir, sanitize_filename(filename));
-    if let Err(e) = write_fd_to_tmp(fd, &tmp_path) {
-        log::warn!("office::analyze: failed to write temp file: {e}");
-        return (true, "temp file write failed".to_string());
-    }
-
-    let mut blocking_findings: Vec<String> = Vec::new();
-    let mut info_findings: Vec<String> = Vec::new();
-    let mut passed = true;
-    let mut tools_run: Vec<&str> = Vec::new();
-
-    // Run olevba --json
-    match Command::new("olevba").args(["--json", &tmp_path]).output() {
-        Ok(output) => {
-            tools_run.push("olevba");
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            // Check macro presence
-            let has_macros = stdout.contains("\"macros\"") && !stdout.contains("\"macros\": []");
-
-            if has_macros {
-                for indicator in HIGH_RISK_INDICATORS {
-                    if stdout.contains(indicator) {
-                        blocking_findings.push(indicator.to_string());
-                        passed = false;
-                    }
-                }
-                for indicator in INFO_INDICATORS {
-                    if stdout.contains(indicator)
-                        && !blocking_findings.contains(&indicator.to_string())
-                    {
-                        info_findings.push(indicator.to_string());
-                    }
-                }
-                if blocking_findings.is_empty() && info_findings.is_empty() {
-                    info_findings.push("macros present (no high-risk indicator)".to_string());
-                }
-            } else {
-                info_findings.push("no macros".to_string());
-            }
-        }
+pub fn analyze(fd: i32, filename: &str, _tmp_dir: &str) -> (bool, String) {
+    let buf = match read_fd(fd) {
+        Ok(b) => b,
         Err(e) => {
-            log::warn!("olevba not available or failed: {e}");
-            info_findings.push("olevba unavailable".to_string());
+            log::warn!("office::analyze: cannot read fd: {e}");
+            return (true, "read error - analysis skipped".to_string());
         }
-    }
+    };
 
-    let ext = Path::new(filename)
+    let ext = std::path::Path::new(filename)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
 
-    // Run oleobj on binary OLE formats
-    if matches!(ext.as_str(), "doc" | "xls" | "ppt") {
-        match Command::new("oleobj").args(["--json", &tmp_path]).output() {
-            Ok(output) => {
-                tools_run.push("oleobj");
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("executable") || stdout.contains(".exe") || stdout.contains(".dll") {
-                    blocking_findings.push("OLE embedded executable".to_string());
-                    passed = false;
-                } else if stdout.contains("\"objects\"") && !stdout.contains("\"objects\": []") {
-                    info_findings.push("OLE embedded objects (non-executable)".to_string());
+    match ext.as_str() {
+        "docx" | "xlsx" | "pptx" => analyze_ooxml(&buf),
+        "doc" | "xls" | "ppt" => analyze_ole(&buf),
+        "rtf" => analyze_rtf(&buf),
+        _ => (true, "unsupported office format".to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OOXML (.docx / .xlsx / .pptx)
+// ---------------------------------------------------------------------------
+
+fn analyze_ooxml(buf: &[u8]) -> (bool, String) {
+    let cursor = Cursor::new(buf);
+    let mut archive = match zip::ZipArchive::new(cursor) {
+        Ok(a) => a,
+        Err(e) => {
+            log::warn!("office::ooxml: ZIP parse error: {e}");
+            return (true, "ZIP parse error - analysis skipped".to_string());
+        }
+    };
+
+    let mut blocking_findings: Vec<String> = Vec::new();
+    let mut info_findings: Vec<String> = Vec::new();
+    let mut passed = true;
+
+    // Detect VBA project (macros)
+    let has_vba = (0..archive.len()).any(|i| {
+        archive
+            .by_index(i)
+            .ok()
+            .map(|f| f.name().to_lowercase().ends_with("vbaproject.bin"))
+            .unwrap_or(false)
+    });
+
+    if has_vba {
+        // Scan the raw vbaProject.bin bytes for high-risk patterns
+        // (many VBA strings are stored uncompressed or partially readable)
+        for i in 0..archive.len() {
+            if let Ok(mut entry) = archive.by_index(i) {
+                if entry.name().to_lowercase().ends_with("vbaproject.bin") {
+                    let mut vba_bytes = Vec::new();
+                    if entry.read_to_end(&mut vba_bytes).is_ok() {
+                        let (block, info) = scan_patterns(&vba_bytes);
+                        blocking_findings.extend(block);
+                        info_findings.extend(info);
+                    }
+                    break;
                 }
             }
-            Err(e) => {
-                log::warn!("oleobj not available: {e}");
-                info_findings.push("oleobj unavailable".to_string());
+        }
+        if blocking_findings.is_empty() {
+            info_findings.push("VBA macros present (no high-risk pattern detected)".to_string());
+        } else {
+            passed = false;
+        }
+    } else {
+        info_findings.push("no macros".to_string());
+    }
+
+    // Scan relationship files for suspicious external targets
+    for i in 0..archive.len() {
+        if let Ok(mut entry) = archive.by_index(i) {
+            let name = entry.name().to_lowercase();
+            if name.ends_with(".rels") {
+                let mut xml = String::new();
+                if entry.read_to_string(&mut xml).is_ok() {
+                    if xml.contains("http://") || xml.contains("https://") || xml.contains("ftp://") {
+                        info_findings.push("external relationship target".to_string());
+                    }
+                    // Embedded OLE objects in OOXML
+                    if xml.contains("oleObject") {
+                        info_findings.push("embedded OLE object".to_string());
+                    }
+                }
             }
         }
     }
 
-    // Run rtfobj on RTF files
-    if ext == "rtf" {
-        match Command::new("rtfobj").args(["--json", &tmp_path]).output() {
-            Ok(output) => {
-                tools_run.push("rtfobj");
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("executable") || stdout.contains(".exe") || stdout.contains(".dll") {
-                    blocking_findings.push("RTF embedded executable".to_string());
-                    passed = false;
-                } else if stdout.contains("\"objects\"") && !stdout.contains("\"objects\": []") {
-                    info_findings.push("RTF embedded objects (non-executable)".to_string());
-                }
-            }
-            Err(e) => {
-                log::warn!("rtfobj not available: {e}");
-                info_findings.push("rtfobj unavailable".to_string());
-            }
-        }
-    }
-
-    let _ = std::fs::remove_file(&tmp_path);
-
-    // Build summary: blocking findings first, then informational
     let summary = build_summary(&blocking_findings, &info_findings);
     (passed, summary)
 }
 
-/// Build a human-readable summary from blocking and informational findings.
+// ---------------------------------------------------------------------------
+// OLE/CFB (.doc / .xls / .ppt)
+// ---------------------------------------------------------------------------
+
+fn analyze_ole(buf: &[u8]) -> (bool, String) {
+    let cursor = Cursor::new(buf);
+    let mut cfb = match cfb::CompoundFile::open(cursor) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("office::ole: CFB parse error: {e}");
+            return (true, "CFB parse error - analysis skipped".to_string());
+        }
+    };
+
+    let mut blocking_findings: Vec<String> = Vec::new();
+    let mut info_findings: Vec<String> = Vec::new();
+    let mut passed = true;
+
+    // Walk all entries and check for VBA storage
+    let entries: Vec<String> = cfb
+        .walk()
+        .map(|e| e.path().to_string_lossy().to_lowercase())
+        .collect();
+
+    let has_vba = entries.iter().any(|p| p.contains("vba"));
+    let has_macros = entries.iter().any(|p| p.contains("macro") || p.contains("module"));
+
+    if has_vba || has_macros {
+        // Try to scan VBA module streams for patterns
+        // VBA streams: Module1, Module2, ThisDocument, Sheet1, etc.
+        let module_paths: Vec<String> = entries
+            .iter()
+            .filter(|p| {
+                p.contains("/vba/") && !p.ends_with('/') && !p.ends_with("_vba_project")
+            })
+            .cloned()
+            .collect();
+
+        for path in &module_paths {
+            let p = std::path::Path::new(path);
+            if let Ok(mut stream) = cfb.open_stream(p) {
+                let mut bytes = Vec::new();
+                if stream.read_to_end(&mut bytes).is_ok() {
+                    let (block, info) = scan_patterns(&bytes);
+                    blocking_findings.extend(block);
+                    info_findings.extend(info);
+                }
+            }
+        }
+
+        if blocking_findings.is_empty() {
+            info_findings.push("VBA macros present (no high-risk pattern detected)".to_string());
+        } else {
+            passed = false;
+        }
+    } else {
+        info_findings.push("no macros".to_string());
+    }
+
+    // Check for embedded OLE objects (Equation Editor, OLE links)
+    if entries.iter().any(|p| p.contains("equation") || p.contains("olestream")) {
+        info_findings.push("embedded OLE object".to_string());
+    }
+
+    let summary = build_summary(&blocking_findings, &info_findings);
+    (passed, summary)
+}
+
+// ---------------------------------------------------------------------------
+// RTF
+// ---------------------------------------------------------------------------
+
+fn analyze_rtf(buf: &[u8]) -> (bool, String) {
+    let mut blocking_findings: Vec<String> = Vec::new();
+    let mut info_findings: Vec<String> = Vec::new();
+    let mut passed = true;
+
+    // Suspicious RTF constructs
+    let rtf_blocking: &[&[u8]] = &[
+        b"\\objhtml",
+        b"\\objocx",
+        b"\\objclass",    // OLE object with class name (exploit delivery)
+    ];
+    let rtf_info: &[&[u8]] = &[
+        b"\\object",       // any embedded object
+        b"\\pict",         // picture (can carry shellcode)
+        b"\\objdata",      // raw OLE data
+    ];
+
+    for &pattern in rtf_blocking {
+        if contains(buf, pattern) {
+            blocking_findings.push(String::from_utf8_lossy(pattern).to_string());
+            passed = false;
+        }
+    }
+    for &pattern in rtf_info {
+        if contains(buf, pattern) && !blocking_findings.iter().any(|f| f.contains(&String::from_utf8_lossy(pattern).to_string())) {
+            info_findings.push(String::from_utf8_lossy(pattern).to_string());
+        }
+    }
+
+    let summary = build_summary(&blocking_findings, &info_findings);
+    (passed, summary)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Scan bytes for HIGH_RISK_PATTERNS and INFO_PATTERNS.
+/// Returns (blocking_findings, info_findings).
+fn scan_patterns(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+    let mut blocking: Vec<String> = Vec::new();
+    let mut info: Vec<String> = Vec::new();
+
+    for &pat in HIGH_RISK_PATTERNS {
+        if contains(bytes, pat) {
+            blocking.push(String::from_utf8_lossy(pat).to_string());
+        }
+    }
+    for &pat in INFO_PATTERNS {
+        if contains(bytes, pat) {
+            info.push(String::from_utf8_lossy(pat).to_string());
+        }
+    }
+    (blocking, info)
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 fn build_summary(blocking: &[String], info: &[String]) -> String {
     match (blocking.is_empty(), info.is_empty()) {
         (true, true) => "no findings".to_string(),
@@ -144,13 +278,7 @@ fn build_summary(blocking: &[String], info: &[String]) -> String {
     }
 }
 
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
-        .collect()
-}
-
-fn write_fd_to_tmp(fd: i32, path: &str) -> std::io::Result<()> {
+fn read_fd(fd: i32) -> std::io::Result<Vec<u8>> {
     use std::os::unix::io::FromRawFd;
     let dup_fd = unsafe { libc::dup(fd) };
     if dup_fd < 0 {
@@ -160,7 +288,5 @@ fn write_fd_to_tmp(fd: i32, path: &str) -> std::io::Result<()> {
     let mut src = unsafe { File::from_raw_fd(dup_fd) };
     let mut buf = Vec::new();
     src.read_to_end(&mut buf)?;
-    let mut dst = File::create(path)?;
-    dst.write_all(&buf)?;
-    Ok(())
+    Ok(buf)
 }

@@ -117,10 +117,10 @@
       </a>
     </h5>
     <h5 v-else-if="this.type === 'OUT' && (this.listOutOK.length > 0 || this.listOutError.length > 0)" class="AppGuichet-switcher">
-      <a @click="this.displayErrors = false" :class="(this.displayErrors ? null : 'AppGuichet-switcher-active') + ' AppGuichet-switcher-first'">
+      <a @click="this.displayErrors = false; this.activeDetail = null" :class="(this.displayErrors ? null : 'AppGuichet-switcher-active') + ' AppGuichet-switcher-first'">
         {{ $tc('guichet_OUT.files.x_files_verified_available', this.listOutOK.length) }}
       </a>
-      <a v-if="this.listOutError.length > 0" @click="this.displayErrors = true" :class="this.displayErrors ? 'AppGuichet-switcher-active' : null">
+      <a v-if="this.listOutError.length > 0" @click="this.displayErrors = true; this.activeDetail = null" :class="this.displayErrors ? 'AppGuichet-switcher-active' : null">
         {{ $tc('guichet_OUT.files.x_files_refused', this.listOutError.length) }}
       </a>
     </h5>
@@ -130,34 +130,45 @@
       <li class="list-group-item list-in" v-for="(file, index) in this.listInBackup" v-bind:key="index">{{ file.filename }}<span class="file-error">{{ file.error ? $t(file.error) : '' }}</span></li>
     </ul>
     <ul v-if="this.type === 'OUT' && this.listOutOK.length > 0 && !this.displayErrors" class="AppGuichet-list list-group">
-      <li class="list-group-item list-out" v-for="(file, index) in this.listOutOK" v-bind:key="index">
-        <span class="file-name">{{ file.filename }}</span>
-        <span v-if="file.checks" class="file-checks">
-          <span
-            v-for="(pass, key) in file.checks"
-            :key="key"
-            class="check-badge"
-            :class="pass ? 'check-badge-ok' : 'check-badge-ko'"
-            :title="$t('checks.' + key)"
-          >{{ checkIcon(key) }}</span>
-        </span>
+      <li class="list-group-item list-out list-out-expandable" v-for="(file, index) in this.listOutOK" v-bind:key="index">
+        <div class="file-row">
+          <span class="file-name">{{ file.filename }}</span>
+          <span v-if="file.checks" class="file-checks">
+            <span
+              v-for="[key, pass] in sortedChecks(file.checks)"
+              :key="key"
+              class="check-badge"
+              :class="[pass ? 'check-badge-ok' : 'check-badge-ko', isActiveDetail('ok', index, key) ? 'check-badge-active' : '']"
+              :title="$t('header.checks.' + key)"
+              @click="!pass && toggleDetail('ok', index, key)"
+            >{{ checkIcon(key) }}</span>
+          </span>
+        </div>
+        <div v-if="isActiveDetail('ok', index, null)" class="check-detail-panel">
+          <span class="check-detail-label">{{ $t('header.checks.' + activeDetail.key) }}</span>
+          <span class="check-detail-text">{{ (file.check_details && file.check_details[activeDetail.key]) || '—' }}</span>
+        </div>
       </li>
     </ul>
     <ul v-if="this.type === 'OUT' && this.listOutError.length > 0 && this.displayErrors" class="AppGuichet-list list-group">
-      <li class="list-group-item list-out-error" v-for="(file, index) in this.listOutError" v-bind:key="index">
-        <span class="file-name">{{ file.filename }}</span>
-        <span class="file-right">
+      <li class="list-group-item list-out-error list-out-expandable" v-for="(file, index) in this.listOutError" v-bind:key="index">
+        <div class="file-row">
+          <span class="file-name">{{ file.filename }}</span>
           <span v-if="file.checks" class="file-checks">
             <span
-              v-for="(pass, key) in file.checks"
+              v-for="[key, pass] in sortedChecks(file.checks)"
               :key="key"
               class="check-badge"
-              :class="pass ? 'check-badge-ok' : 'check-badge-ko'"
+              :class="[pass ? 'check-badge-ok' : 'check-badge-ko', isActiveDetail('error', index, key) ? 'check-badge-active' : '']"
               :title="$t('checks.' + key)"
+              @click="!pass && toggleDetail('error', index, key)"
             >{{ checkIcon(key) }}</span>
           </span>
-          <span class="file-error">{{ file.reason ? $t('guichet_OUT.files.error.reason.' + file.reason) : '' }}<span v-if="file.detail" class="file-detail"> — {{ file.detail }}</span></span>
-        </span>
+        </div>
+        <div v-if="isActiveDetail('error', index, null)" class="check-detail-panel">
+          <span class="check-detail-label">{{ $t('header.checks.' + activeDetail.key) }}</span>
+          <span class="check-detail-text">{{ (file.check_details && file.check_details[activeDetail.key]) || '—' }}</span>
+        </div>
       </li>
     </ul>
 
@@ -196,6 +207,7 @@ export default {
       listInBackup: [],
       listOutOK: [],
       listOutError: [],
+      activeDetail: null, // { list: 'ok'|'error', idx: number, key: string }
     }
   },
   emits: ['guichetInCleared', 'guichetOutCleared'],
@@ -213,6 +225,23 @@ export default {
     checkIcon(key) {
       const icons = { hash: '#', size: '⊙', type: 'T', av: '☣', yara: '🏷', specialized: '🛡', vt: '☢' };
       return icons[key] || key.charAt(0).toUpperCase();
+    },
+    sortedChecks(checks) {
+      const order = ['hash', 'size', 'type', 'av', 'yara', 'specialized', 'vt'];
+      if (!checks) return [];
+      return order.filter(k => k in checks).map(k => [k, checks[k]]);
+    },
+    toggleDetail(list, idx, key) {
+      if (this.activeDetail && this.activeDetail.list === list && this.activeDetail.idx === idx && this.activeDetail.key === key) {
+        this.activeDetail = null;
+      } else {
+        this.activeDetail = { list, idx, key };
+      }
+    },
+    isActiveDetail(list, idx, key) {
+      if (!this.activeDetail) return false;
+      if (this.activeDetail.list !== list || this.activeDetail.idx !== idx) return false;
+      return key === null || this.activeDetail.key === key;
     },
   },
   watch: {
@@ -250,6 +279,7 @@ export default {
                 reason: null,
                 detail: null,
                 checks: element.checks || null,
+                check_details: element.check_details || null,
               });
             }
           } else {
@@ -259,6 +289,7 @@ export default {
                 reason: element.reason || 'unknown',
                 detail: element.detail || null,
                 checks: element.checks || null,
+                check_details: element.check_details || null,
               });
             }
           }
@@ -441,10 +472,12 @@ export default {
 	.list-out-error,
 	.list-in,
 	.list-out {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 6px;
+		.file-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 6px;
+		}
 
 		.file-name {
 			overflow: hidden;
@@ -452,13 +485,6 @@ export default {
 			white-space: nowrap;
 			flex-shrink: 1;
 			min-width: 0;
-		}
-
-		.file-right {
-			display: flex;
-			align-items: center;
-			gap: 6px;
-			flex-shrink: 0;
 		}
 
 		.file-checks {
@@ -480,21 +506,33 @@ export default {
 			color: white;
 			cursor: default;
 			user-select: none;
+			transition: opacity 0.15s, outline 0.1s;
 
 			&-ok  { background-color: #4caf50; }
-			&-ko  { background-color: #e53935; }
+			&-ko  { background-color: #e53935; cursor: pointer; &:hover { opacity: 0.8; } }
+			&-active { outline: 2px solid rgba(255,255,255,0.8); outline-offset: 1px; }
 		}
 
-		.file-error {
-			color: indianred;
-			white-space: nowrap;
-			flex-shrink: 0;
-		}
+		.check-detail-panel {
+			margin-top: 4px;
+			padding: 4px 6px;
+			border-radius: 3px;
+			background-color: rgba(0,0,0,0.12);
+			font-size: 0.7rem;
+			word-break: break-word;
 
-		.file-detail {
-			opacity: 0.75;
-			font-style: italic;
+			.check-detail-label {
+				font-weight: 700;
+				margin-right: 4px;
+			}
+			.check-detail-text {
+				opacity: 0.9;
+			}
 		}
+	}
+
+	.list-out-expandable {
+		display: block;
 	}
 }
 
