@@ -245,23 +245,25 @@ fn parse_krp(krp_path: &str) -> (
     checks.insert("type".to_string(), type_ok);
     if !type_ok {
         let file_type = meta["file_type"].as_str().unwrap_or("").to_string();
-        check_details.insert("type".to_string(), format!("Type refusé: {file_type}"));
+        // key "forbidden", value = raw file type string (translated + formatted in frontend)
+        check_details.insert("type".to_string(), format!("forbidden:{file_type}"));
     }
 
     let size_ok = !report["toobig"].as_bool().unwrap_or(false);
     checks.insert("size".to_string(), size_ok);
     if !size_ok {
         let size_val = report["size"].as_u64().unwrap_or(0);
-        check_details.insert("size".to_string(), format!("Fichier trop grand: {size_val} octets"));
+        // key "too_large", value = size in bytes (formatted in frontend)
+        check_details.insert("size".to_string(), format!("too_large:{size_val}"));
     }
 
     let digest_ok = report["is_digest_ok"].as_bool().unwrap_or(true);
     let not_corrupted = !report["corrupted"].as_bool().unwrap_or(false);
     checks.insert("hash".to_string(), digest_ok && not_corrupted);
     if !not_corrupted {
-        check_details.insert("hash".to_string(), "Fichier corrompu".to_string());
+        check_details.insert("hash".to_string(), "corrupted".to_string());
     } else if !digest_ok {
-        check_details.insert("hash".to_string(), "Empreinte invalide".to_string());
+        check_details.insert("hash".to_string(), "digest_mismatch".to_string());
     }
 
     // Specialized — only if actually performed

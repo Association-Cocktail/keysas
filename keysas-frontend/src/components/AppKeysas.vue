@@ -146,7 +146,7 @@
         </div>
         <div v-if="isActiveDetail('ok', index, null)" class="check-detail-panel">
           <span class="check-detail-label">{{ $t('header.checks.' + activeDetail.key) }}</span>
-          <span class="check-detail-text">{{ (file.check_details && file.check_details[activeDetail.key]) || '—' }}</span>
+          <span class="check-detail-text">{{ formatCheckDetail(activeDetail.key, file.check_details && file.check_details[activeDetail.key]) }}</span>
         </div>
       </li>
     </ul>
@@ -167,7 +167,7 @@
         </div>
         <div v-if="isActiveDetail('error', index, null)" class="check-detail-panel">
           <span class="check-detail-label">{{ $t('header.checks.' + activeDetail.key) }}</span>
-          <span class="check-detail-text">{{ (file.check_details && file.check_details[activeDetail.key]) || '—' }}</span>
+          <span class="check-detail-text">{{ formatCheckDetail(activeDetail.key, file.check_details && file.check_details[activeDetail.key]) }}</span>
         </div>
       </li>
     </ul>
@@ -225,6 +225,20 @@ export default {
     checkIcon(key) {
       const icons = { hash: '#', size: '⊙', type: 'T', av: '☣', yara: '🏷', specialized: '🛡', vt: '☢' };
       return icons[key] || key.charAt(0).toUpperCase();
+    },
+    formatCheckDetail(key, value) {
+      if (!value) return '—';
+      // Structured values: "i18n_key:raw_data"
+      const sep = value.indexOf(':');
+      if (sep !== -1) {
+        const code = value.slice(0, sep);
+        const data = value.slice(sep + 1);
+        const label = this.$t(`header.check_detail.${key}.${code}`);
+        return label !== `header.check_detail.${key}.${code}` ? `${label}: ${data}` : value;
+      }
+      // Simple i18n key (hash.corrupted, hash.digest_mismatch)
+      const translated = this.$t(`header.check_detail.${key}.${value}`);
+      return translated !== `header.check_detail.${key}.${value}` ? translated : value;
     },
     sortedChecks(checks) {
       const order = ['hash', 'size', 'type', 'av', 'yara', 'specialized', 'vt'];

@@ -117,6 +117,18 @@
       "specialized": "Analyse spécialisée",
       "vt": "VirusTotal"
     },
+    "check_detail": {
+      "hash": {
+        "corrupted": "Fichier corrompu",
+        "digest_mismatch": "Empreinte SHA256 invalide"
+      },
+      "size": {
+        "too_large": "Fichier trop grand"
+      },
+      "type": {
+        "forbidden": "Type refusé"
+      }
+    },
     "progress": {
       "pending": "En attente de traitement",
       "hashing": "Calcul du hash SHA256...",
