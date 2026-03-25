@@ -29,6 +29,9 @@ readonly U_KEYSAS_TRANSIT
 U_KEYSAS_ANALYZE="keysas-analyze"
 readonly U_KEYSAS_ANALYZE
 
+U_KEYSAS_VIRUSTOTAL="keysas-virustotal"
+readonly U_KEYSAS_VIRUSTOTAL
+
 U_KEYSAS_ADMIN="keysas"
 readonly U_KEYSAS_ADMIN
 
@@ -53,6 +56,9 @@ add_users() {
 	fi
 	if ! getent passwd $U_KEYSAS_ANALYZE >/dev/null ; then
 		useradd -r -M --shell /bin/false $U_KEYSAS_ANALYZE
+	fi
+	if ! getent passwd $U_KEYSAS_VIRUSTOTAL >/dev/null ; then
+		useradd -r -M --shell /bin/false $U_KEYSAS_VIRUSTOTAL
 	fi
 	if ! getent passwd $U_KEYSAS_ADMIN >/dev/null ; then
 		useradd -M --shell /bin/bash -d $HOME_KEYSAS_ADMIN -U $U_KEYSAS_ADMIN -G $G_SUDO -p '$6$oFhHZhscHfd1n15H$NvVSbktCLhVe9dnMJarTDNKhctbJ/B9GZoApyH7Lp1s2EjfBsLWUJM/QsdgCeGr62BxohWbQB3Qwm3rimH4O01' 
@@ -90,6 +96,13 @@ install_bin() {
 			echo "Binary ../bin/keysas-analyze cannot be found !"
 		fi
 	fi
+	if [ -d "/usr/bin" ]; then
+		if [ -f "../bin/keysas-virustotal" ]; then
+			install -v -o $U_KEYSAS_VIRUSTOTAL -g $U_KEYSAS_VIRUSTOTAL -m 0500 ../bin/keysas-virustotal /usr/bin/
+		else
+			echo "Binary ../bin/keysas-virustotal cannot be found !"
+		fi
+	fi
 }
 
 # Install systemd units.
@@ -102,6 +115,7 @@ install_systemd_units(){
 		install -v -o root -g root -m 0644 debian/keysas-out-idle.service /etc/systemd/system/keysas-out-idle.service
 		install -v -o root -g root -m 0644 debian/keysas-out-idle.timer /etc/systemd/system/keysas-out-idle.timer
 		install -v -o root -g root -m 0644 debian/keysas-analyze.service /etc/systemd/system/keysas-analyze.service
+		install -v -o root -g root -m 0644 debian/keysas-virustotal.service /etc/systemd/system/keysas-virustotal.service
 		install -v -o root -g root -m 0644 debian/clamav-daemon.socket /etc/systemd/system/clamav-daemon.socket
 
 		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-in.service.d/
@@ -120,6 +134,10 @@ install_systemd_units(){
 		if [ -f debian/keysas-analyze.security ]; then
 			install -v -o root -g root -m 0644 debian/keysas-analyze.security /etc/systemd/system/keysas-analyze.service.d/security.conf
 		fi
+		install -d -m 0750 -o root -g root /etc/systemd/system/keysas-virustotal.service.d/
+		if [ -f debian/keysas-virustotal.security ]; then
+			install -v -o root -g root -m 0644 debian/keysas-virustotal.security /etc/systemd/system/keysas-virustotal.service.d/security.conf
+		fi
 	else
 		echo "Path /etc/systemd/system/ not found, this system isprobably not using systemd !"
 	fi
@@ -137,6 +155,7 @@ install_config() {
 		install -v -o $U_KEYSAS_TRANSIT -g $U_KEYSAS_TRANSIT -m 0600 debian/keysas-transit.default /etc/keysas/keysas-transit.conf
 		install -v -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT -m 0600 debian/keysas-out.default /etc/keysas/keysas-out.conf
 		install -v -o $U_KEYSAS_ANALYZE -g $U_KEYSAS_ANALYZE -m 0600 debian/keysas-analyze.default /etc/keysas/keysas-analyze.conf
+		install -v -o $U_KEYSAS_VIRUSTOTAL -g $U_KEYSAS_VIRUSTOTAL -m 0600 debian/keysas-virustotal.default /etc/keysas/keysas-virustotal.conf
 	fi
 	if [ -d "/etc/sudoers.d" ]; then
 		install -v -o root -g root -m 0644 debian/keysas-sudoconfig /etc/sudoers.d/010_keysas
@@ -362,6 +381,7 @@ enable_systemd() {
 	systemctl start keysas-out-idle.timer
 	systemctl enable keysas-transit.service
 	systemctl enable keysas-analyze.service
+	systemctl enable keysas-virustotal.service
 	systemctl enable keysas.service --now | true
 	systemctl restart clamav-daemon
 }

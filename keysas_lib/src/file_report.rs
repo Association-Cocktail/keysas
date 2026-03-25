@@ -105,12 +105,20 @@ pub struct FileReport {
     pub corrupted: bool,
     /// True if the file size is too big
     pub toobig: bool,
+    /// True if the SHA256 digest matched the expected value
+    pub is_digest_ok: bool,
     /// True if specialized analysis passed (or was not performed)
     pub specialized_pass: bool,
     /// Name of the specialized analyzer used (empty if none)
     pub specialized_analyzer: String,
     /// Summary of the specialized analysis findings (empty if none)
     pub specialized_summary: String,
+    /// True if VirusTotal lookup passed (or VT was not configured)
+    pub vt_pass: bool,
+    /// Number of malicious detections from VirusTotal (0 if not configured)
+    pub vt_detections: u32,
+    /// Human-readable VirusTotal result summary
+    pub vt_summary: String,
 }
 
 /// Structure that holds a file metadata
@@ -148,6 +156,12 @@ pub struct FileMetadata {
     pub specialized_analyzer: String,
     /// Summary of the specialized analysis findings
     pub specialized_summary: String,
+    /// True if VirusTotal lookup passed (or VT was not configured)
+    pub vt_pass: bool,
+    /// Number of malicious detections from VirusTotal (0 if not configured)
+    pub vt_detections: u32,
+    /// Human-readable VirusTotal result summary
+    pub vt_summary: String,
 }
 
 /// Wrapper around the report metadata creation
@@ -174,9 +188,13 @@ pub fn generate_report_metadata(f: &FileMetadata) -> MetaData {
         size: f.size,
         corrupted: f.is_corrupted,
         toobig: f.is_toobig,
+        is_digest_ok: f.is_digest_ok,
         specialized_pass: f.specialized_pass,
         specialized_analyzer: f.specialized_analyzer.clone(),
         specialized_summary: f.specialized_summary.clone(),
+        vt_pass: f.vt_pass,
+        vt_detections: f.vt_detections,
+        vt_summary: f.vt_summary.clone(),
     };
 
     MetaData {
@@ -189,7 +207,8 @@ pub fn generate_report_metadata(f: &FileMetadata) -> MetaData {
             && !f.is_corrupted
             && f.is_digest_ok
             && f.is_type_allowed
-            && f.specialized_pass,
+            && f.specialized_pass
+            && f.vt_pass,
         report: new_file_report,
     }
 }
@@ -418,6 +437,9 @@ mod tests_out {
             specialized_pass: true,
             specialized_analyzer: "".to_string(),
             specialized_summary: "".to_string(),
+            vt_pass: true,
+            vt_detections: 0,
+            vt_summary: "".to_string(),
         };
 
         // Generate report metadata
@@ -467,6 +489,9 @@ mod tests_out {
             specialized_pass: true,
             specialized_analyzer: "".to_string(),
             specialized_summary: "".to_string(),
+            vt_pass: true,
+            vt_detections: 0,
+            vt_summary: "".to_string(),
         };
 
         let meta = generate_report_metadata(&file_data);

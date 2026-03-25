@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# systemd security hardening for keysas-virustotal
+# Note: network access is required for HTTPS calls to the VirusTotal API.
+
+[Service]
+User=keysas-virustotal
+Group=keysas-virustotal
+# Syscall filtering: allow file I/O, IPC, network, system service
+SystemCallFilter=@basic-io @file-system @io-event @network-io @ipc @system-service seccomp landlock_create_ruleset landlock_add_rule landlock_restrict_self uname
+SystemCallFilter=~@privileged
+SystemCallFilter=~@resources
+# Drop all capabilities
+CapabilityBoundingSet=
+# Kernel protection
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+# Filesystem protection
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Allow outbound TCP (VirusTotal API) + Unix sockets (transit)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Process isolation
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+RemoveIPC=yes
+PrivateIPC=yes
+ProtectClock=yes
+InaccessiblePaths=/proc

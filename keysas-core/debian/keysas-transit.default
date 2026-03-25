@@ -54,3 +54,6 @@ ALLOWED_TYPES="jpg,png,gif,bmp,webp,tiff,mp4,mkv,avi,wmv,mpg,mov,flv,mp3,wav,ogg
 
 # Socket for keysas-analyze specialized analysis (leave empty to disable)
 SOCKET_ANALYZE=socket_analyze
+
+# Socket for keysas-virustotal hash lookup daemon (leave empty to disable)
+SOCKET_VT=socket_virustotal

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# (C) Copyright 2019-2025 Stephane Neveu
+
+[Unit]
+Description=keysas-virustotal daemon
+PartOf=keysas.service
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/keysas/keysas-virustotal.conf
+ExecStart=/usr/bin/keysas-virustotal --socket_virustotal ${SOCKET_VT} --api_key ${VT_API_KEY} --api_url ${VT_API_URL} --fail_open ${VT_FAIL_OPEN} --block_threshold ${VT_BLOCK_THRESHOLD} --timeout_ms ${VT_TIMEOUT_MS} --cache_ttl_secs ${VT_CACHE_TTL_SECS}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=keysas.service

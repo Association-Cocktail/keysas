@@ -33,6 +33,7 @@ tar = "0.4"
 flate2 = "1"
 bzip2 = "0.6"
 xz2 = "0.1"
+ureq = { version = "2", features = ["tls"] }
 
 [dev-dependencies]
 tempfile = "3.8"
@@ -52,6 +53,10 @@ path = "src/keysas-out/main.rs"
 [[bin]]
 name = "keysas-analyze"
 path = "src/keysas-analyze/main.rs"
+
+[[bin]]
+name = "keysas-virustotal"
+path = "src/keysas-virustotal/main.rs"
 
 [profile.release]
 lto = true

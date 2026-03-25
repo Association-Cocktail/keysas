@@ -41,6 +41,7 @@
           "ioerror": "erreur de transfert",
           "corrupted": "fichier corrompu",
           "specialized": "contenu dangereux détecté",
+          "virustotal": "bloqué par VirusTotal",
           "digest": "erreur d'intégrité",
           "unknown": "erreur inconnue"
         }
@@ -107,6 +108,15 @@
       "show_wizard": "Afficher l'aide",
       "close_wizard": "Fermer l'aide"
     },
+    "checks": {
+      "hash": "Intégrité (hash SHA256)",
+      "size": "Taille",
+      "type": "Type de fichier",
+      "av": "Antivirus",
+      "yara": "YARA",
+      "specialized": "Analyse spécialisée",
+      "vt": "VirusTotal"
+    },
     "progress": {
       "pending": "En attente de traitement",
       "hashing": "Calcul du hash SHA256...",
@@ -115,6 +125,7 @@
       "antivirus_scan": "Scan antivirus en cours...",
       "yara_scan": "Scan YARA en cours...",
       "specialized_analysis": "Analyse spécialisée en cours...",
+      "virustotal_scan": "Consultation VirusTotal...",
       "verifying_signature": "Vérification de la signature...",
       "complete": "Analyse terminée"
     }

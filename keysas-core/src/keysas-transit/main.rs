@@ -34,7 +34,7 @@ use keysas_lib::progress::{AnalysisStep, ProgressTracker};
 use log::{error, info, warn};
 use nix::unistd;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::io::{IoSlice, IoSliceMut};
 use std::net::IpAddr;
 use std::net::ToSocketAddrs;
@@ -64,6 +64,70 @@ struct AnalyzeResponse {
     passed: bool,
     analyzer: String,
     summary: String,
+}
+
+/// Request sent to keysas-virustotal
+#[derive(bincode::Encode, Debug)]
+struct VtRequest {
+    sha256: String,
+}
+
+/// Response received from keysas-virustotal
+#[derive(bincode::Decode, Debug)]
+struct VtResponse {
+    pass: bool,
+    detections: u32,
+    summary: String,
+}
+
+/// Send a SHA256 hash to keysas-virustotal and get back the verdict.
+/// Returns (pass=true, 0, empty) when keysas-virustotal is unreachable (fail-open).
+fn call_vt_analyzer(socket_name: &str, sha256: &str) -> (bool, u32, String) {
+    let addr = match SocketAddr::from_abstract_name(socket_name) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("keysas-virustotal: cannot build socket address: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    let mut stream = match UnixStream::connect_addr(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("keysas-virustotal unavailable: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    let req = VtRequest { sha256: sha256.to_string() };
+    let config = bincode::config::standard();
+    let data = match bincode::encode_to_vec(&req, config) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("keysas-virustotal: encode error: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    if let Err(e) = stream.write_all(&data) {
+        warn!("keysas-virustotal: send error: {e}");
+        return (true, 0, String::new());
+    }
+    let mut buf = [0u8; 512];
+    let n = match stream.read(&mut buf) {
+        Ok(0) | Err(_) => {
+            warn!("keysas-virustotal: no response received");
+            return (true, 0, String::new());
+        }
+        Ok(n) => n,
+    };
+    match bincode::decode_from_slice::<VtResponse, _>(&buf[..n], config) {
+        Ok((resp, _)) => {
+            info!("VT result for {sha256}: pass={}, detections={}, summary={}", resp.pass, resp.detections, resp.summary);
+            (resp.pass, resp.detections, resp.summary)
+        }
+        Err(e) => {
+            warn!("keysas-virustotal: decode error: {e}");
+            (true, 0, String::new())
+        }
+    }
 }
 
 /// Send a file descriptor + metadata to keysas-analyze and get back the analysis result.
@@ -170,6 +234,9 @@ struct FileMetadata {
     specialized_pass: bool,
     specialized_analyzer: String,
     specialized_summary: String,
+    vt_pass: bool,
+    vt_detections: u32,
+    vt_summary: String,
 }
 
 #[derive(Debug)]
@@ -183,6 +250,7 @@ struct Configuration {
     socket_in: String,            // path for the socket with keysas-in
     socket_out: String,           // path for the socket with keysas-out
     socket_analyze: Option<String>, // path for the socket with keysas-analyze (optional)
+    socket_vt: Option<String>,    // path for the socket with keysas-virustotal (optional)
     max_size: u64,                // Maximum size for files
     magic_list: Vec<String>,      // List of allowed file type
     clamav_ip: String,            // ClamAV IP address
@@ -290,6 +358,13 @@ fn parse_args() -> Configuration {
                 .help("Abstract socket name for keysas-analyze (leave unset to disable)"),
         )
          .arg(
+            Arg::new("socket_vt")
+                .long("socket_vt")
+                .value_name("<NAMESPACE>")
+                .action(ArgAction::Set)
+                .help("Abstract socket name for keysas-virustotal (leave unset to disable)"),
+        )
+         .arg(
             Arg::new("version")
                 .short('v')
                 .long("version")
@@ -304,6 +379,9 @@ fn parse_args() -> Configuration {
         socket_out: matches.get_one::<String>("socket_out").unwrap().to_string(),
         socket_analyze: matches
             .get_one::<String>("socket_analyze")
+            .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
+        socket_vt: matches
+            .get_one::<String>("socket_vt")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
         max_size: *matches.get_one::<u64>("max_size").unwrap(),
         magic_list: matches
@@ -368,6 +446,9 @@ fn parse_messages(messages: Messages, buffer: &[u8]) -> Vec<FileData> {
                             specialized_pass: true,
                             specialized_analyzer: String::new(),
                             specialized_summary: String::new(),
+                            vt_pass: true,
+                            vt_detections: 0,
+                            vt_summary: String::new(),
                         },
                     })
                 }
@@ -462,7 +543,7 @@ fn get_extension(buf: Vec<u8>) -> String {
 ///     - Yara rules check
 /// Checks results are marked in file metadata.
 /// This function does not modify the files.
-fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>) {
+fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>, socket_vt: Option<&str>) {
     for f in files {
         // Start tracking this file
         progress_tracker.start_file(f.md.filename.clone());
@@ -601,6 +682,17 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                         }
                     }
                 }
+                // VirusTotal hash lookup via keysas-virustotal socket (optional)
+                if let Some(sock) = socket_vt {
+                    progress_tracker.update_step(AnalysisStep::VirusTotalScan);
+                    let (pass, detections, summary) = call_vt_analyzer(sock, &f.md.digest);
+                    f.md.vt_pass = pass;
+                    f.md.vt_detections = detections;
+                    f.md.vt_summary = summary;
+                    if !pass {
+                        warn!("VT blocked file {}: {} detection(s)", f.md.filename, detections);
+                    }
+                }
                 // Check the magic number
                 progress_tracker.update_step(AnalysisStep::CheckingFileType);
                 // Read only 1Mo of the file to be faster and do not read large files
@@ -638,7 +730,8 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
             && f.md.is_type_allowed
             && f.md.av_pass
             && f.md.yara_pass
-            && f.md.specialized_pass;
+            && f.md.specialized_pass
+            && f.md.vt_pass;
 
         // Mark file as completed
         progress_tracker.complete_file(passed);
@@ -752,6 +845,13 @@ fn main() -> Result<()> {
         }
     };
 
+    // Log VirusTotal socket status
+    if let Some(ref sock) = config.socket_vt {
+        info!("VirusTotal socket configured: {sock}");
+    } else {
+        info!("VirusTotal integration disabled (no socket configured)");
+    }
+
     // Initialize yara rules
     match Compiler::new() {
         Ok(c) => match c.add_rules_file_with_namespace(&config.rule_path, "keysas") {
@@ -848,7 +948,7 @@ fn main() -> Result<()> {
             progress_tracker.add_files_to_queue(filenames);
 
             // Run check on message received
-            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref());
+            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref(), config.socket_vt.as_deref());
 
             // Send fd and report to out; break to re-accept if connection is broken
             if let Err(e) = send_files(&files, &out_stream, &progress_tracker) {
