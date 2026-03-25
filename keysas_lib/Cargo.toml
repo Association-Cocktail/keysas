@@ -5,7 +5,7 @@
 [package]
 name = "keysas_lib"
 version = "2.7.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 sha2 = "0.10"
