@@ -116,6 +116,18 @@
       "specialized": "Specialized analysis",
       "vt": "VirusTotal"
     },
+    "check_detail": {
+      "hash": {
+        "corrupted": "Corrupted file",
+        "digest_mismatch": "Invalid SHA256 digest"
+      },
+      "size": {
+        "too_large": "File too large"
+      },
+      "type": {
+        "forbidden": "Forbidden type"
+      }
+    },
     "progress": {
       "pending": "Waiting to be processed",
       "hashing": "Computing SHA256 hash...",

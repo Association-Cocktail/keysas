@@ -664,6 +664,39 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                         process::exit(1);
                     }
                 }
+                // Check the magic number (must happen before specialized analysis
+                // so that file_type is populated when dispatching to keysas-analyze)
+                progress_tracker.update_step(AnalysisStep::CheckingFileType);
+                // Read only 1Mo of the file to be faster and do not read large files
+                let reader = BufReader::new(&file);
+                let limited_reader = &mut reader.take(1024 * 1024);
+                let mut buffer = Vec::new();
+                match limited_reader.read_to_end(&mut buffer) {
+                    Ok(_) => {
+                        if !conf.type_off {
+                            f.md.is_type_allowed = check_is_extension_allowed(&buffer, &f.md.filename, conf);
+                            f.md.file_type = get_extension(buffer);
+                        } else {
+                            f.md.is_type_allowed = true;
+                            f.md.file_type = get_extension(buffer);
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Cannot read limited buffer: {e:?}, file will be marked as not allowed !"
+                        );
+                        f.md.is_type_allowed = false;
+                        f.md.file_type = "Unknown".into();
+                    }
+                }
+                // Position the cursor at the beginning of the file
+                match unistd::lseek(nfd, 0, unistd::Whence::SeekSet) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!("Unable to lseek on file descriptor: {e:?}, killing myself.");
+                        process::exit(1);
+                    }
+                }
                 // Specialized analysis (oletools, peepdf, die, etc.)
                 if let Some(sock) = socket_analyze {
                     progress_tracker.update_step(AnalysisStep::SpecializedAnalysis);
@@ -691,30 +724,6 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     f.md.vt_summary = summary;
                     if !pass {
                         warn!("VT blocked file {}: {} detection(s)", f.md.filename, detections);
-                    }
-                }
-                // Check the magic number
-                progress_tracker.update_step(AnalysisStep::CheckingFileType);
-                // Read only 1Mo of the file to be faster and do not read large files
-                let reader = BufReader::new(&file);
-                let limited_reader = &mut reader.take(1024 * 1024);
-                let mut buffer = Vec::new();
-                match limited_reader.read_to_end(&mut buffer) {
-                    Ok(_) => {
-                        if !conf.type_off {
-                            f.md.is_type_allowed = check_is_extension_allowed(&buffer, &f.md.filename, conf);
-                            f.md.file_type = get_extension(buffer);
-                        } else {
-                            f.md.is_type_allowed = true;
-                            f.md.file_type = get_extension(buffer);
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Cannot read limited buffer: {e:?}, file will be marked as not allowed !"
-                        );
-                        f.md.is_type_allowed = false;
-                        f.md.file_type = "Unknown".into();
                     }
                 }
             }
