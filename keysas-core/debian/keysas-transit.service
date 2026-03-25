@@ -11,7 +11,7 @@ Type=simple
 User=keysas-transit
 Group=keysas-transit
 EnvironmentFile=/etc/keysas/keysas-transit.conf
-ExecStart=/bin/sh -c 'VT_KEY_ARG=""; [ -n "${VT_API_KEY}" ] && VT_KEY_ARG="-V ${VT_API_KEY}"; exec /usr/bin/keysas-transit -i ${SOCKET_IN} -o ${SOCKET_OUT} -s ${MAX_SIZE} -c ${CLAMAV_IP} -p ${CLAMAV_PORT} -r ${RULES} -t ${YARA_TIMEOUT} -a ${ALLOWED_TYPES} -A ${SOCKET_ANALYZE} ${VT_KEY_ARG} --vt_api_url ${VT_API_URL:-https://www.virustotal.com/api/v3/files} --vt_fail_open ${VT_FAIL_OPEN:-true} --vt_block_threshold ${VT_BLOCK_THRESHOLD:-3} --vt_timeout_ms ${VT_TIMEOUT_MS:-3000} --vt_probe_host ${VT_PROBE_HOST:-8.8.8.8:53} --vt_probe_timeout_ms ${VT_PROBE_TIMEOUT_MS:-2000} --vt_cache_ttl_secs ${VT_CACHE_TTL_SECS:-3600}'
+ExecStart=/usr/bin/keysas-transit -i ${SOCKET_IN} -o ${SOCKET_OUT} -s ${MAX_SIZE} -c ${CLAMAV_IP} -p ${CLAMAV_PORT} -r ${RULES} -t ${YARA_TIMEOUT} -a ${ALLOWED_TYPES} -A ${SOCKET_ANALYZE} --socket_vt ${SOCKET_VT}
 Restart=always
 RestartSec=2
 

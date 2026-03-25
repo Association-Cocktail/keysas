@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /*
- * VirusTotal API v3 client for keysas-transit.
+ * VirusTotal API v3 client for keysas-virustotal.
  *
  * Only SHA256 hash lookups are performed — files are never uploaded.
  * Results are cached in memory for 1 hour to avoid redundant API calls

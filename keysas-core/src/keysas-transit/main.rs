@@ -34,7 +34,7 @@ use keysas_lib::progress::{AnalysisStep, ProgressTracker};
 use log::{error, info, warn};
 use nix::unistd;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::io::{IoSlice, IoSliceMut};
 use std::net::IpAddr;
 use std::net::ToSocketAddrs;
@@ -49,7 +49,6 @@ use std::thread as main_thread;
 use std::time::Duration;
 use yara::*;
 mod sandbox;
-mod virustotal;
 
 /// Request sent to keysas-analyze
 #[derive(bincode::Encode, Debug)]
@@ -65,6 +64,70 @@ struct AnalyzeResponse {
     passed: bool,
     analyzer: String,
     summary: String,
+}
+
+/// Request sent to keysas-virustotal
+#[derive(bincode::Encode, Debug)]
+struct VtRequest {
+    sha256: String,
+}
+
+/// Response received from keysas-virustotal
+#[derive(bincode::Decode, Debug)]
+struct VtResponse {
+    pass: bool,
+    detections: u32,
+    summary: String,
+}
+
+/// Send a SHA256 hash to keysas-virustotal and get back the verdict.
+/// Returns (pass=true, 0, empty) when keysas-virustotal is unreachable (fail-open).
+fn call_vt_analyzer(socket_name: &str, sha256: &str) -> (bool, u32, String) {
+    let addr = match SocketAddr::from_abstract_name(socket_name) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!("keysas-virustotal: cannot build socket address: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    let mut stream = match UnixStream::connect_addr(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("keysas-virustotal unavailable: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    let req = VtRequest { sha256: sha256.to_string() };
+    let config = bincode::config::standard();
+    let data = match bincode::encode_to_vec(&req, config) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!("keysas-virustotal: encode error: {e}");
+            return (true, 0, String::new());
+        }
+    };
+    if let Err(e) = stream.write_all(&data) {
+        warn!("keysas-virustotal: send error: {e}");
+        return (true, 0, String::new());
+    }
+    let mut buf = [0u8; 512];
+    let n = match stream.read(&mut buf) {
+        Ok(0) | Err(_) => {
+            warn!("keysas-virustotal: no response received");
+            return (true, 0, String::new());
+        }
+        Ok(n) => n,
+    };
+    match bincode::decode_from_slice::<VtResponse, _>(&buf[..n], config) {
+        Ok((resp, _)) => {
+            info!("VT result for {sha256}: pass={}, detections={}, summary={}", resp.pass, resp.detections, resp.summary);
+            (resp.pass, resp.detections, resp.summary)
+        }
+        Err(e) => {
+            warn!("keysas-virustotal: decode error: {e}");
+            (true, 0, String::new())
+        }
+    }
 }
 
 /// Send a file descriptor + metadata to keysas-analyze and get back the analysis result.
@@ -187,6 +250,7 @@ struct Configuration {
     socket_in: String,            // path for the socket with keysas-in
     socket_out: String,           // path for the socket with keysas-out
     socket_analyze: Option<String>, // path for the socket with keysas-analyze (optional)
+    socket_vt: Option<String>,    // path for the socket with keysas-virustotal (optional)
     max_size: u64,                // Maximum size for files
     magic_list: Vec<String>,      // List of allowed file type
     clamav_ip: String,            // ClamAV IP address
@@ -195,14 +259,6 @@ struct Configuration {
     yara_timeout: i32,            // Timeout for yara
     yara_rules: Option<Rules>,    // Yara rules
     type_off: bool,
-    vt_api_key: Option<String>,   // VirusTotal API key (None = disabled)
-    vt_api_url: String,           // Base URL for the VT files API
-    vt_fail_open: bool,           // Pass file if VT is unreachable
-    vt_block_threshold: u32,      // Min detections to block
-    vt_timeout_ms: u64,           // HTTP timeout for VT API calls
-    vt_probe_host: String,        // host:port for internet connectivity probe
-    vt_probe_timeout_ms: u64,     // Timeout for the probe in ms
-    vt_cache_ttl_secs: u64,       // Cache TTL in seconds
 }
 
 /// This function parse the command arguments into a structure
@@ -302,73 +358,11 @@ fn parse_args() -> Configuration {
                 .help("Abstract socket name for keysas-analyze (leave unset to disable)"),
         )
          .arg(
-            Arg::new("vt_api_key")
-                .short('V')
-                .long("vt_api_key")
-                .value_name("<KEY>")
+            Arg::new("socket_vt")
+                .long("socket_vt")
+                .value_name("<NAMESPACE>")
                 .action(ArgAction::Set)
-                .help("VirusTotal API key (leave unset to disable VT lookups)"),
-        )
-         .arg(
-            Arg::new("vt_api_url")
-                .long("vt_api_url")
-                .value_name("<URL>")
-                .default_value("https://www.virustotal.com/api/v3/files")
-                .action(ArgAction::Set)
-                .help("Base URL for the VirusTotal files API"),
-        )
-         .arg(
-            Arg::new("vt_fail_open")
-                .long("vt_fail_open")
-                .value_name("<true|false>")
-                .default_value("true")
-                .action(ArgAction::Set)
-                .value_parser(clap::value_parser!(bool))
-                .help("Pass file when VirusTotal is unreachable (true=pass, false=block)"),
-        )
-         .arg(
-            Arg::new("vt_block_threshold")
-                .long("vt_block_threshold")
-                .value_name("<N>")
-                .default_value("3")
-                .action(ArgAction::Set)
-                .value_parser(clap::value_parser!(u32))
-                .help("Minimum number of VT detections to block a file"),
-        )
-         .arg(
-            Arg::new("vt_timeout_ms")
-                .long("vt_timeout_ms")
-                .value_name("<MS>")
-                .default_value("3000")
-                .action(ArgAction::Set)
-                .value_parser(clap::value_parser!(u64))
-                .help("HTTP timeout for VirusTotal API calls in milliseconds"),
-        )
-         .arg(
-            Arg::new("vt_probe_host")
-                .long("vt_probe_host")
-                .value_name("<HOST:PORT>")
-                .default_value("8.8.8.8:53")
-                .action(ArgAction::Set)
-                .help("host:port used to probe internet connectivity before VT calls"),
-        )
-         .arg(
-            Arg::new("vt_probe_timeout_ms")
-                .long("vt_probe_timeout_ms")
-                .value_name("<MS>")
-                .default_value("2000")
-                .action(ArgAction::Set)
-                .value_parser(clap::value_parser!(u64))
-                .help("Timeout in ms for the internet connectivity probe"),
-        )
-         .arg(
-            Arg::new("vt_cache_ttl_secs")
-                .long("vt_cache_ttl_secs")
-                .value_name("<SECS>")
-                .default_value("3600")
-                .action(ArgAction::Set)
-                .value_parser(clap::value_parser!(u64))
-                .help("How long (in seconds) VT results are cached in memory"),
+                .help("Abstract socket name for keysas-virustotal (leave unset to disable)"),
         )
          .arg(
             Arg::new("version")
@@ -386,6 +380,9 @@ fn parse_args() -> Configuration {
         socket_analyze: matches
             .get_one::<String>("socket_analyze")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
+        socket_vt: matches
+            .get_one::<String>("socket_vt")
+            .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
         max_size: *matches.get_one::<u64>("max_size").unwrap(),
         magic_list: matches
             .get_one::<String>("allowed_formats")
@@ -399,16 +396,6 @@ fn parse_args() -> Configuration {
         yara_timeout: *matches.get_one::<i32>("yara_timeout").unwrap(),
         yara_rules: None,
         type_off: matches.get_flag("type_off"),
-        vt_api_key: matches
-            .get_one::<String>("vt_api_key")
-            .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
-        vt_api_url: matches.get_one::<String>("vt_api_url").unwrap().to_string(),
-        vt_fail_open: *matches.get_one::<bool>("vt_fail_open").unwrap(),
-        vt_block_threshold: *matches.get_one::<u32>("vt_block_threshold").unwrap(),
-        vt_timeout_ms: *matches.get_one::<u64>("vt_timeout_ms").unwrap(),
-        vt_probe_host: matches.get_one::<String>("vt_probe_host").unwrap().to_string(),
-        vt_probe_timeout_ms: *matches.get_one::<u64>("vt_probe_timeout_ms").unwrap(),
-        vt_cache_ttl_secs: *matches.get_one::<u64>("vt_cache_ttl_secs").unwrap(),
     }
 }
 
@@ -556,7 +543,7 @@ fn get_extension(buf: Vec<u8>) -> String {
 ///     - Yara rules check
 /// Checks results are marked in file metadata.
 /// This function does not modify the files.
-fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>, vt_client: &mut Option<virustotal::VtClient>) {
+fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>, socket_vt: Option<&str>) {
     for f in files {
         // Start tracking this file
         progress_tracker.start_file(f.md.filename.clone());
@@ -695,26 +682,15 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                         }
                     }
                 }
-                // VirusTotal hash lookup (optional, only when API key is configured)
-                if let Some(ref mut vt) = vt_client {
-                    if vt.has_internet() {
-                        progress_tracker.update_step(AnalysisStep::VirusTotalScan);
-                        let (pass, detections, summary) = vt.lookup(&f.md.digest);
-                        f.md.vt_pass = pass;
-                        f.md.vt_detections = detections;
-                        f.md.vt_summary = summary;
-                        if !pass {
-                            warn!("VT blocked file {}: {} detection(s)", f.md.filename, detections);
-                        }
-                    } else {
-                        if vt.fail_open {
-                            f.md.vt_pass = true;
-                            f.md.vt_summary = "VT skipped (no internet)".to_string();
-                        } else {
-                            f.md.vt_pass = false;
-                            f.md.vt_summary = "VT unreachable and fail_open=false".to_string();
-                            warn!("VT unreachable, blocking file {} (fail_open=false)", f.md.filename);
-                        }
+                // VirusTotal hash lookup via keysas-virustotal socket (optional)
+                if let Some(sock) = socket_vt {
+                    progress_tracker.update_step(AnalysisStep::VirusTotalScan);
+                    let (pass, detections, summary) = call_vt_analyzer(sock, &f.md.digest);
+                    f.md.vt_pass = pass;
+                    f.md.vt_detections = detections;
+                    f.md.vt_summary = summary;
+                    if !pass {
+                        warn!("VT blocked file {}: {} detection(s)", f.md.filename, detections);
                     }
                 }
                 // Check the magic number
@@ -869,25 +845,11 @@ fn main() -> Result<()> {
         }
     };
 
-    // Initialize VirusTotal client (optional)
-    let mut vt_client: Option<virustotal::VtClient> = config.vt_api_key.as_ref().map(|key| {
-        info!(
-            "VirusTotal integration enabled (url={}, fail_open={}, threshold={}, probe={})",
-            config.vt_api_url, config.vt_fail_open, config.vt_block_threshold, config.vt_probe_host
-        );
-        virustotal::VtClient::new(
-            key.clone(),
-            config.vt_api_url.clone(),
-            config.vt_fail_open,
-            config.vt_block_threshold,
-            config.vt_timeout_ms,
-            config.vt_probe_host.clone(),
-            config.vt_probe_timeout_ms,
-            config.vt_cache_ttl_secs,
-        )
-    });
-    if vt_client.is_none() {
-        info!("VirusTotal integration disabled (no API key)");
+    // Log VirusTotal socket status
+    if let Some(ref sock) = config.socket_vt {
+        info!("VirusTotal socket configured: {sock}");
+    } else {
+        info!("VirusTotal integration disabled (no socket configured)");
     }
 
     // Initialize yara rules
@@ -986,7 +948,7 @@ fn main() -> Result<()> {
             progress_tracker.add_files_to_queue(filenames);
 
             // Run check on message received
-            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref(), &mut vt_client);
+            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref(), config.socket_vt.as_deref());
 
             // Send fd and report to out; break to re-accept if connection is broken
             if let Err(e) = send_files(&files, &out_stream, &progress_tracker) {

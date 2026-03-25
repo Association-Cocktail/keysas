@@ -23,6 +23,7 @@ build: ## Build the binary files
 	@cp target/release/${PROJECT_NAME}-transit ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-out ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-analyze ${BUILD_DIR}
+	@cp target/release/${PROJECT_NAME}-virustotal ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-sign ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-backend ${BUILD_DIR}
 	@cp target/release/${PROJECT_NAME}-io ${BUILD_DIR}
@@ -31,6 +32,8 @@ build: ## Build the binary files
 	@cp target/release/${PROJECT_NAME}-in ./${PROJECT_NAME}-core/bin/
 	@cp target/release/${PROJECT_NAME}-transit ./${PROJECT_NAME}-core/bin/
 	@cp target/release/${PROJECT_NAME}-out ./${PROJECT_NAME}-core/bin/
+	@cp target/release/${PROJECT_NAME}-analyze ./${PROJECT_NAME}-core/bin/
+	@cp target/release/${PROJECT_NAME}-virustotal ./${PROJECT_NAME}-core/bin/
 	@if [ ! -d "./${PROJECT_NAME}-io/bin" ]; then mkdir ./${PROJECT_NAME}-io/bin; fi
 	@cp target/release/${PROJECT_NAME}-io ./${PROJECT_NAME}-io/bin/
 	@if [ ! -d "./${PROJECT_NAME}-backend/bin" ]; then mkdir ./${PROJECT_NAME}-backend/bin; fi

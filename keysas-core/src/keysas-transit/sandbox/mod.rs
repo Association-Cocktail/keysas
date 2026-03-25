@@ -111,11 +111,6 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
         .add_rules(path_beneath_rules(
             &[CONFIG_DIRECTORY, &rules.to_string_lossy()],
             AccessFs::from_read(abi),
-        ))?
-        // Read-only access for TLS certificates (VirusTotal HTTPS)
-        .add_rules(path_beneath_rules(
-            &["/etc/ssl/certs", "/etc/resolv.conf", "/etc/hosts"],
-            AccessFs::from_read(abi),
         ))?;
 
     // Try to add progress directory rule, but don't fail if it doesn't exist

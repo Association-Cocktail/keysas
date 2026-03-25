@@ -21,6 +21,7 @@ build: ## Build the binary files
 	@cp target/release/keysas-transit bin/
 	@cp target/release/keysas-out bin/
 	@cp target/release/keysas-analyze bin/
+	@cp target/release/keysas-virustotal bin/
 	@echo "build: Keysas-core is now compiled in bin directory !"
 
 clean: ## Remove previous build

@@ -107,6 +107,15 @@
       "show_wizard": "Show help",
       "close_wizard": "Close help"
     },
+    "checks": {
+      "hash": "Integrity (SHA256 hash)",
+      "size": "File size",
+      "type": "File type",
+      "av": "Antivirus",
+      "yara": "YARA",
+      "specialized": "Specialized analysis",
+      "vt": "VirusTotal"
+    },
     "progress": {
       "pending": "Waiting to be processed",
       "hashing": "Computing SHA256 hash...",

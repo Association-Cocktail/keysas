@@ -1,0 +1,23 @@
+# keysas-virustotal configuration file
+# This file is part of keysas.
+
+# Abstract socket name (must match VT_SOCKET in keysas-transit.default)
+SOCKET_VT=socket_virustotal
+
+# VirusTotal API v3 key
+VT_API_KEY=
+
+# Base URL for the VT files API (change for on-prem/proxy deployments)
+VT_API_URL=https://www.virustotal.com/api/v3/files
+
+# true = pass the file if VT is unreachable; false = block
+VT_FAIL_OPEN=true
+
+# Minimum number of malicious detections to block a file
+VT_BLOCK_THRESHOLD=3
+
+# HTTP timeout in milliseconds for VT API calls
+VT_TIMEOUT_MS=3000
+
+# How long (in seconds) VT results are cached in memory
+VT_CACHE_TTL_SECS=3600
