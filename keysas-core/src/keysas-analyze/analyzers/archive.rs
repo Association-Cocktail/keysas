@@ -28,9 +28,8 @@ const EXEC_MAGIC: &[(&[u8], &str)] = &[
 
 /// Filename extensions that denote executables — block if found inside an archive entry.
 const EXEC_EXTENSIONS: &[&str] = &[
-    "exe", "dll", "com", "efi", "msi", "scr", "pif",
-    "elf", "so", "dylib",
-    "bat", "cmd", "ps1", "vbs", "vbe", "hta",
+    "exe", "dll", "com", "efi", "msi", "scr", "pif", "elf", "so", "dylib", "bat", "cmd", "ps1",
+    "vbs", "vbe", "hta",
 ];
 
 fn is_executable_magic(data: &[u8]) -> Option<&'static str> {
@@ -55,7 +54,10 @@ pub fn analyze(fd: i32, filename: &str, tmp_dir: &str) -> (bool, String) {
     let tmp_path = format!("{}/archive_{}", tmp_dir, sanitize_filename(filename));
     if let Err(e) = write_fd_to_tmp(fd, &tmp_path) {
         log::warn!("archive::analyze: failed to write temp file: {e}");
-        return (true, "temp file write failed — analysis skipped".to_string());
+        return (
+            true,
+            "temp file write failed — analysis skipped".to_string(),
+        );
     }
 
     let result = analyze_path(&tmp_path, filename);
@@ -221,7 +223,10 @@ fn check_decompressed_magic<R: Read>(mut reader: R, fmt: &str) -> (bool, String)
     match reader.read(&mut header) {
         Ok(n) if n >= 2 => {
             if let Some(desc) = is_executable_magic(&header[..n]) {
-                return (false, format!("executable after {fmt} decompression ({desc})"));
+                return (
+                    false,
+                    format!("executable after {fmt} decompression ({desc})"),
+                );
             }
         }
         _ => {}
@@ -254,7 +259,13 @@ fn analyze_single_xz(path: &str) -> (bool, String) {
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

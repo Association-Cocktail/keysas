@@ -18,9 +18,7 @@ const PVD_SECTOR: usize = 16;
 const MAX_DEPTH: usize = 8;
 const MAX_FILES: usize = 4096;
 
-const EXECUTABLE_EXTS: &[&str] = &[
-    "exe", "dll", "msi", "com", "scr", "efi", "sys", "ocx",
-];
+const EXECUTABLE_EXTS: &[&str] = &["exe", "dll", "msi", "com", "scr", "efi", "sys", "ocx"];
 const SCRIPT_EXTS: &[&str] = &[
     "ps1", "bat", "cmd", "vbs", "vbe", "js", "jse", "hta", "wsf", "wsh",
 ];

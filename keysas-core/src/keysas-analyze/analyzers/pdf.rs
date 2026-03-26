@@ -70,7 +70,10 @@ fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
     }
     let mut count = 0;
     let mut start = 0;
-    while let Some(pos) = haystack[start..].windows(needle.len()).position(|w| w == needle) {
+    while let Some(pos) = haystack[start..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+    {
         count += 1;
         start += pos + needle.len();
     }

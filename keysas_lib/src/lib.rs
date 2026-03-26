@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /*
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * This file contains various utility functions
  */
@@ -64,7 +64,7 @@ pub fn sha256_digest(input: &File) -> Result<String> {
 
     let digest = {
         let mut hasher = Sha256::new();
-        let mut buffer = [0; 1048576];
+        let mut buffer = vec![0; 1_048_576].into_boxed_slice();
         loop {
             let count = reader.read(&mut buffer)?;
             if count == 0 {
@@ -97,6 +97,10 @@ pub fn sha256_digest(input: &File) -> Result<String> {
 /// let files = list_files(path.to_str().unwrap());
 /// assert_eq!(files.unwrap(), ["file.txt"]);
 /// ```
+/// # Errors
+///
+/// Will return `Err` if `directory` does not exist or the user does not have
+/// permission to read it.
 pub fn list_files(directory: &str) -> Result<Vec<String>> {
     let paths: std::fs::ReadDir = fs::read_dir(directory)?;
 
@@ -113,11 +117,12 @@ pub fn list_files(directory: &str) -> Result<Vec<String>> {
         })
         .collect::<Vec<String>>();
     // Not sending any files starting with dot like .bashrc
-    let re = Regex::new(r"^\.")?;
+    let re = Regex::new(r"^\.([a-z])*")?;
     names.retain(|x| !re.is_match(x));
     Ok(names)
 }
 
+#[must_use]
 #[cfg(target_os = "linux")]
 pub fn convert_ioslice<'a>(
     files: &'a Vec<File>,

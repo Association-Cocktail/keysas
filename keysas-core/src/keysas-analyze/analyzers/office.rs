@@ -116,7 +116,8 @@ fn analyze_ooxml(buf: &[u8]) -> (bool, String) {
             if name.ends_with(".rels") {
                 let mut xml = String::new();
                 if entry.read_to_string(&mut xml).is_ok() {
-                    if xml.contains("http://") || xml.contains("https://") || xml.contains("ftp://") {
+                    if xml.contains("http://") || xml.contains("https://") || xml.contains("ftp://")
+                    {
                         info_findings.push("external relationship target".to_string());
                     }
                     // Embedded OLE objects in OOXML
@@ -157,16 +158,16 @@ fn analyze_ole(buf: &[u8]) -> (bool, String) {
         .collect();
 
     let has_vba = entries.iter().any(|p| p.contains("vba"));
-    let has_macros = entries.iter().any(|p| p.contains("macro") || p.contains("module"));
+    let has_macros = entries
+        .iter()
+        .any(|p| p.contains("macro") || p.contains("module"));
 
     if has_vba || has_macros {
         // Try to scan VBA module streams for patterns
         // VBA streams: Module1, Module2, ThisDocument, Sheet1, etc.
         let module_paths: Vec<String> = entries
             .iter()
-            .filter(|p| {
-                p.contains("/vba/") && !p.ends_with('/') && !p.ends_with("_vba_project")
-            })
+            .filter(|p| p.contains("/vba/") && !p.ends_with('/') && !p.ends_with("_vba_project"))
             .cloned()
             .collect();
 
@@ -192,7 +193,10 @@ fn analyze_ole(buf: &[u8]) -> (bool, String) {
     }
 
     // Check for embedded OLE objects (Equation Editor, OLE links)
-    if entries.iter().any(|p| p.contains("equation") || p.contains("olestream")) {
+    if entries
+        .iter()
+        .any(|p| p.contains("equation") || p.contains("olestream"))
+    {
         info_findings.push("embedded OLE object".to_string());
     }
 
@@ -213,12 +217,12 @@ fn analyze_rtf(buf: &[u8]) -> (bool, String) {
     let rtf_blocking: &[&[u8]] = &[
         b"\\objhtml",
         b"\\objocx",
-        b"\\objclass",    // OLE object with class name (exploit delivery)
+        b"\\objclass", // OLE object with class name (exploit delivery)
     ];
     let rtf_info: &[&[u8]] = &[
-        b"\\object",       // any embedded object
-        b"\\pict",         // picture (can carry shellcode)
-        b"\\objdata",      // raw OLE data
+        b"\\object",  // any embedded object
+        b"\\pict",    // picture (can carry shellcode)
+        b"\\objdata", // raw OLE data
     ];
 
     for &pattern in rtf_blocking {
@@ -228,7 +232,11 @@ fn analyze_rtf(buf: &[u8]) -> (bool, String) {
         }
     }
     for &pattern in rtf_info {
-        if contains(buf, pattern) && !blocking_findings.iter().any(|f| f.contains(&String::from_utf8_lossy(pattern).to_string())) {
+        if contains(buf, pattern)
+            && !blocking_findings
+                .iter()
+                .any(|f| f.contains(&String::from_utf8_lossy(pattern).to_string()))
+        {
             info_findings.push(String::from_utf8_lossy(pattern).to_string());
         }
     }

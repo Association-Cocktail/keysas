@@ -2,7 +2,7 @@
 /*
  * The "keysas-transit".
  *
- * (C) Copyright 2019-2025 Stephane Neveu
+ * (C) Copyright 2019-2026 Stephane Neveu
  *
  * This file contains various funtions
  * to sandbox this binary using seccomp.
@@ -117,7 +117,9 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
     if let Ok(path_fd) = PathFd::new("/run/keysas-transit") {
         ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
     } else {
-        log::warn!("Could not add Landlock rule for /run/keysas-transit, progress tracking may not work");
+        log::warn!(
+            "Could not add Landlock rule for /run/keysas-transit, progress tracking may not work"
+        );
     }
 
     let status = ruleset.restrict_self()?;
@@ -125,14 +127,14 @@ pub fn landlock_sandbox(rule_path: &String) -> Result<(), RulesetError> {
     match status.ruleset {
         // The FullyEnforced case must be tested.
         RulesetStatus::FullyEnforced => {
-            log::info!("Keysas-transit is now fully sandboxed using Landlock !")
+            log::info!("Keysas-transit is now fully sandboxed using Landlock !");
         }
         RulesetStatus::PartiallyEnforced => {
-            log::warn!("Keysas-transit is only partially sandboxed using Landlock !")
+            log::warn!("Keysas-transit is only partially sandboxed using Landlock !");
         }
         // Users should be warned that they are not protected.
         RulesetStatus::NotEnforced => {
-            log::warn!("Keysas-transit: Not sandboxed with Landlock ! Please update your kernel.")
+            log::warn!("Keysas-transit: Not sandboxed with Landlock ! Please update your kernel.");
         }
     }
     Ok(())

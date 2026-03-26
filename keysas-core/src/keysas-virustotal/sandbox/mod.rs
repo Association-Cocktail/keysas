@@ -2,7 +2,7 @@
 /*
  * keysas-virustotal
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * Sandbox configuration for keysas-virustotal (Landlock + Seccomp).
  * This process requires network access for HTTPS calls to the VT API,
@@ -108,15 +108,9 @@ pub fn landlock_sandbox() -> Result<(), RulesetError> {
         .set_compatibility(CompatLevel::HardRequirement)
         .create()?
         // TLS certificates, DNS resolution config, NSS config
-        .add_rules(path_beneath_rules(
-            &["/etc"],
-            AccessFs::from_read(abi),
-        ))?
+        .add_rules(path_beneath_rules(&["/etc"], AccessFs::from_read(abi)))?
         // NSS resolver libraries and TLS shared libraries (loaded lazily by glibc)
-        .add_rules(path_beneath_rules(
-            &["/usr/lib"],
-            AccessFs::from_read(abi),
-        ))?
+        .add_rules(path_beneath_rules(&["/usr/lib"], AccessFs::from_read(abi)))?
         .restrict_self()?;
 
     match status.ruleset {
@@ -127,9 +121,7 @@ pub fn landlock_sandbox() -> Result<(), RulesetError> {
             log::warn!("keysas-virustotal is only partially sandboxed using Landlock!")
         }
         RulesetStatus::NotEnforced => {
-            log::warn!(
-                "keysas-virustotal: Not sandboxed with Landlock! Please update your kernel."
-            )
+            log::warn!("keysas-virustotal: Not sandboxed with Landlock! Please update your kernel.")
         }
     }
     Ok(())

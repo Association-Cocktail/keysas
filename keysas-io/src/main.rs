@@ -2,7 +2,7 @@
 /*
  * The "keysas-io".
  *
- * (C) Copyright 2019-2025 Stephane Neveu
+ * (C) Copyright 2019-2026 Stephane Neveu
  *
  * This file is the main file for udev management.
  */
@@ -38,14 +38,14 @@ extern crate sys_mount;
 #[macro_use]
 extern crate serde_derive;
 
-use crate::errors::*;
+use crate::errors::{Context, Result};
 use bytemuck::cast_slice;
 use ed25519_dalek::Signature as SignatureDalek;
 use keysas_lib::init_logger;
 use keysas_lib::keysas_key::PublicKeys;
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, KeysasHybridSignature};
 use kv::Config as kvConfig;
-use kv::*;
+use kv::Store;
 use libc::{c_int, c_short, c_ulong, c_void};
 use oqs::sig::{Algorithm, Sig};
 use proc_mounts::MountIter;
@@ -280,9 +280,8 @@ fn get_signature(device: &str) -> Result<KeysasHybridSignature> {
         Err(e) => return Err(anyhow!("Cannot construct new ML-DSA87 algorithm: {e}")),
     };
 
-    let sig_pq = match pq_scheme.signature_from_bytes(&s_pq_decoded) {
-        Some(sig) => sig,
-        None => return Err(anyhow!("Cannot parse PQ signature from bytes")),
+    let Some(sig_pq) = pq_scheme.signature_from_bytes(&s_pq_decoded) else {
+        return Err(anyhow!("Cannot parse PQ signature from bytes"));
     };
     Ok(KeysasHybridSignature {
         classic: sig_dalek,
@@ -332,7 +331,7 @@ fn is_signed(
         id_vendor_id, id_model_id, id_revision, id_serial, "out"
     );
     match KeysasHybridPubKeys::verify_key_signatures(data.as_bytes(), signatures, pubkeys) {
-        Ok(_) => {
+        Ok(()) => {
             info!("USB device is signed");
             true
         }
@@ -346,7 +345,11 @@ fn is_signed(
 fn copy_device_in(device: &Path) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mount_point = dir.path();
-    info!("Unsigned USB device {device:?} will be mounted on path: {mount_point:?}");
+    info!(
+        "Unsigned USB device {} will be mounted on path: {}",
+        device.display(),
+        mount_point.display()
+    );
     let supported = SupportedFilesystems::new()?;
     let mount_result = Mount::builder()
         .fstype(FilesystemType::from(&supported))
@@ -355,7 +358,7 @@ fn copy_device_in(device: &Path) -> Result<()> {
     match mount_result {
         Ok(mount) => {
             // Copying file to the mounted device.
-            info!("Unsigned device is mounted on: {mount_point:?}");
+            info!("Unsigned device is mounted on: {}", mount_point.display());
             copy_files_in(&mount_point.to_path_buf())?;
             // Make the mount temporary, so that it will be unmounted on drop.
             let _mount = mount.into_unmount_drop(UnmountFlags::DETACH);
@@ -377,7 +380,11 @@ fn copy_device_in(device: &Path) -> Result<()> {
 fn move_device_out(device: &Path) -> Result<PathBuf> {
     let dir = tempfile::tempdir()?;
     let mount_point = dir.path();
-    info!("Signed USB device {device:?} will be mounted on path: {mount_point:?}");
+    info!(
+        "Signed USB device {} will be mounted on path: {}",
+        device.display(),
+        mount_point.display()
+    );
     let supported = SupportedFilesystems::new()?;
     let mount_result = Mount::builder()
         .fstype(FilesystemType::from(&supported))
@@ -386,7 +393,10 @@ fn move_device_out(device: &Path) -> Result<PathBuf> {
     match mount_result {
         Ok(mount) => {
             // Moving files to the mounted device.
-            info!("Temporary out mount point for signed key: {mount_point:?}");
+            info!(
+                "Temporary out mount point for signed key: {}",
+                mount_point.display()
+            );
             move_files_out(&mount_point.to_path_buf())?;
             // Make the mount temporary, so that it will be unmounted on drop.
             let _mount = mount.into_unmount_drop(UnmountFlags::DETACH);
@@ -398,6 +408,7 @@ fn move_device_out(device: &Path) -> Result<PathBuf> {
     Ok(mount_point.to_path_buf())
 }
 
+#[allow(clippy::too_many_lines)]
 fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
     File::create(LOCK)?;
     std::thread::scope(|s| {
@@ -430,7 +441,7 @@ fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
                          );
 
                          // Create a tmp dir to be able to rename files later
-                         let tmp = TMP_DIR.trim_end_matches("/");
+                         let tmp = TMP_DIR.trim_end_matches('/');
                          let tmp = Path::new(tmp);
 
                          if tmp.exists() {
@@ -442,7 +453,7 @@ fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
                             }
                         } else {
                              match fs::create_dir(tmp) {
-                                 Ok(_)=> info!("Creating tmp directory for writing incoming files !"),
+                                 Ok(())=> info!("Creating tmp directory for writing incoming files !"),
                                  Err(e) => error!("Cannot create tmp directory: {e:?}"),
                              }
                          }
@@ -476,7 +487,7 @@ fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
                                                  report,
                                                  "Error while copying file: {e:?}"
                                              ) {
-                                                 Ok(_) => info!("io-error report file updated."),
+                                                 Ok(()) => info!("io-error report file updated."),
                                                  Err(why) => {
                                                      error!(
                                                      "Failed to write into io-error report {report:?}: {why}"
@@ -486,12 +497,14 @@ fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
                                              match unmount(mount_point, UnmountFlags::DETACH) {
                                                  Ok(()) => {
                                                      debug!(
-                                                         "Early removing mount point: {mount_point:?}"
-                                                     )
+                                                         "Early removing mount point: {}",
+                                                         mount_point.display()
+                                                     );
                                                  }
                                                  Err(why) => {
                                                      error!(
-                                                         "Failed to unmount {mount_point:?}: {why}"
+                                                         "Failed to unmount {}: {why}",
+                                                         mount_point.display()
                                                      );
                                                  }
                                              }
@@ -502,7 +515,7 @@ fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
                              Err(why) => error!(
                                  "Thread error: Cannot get metadata for file {path_to_read:?}: {why:?}. Terminating thread..."
                              ),
-                         };
+                         }
              });
             }
         }
@@ -518,7 +531,7 @@ fn move_files_out(mount_point: &PathBuf) -> Result<()> {
     let dir = fs::read_dir(SAS_OUT)?;
     for entry in dir {
         let entry = entry?;
-        debug!("New entry found: {:?}.", entry.file_name());
+        debug!("New entry found: {}.", entry.file_name().display());
 
         let path_to_write = format!(
             "{}{}{}",
@@ -537,9 +550,9 @@ fn move_files_out(mount_point: &PathBuf) -> Result<()> {
                 Err(e) => {
                     error!("Error while copying file to signed device {path_to_read}: {e:?}");
                     match unmount(mount_point, UnmountFlags::DETACH) {
-                        Ok(()) => debug!("Early removing mount point: {mount_point:?}"),
+                        Ok(()) => debug!("Early removing mount point: {}", mount_point.display()),
                         Err(why) => {
-                            error!("Failed to unmount {mount_point:?}: {why}");
+                            error!("Failed to unmount {}: {why}", mount_point.display());
                         }
                     }
                 }
@@ -566,7 +579,7 @@ fn busy_in() -> Result<(), anyhow::Error> {
     } else if !Path::new(WORKING_IN_FILE).exists() {
         File::create(WORKING_IN_FILE)?;
     } else {
-        debug!("No WORKING_FILES was found.")
+        debug!("No WORKING_FILES was found.");
     }
     Ok(())
 }
@@ -579,7 +592,7 @@ fn busy_out() -> Result<(), anyhow::Error> {
     } else if !Path::new(WORKING_OUT_FILE).exists() {
         File::create(WORKING_OUT_FILE)?;
     } else {
-        debug!("No WORKING_FILES was found.")
+        debug!("No WORKING_FILES was found.");
     }
     Ok(())
 }
@@ -598,7 +611,7 @@ fn ready_out() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn get_attr_udev(event: Event) -> Result<String, anyhow::Error> {
+fn get_attr_udev(event: &Event) -> Result<String, anyhow::Error> {
     let id_vendor_id = event
         .property_value(
             OsStr::new("ID_VENDOR_ID")
@@ -665,10 +678,10 @@ fn main() -> Result<()> {
         .get_matches();
 
     let ca_cert_cl = matches.get_one::<String>("ca-cert-cl").unwrap();
-    let ca_cert_cl = ca_cert_cl.to_string();
+    let ca_cert_cl = ca_cert_cl.clone();
     let ca_cert_cl = Arc::new(ca_cert_cl);
     let ca_cert_pq = matches.get_one::<String>("ca-cert-pq").unwrap();
-    let ca_cert_pq = ca_cert_pq.to_string();
+    let ca_cert_pq = ca_cert_pq.clone();
     let ca_cert_pq = Arc::new(ca_cert_pq);
     let yubikey = matches.get_one::<String>("yubikey").unwrap();
     let yubikey = yubikey
@@ -883,7 +896,7 @@ fn main() -> Result<()> {
                                         warn!("No user found during HMAC challenge !");
                                         ready_in()?;
                                     }
-                                };
+                                }
                             } else {
                                 info!("DEVICE NOT VALID2: {}", &device);
                                 copy_device_in(Path::new(&device))?;
@@ -934,9 +947,9 @@ fn main() -> Result<()> {
                             };
                             let serialized = serde_json::to_string(&keys)?;
                             match websocket.send(Message::Text(serialized.into())) {
-                                Ok(_) => log::debug!("Data wrote into the websocket"),
+                                Ok(()) => log::debug!("Data wrote into the websocket"),
                                 Err(e) => {
-                                    log::error!("Cannot write data into the websocket: {e}")
+                                    log::error!("Cannot write data into the websocket: {e}");
                                 }
                             }
                             move_device_out(Path::new(&device))?;
@@ -945,7 +958,7 @@ fn main() -> Result<()> {
                         }
                     }
                 } else if event.action() == Some(OsStr::new("remove")) {
-                    let product = match get_attr_udev(event) {
+                    let product = match get_attr_udev(&event) {
                         Ok(product) => product,
                         Err(_) => String::from("unknown"),
                     };

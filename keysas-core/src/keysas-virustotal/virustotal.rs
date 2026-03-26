@@ -36,17 +36,18 @@ pub struct VtClient {
 }
 
 impl VtClient {
+    #[must_use]
     pub fn new(
-        api_key: String,
-        api_url: String,
+        api_key: &str,
+        api_url: &str,
         fail_open: bool,
         block_threshold: u32,
         timeout_ms: u64,
         cache_ttl_secs: u64,
     ) -> Self {
         Self {
-            api_key,
-            api_url,
+            api_key: api_key.to_string(),
+            api_url: api_url.to_string(),
             fail_open,
             block_threshold,
             timeout: Duration::from_millis(timeout_ms),
@@ -61,6 +62,7 @@ impl VtClient {
     /// - `pass`       — true if the file may proceed
     /// - `detections` — number of engines reporting the file as malicious
     /// - `summary`    — human-readable result string for the .krp report
+    #[must_use]
     pub fn lookup(&mut self, sha256: &str) -> (bool, u32, String) {
         let now = Instant::now();
 
@@ -96,11 +98,7 @@ impl VtClient {
             }
             Err(e) => {
                 log::warn!("VT: API error for {sha256}: {e}");
-                return (
-                    self.fail_open,
-                    0,
-                    format!("VT unreachable: {}", e),
-                );
+                return (self.fail_open, 0, format!("VT unreachable: {}", e));
             }
         };
 
@@ -137,7 +135,11 @@ impl VtClient {
     fn insert_cache(&mut self, sha256: &str, detections: u32, summary: String, now: Instant) {
         self.cache.insert(
             sha256.to_string(),
-            CacheEntry { detections, summary, inserted: now },
+            CacheEntry {
+                detections,
+                summary,
+                inserted: now,
+            },
         );
     }
 }

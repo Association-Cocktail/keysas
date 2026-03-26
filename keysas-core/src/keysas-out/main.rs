@@ -2,7 +2,7 @@
 /*
  * The "keysas-out".
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * This file contains various funtions
  * for building the keysas-out binary.
@@ -59,11 +59,11 @@
 #![warn(missing_docs)]
 
 use anyhow::Result;
-use clap::{crate_version, Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, crate_version};
 use keysas_lib::append_ext;
+use keysas_lib::file_report::FileMetadata;
 use keysas_lib::file_report::bind_and_sign;
 use keysas_lib::file_report::generate_report_metadata;
-use keysas_lib::file_report::FileMetadata;
 use keysas_lib::init_logger;
 use keysas_lib::keysas_hybrid_keypair::HybridKeyPair;
 use keysas_lib::sha256_digest;
@@ -116,19 +116,19 @@ enum KrpMode {
 impl KrpMode {
     fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "never"     => KrpMode::Never,
+            "never" => KrpMode::Never,
             "pass_only" => KrpMode::PassOnly,
             "fail_only" => KrpMode::FailOnly,
-            _           => KrpMode::Always,
+            _ => KrpMode::Always,
         }
     }
 
     fn should_write(&self, is_valid: bool) -> bool {
         match self {
-            KrpMode::Always    => true,
-            KrpMode::Never     => false,
-            KrpMode::PassOnly  => is_valid,
-            KrpMode::FailOnly  => !is_valid,
+            KrpMode::Always => true,
+            KrpMode::Never => false,
+            KrpMode::PassOnly => is_valid,
+            KrpMode::FailOnly => !is_valid,
         }
     }
 }
@@ -196,8 +196,8 @@ fn parse_args() -> Configuration {
 
     // Unwrap should not panic with default values
     Configuration {
-        socket_out: matches.get_one::<String>("socket_out").unwrap().to_string(),
-        sas_out: matches.get_one::<String>("sas_out").unwrap().to_string(),
+        socket_out: matches.get_one::<String>("socket_out").unwrap().clone(),
+        sas_out: matches.get_one::<String>("sas_out").unwrap().clone(),
         yara_clean: matches.get_flag("yara_clean"),
         krp_mode: KrpMode::from_str(matches.get_one::<String>("krp_mode").unwrap()),
     }
@@ -219,7 +219,8 @@ fn parse_messages(messages: Messages, buffer: &[u8]) -> Vec<FileData> {
         .flatten()
         .filter_map(|fd| {
             // Deserialize metadata into a [FileMetadata] struct
-            match bincode::decode_from_slice::<FileMetadata, _>(buffer, bincode::config::standard()) {
+            match bincode::decode_from_slice::<FileMetadata, _>(buffer, bincode::config::standard())
+            {
                 Ok((meta, _)) => Some(FileData { fd, md: meta }),
                 Err(e) => {
                     warn!(
@@ -326,12 +327,12 @@ fn main() -> Result<()> {
 
     //Init Landlock
     match sandbox::landlock_sandbox(&config.sas_out) {
-        Ok(_) => log::info!("Landlock sandbox activated."),
+        Ok(()) => log::info!("Landlock sandbox activated."),
         Err(e) => log::warn!("Landlock sandbox cannot be activated: {e}"),
     }
     // Init Seccomp filters
     match sandbox::init() {
-        Ok(_) => log::info!("Seccomp sandbox activated."),
+        Ok(()) => log::info!("Seccomp sandbox activated."),
         Err(e) => log::warn!("Seccomp sandbox cannot be activated: {e}"),
     }
 

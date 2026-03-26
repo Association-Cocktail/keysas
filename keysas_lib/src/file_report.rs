@@ -62,7 +62,7 @@ pub struct MetaData {
     pub file_type: String,
     /// True if the file is correct
     pub is_valid: bool,
-    /// Object containing the detailled [FileReport]
+    /// Object containing the detailled [`FileReport`]
     pub report: FileReport,
 }
 
@@ -72,7 +72,7 @@ pub struct MetaData {
 pub struct Bd {
     /// SHA256 digest of the file encoded in base64
     pub file_digest: String,
-    /// SHA256 digest of the [MetaData] associated to the file
+    /// SHA256 digest of the [`MetaData`] associated to the file
     pub metadata_digest: String,
     /// Station certificates: concatenation of its ED25519 and ML-DSA87 signing certificates with a '|' delimiter
     pub station_certificate: String,
@@ -84,7 +84,7 @@ pub struct Bd {
 /// The structure can be serialized to JSON.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Report {
-    /// [MetaData] of the file analysis
+    /// [`MetaData`] of the file analysis
     pub metadata: MetaData,
     /// [Bd] binding of the file and the report with the station signature
     pub binding: Bd,
@@ -169,6 +169,7 @@ pub struct FileMetadata {
 /// # Arguments
 ///
 /// * `f` - File metadata received from keysas transit
+#[must_use]
 pub fn generate_report_metadata(f: &FileMetadata) -> MetaData {
     let timestamp = format!(
         "{}-{}-{}_{}-{}-{}-{}",
@@ -285,11 +286,8 @@ pub fn parse_report(
     ca_cert_pq: Option<&Certificate>,
 ) -> Result<Report, anyhow::Error> {
     // Open the report
-    let report_content = match std::fs::read_to_string(report_path) {
-        Ok(ct) => ct,
-        Err(_) => {
-            return Err(anyhow!("Failed to read report content"));
-        }
+    let Ok(report_content) = std::fs::read_to_string(report_path) else {
+        return Err(anyhow!("Failed to read report content"));
     };
 
     // Parse the json and coerce it into a Report structure
@@ -310,9 +308,7 @@ pub fn parse_report(
         ca_cert_cl,
     )?;
     let cert_pq = validate_signing_certificate(
-        certs
-            .next()
-            .ok_or(anyhow!("No ML-DSA87 certificate"))?,
+        certs.next().ok_or(anyhow!("No ML-DSA87 certificate"))?,
         ca_cert_pq,
     )?;
 
@@ -400,7 +396,7 @@ pub fn parse_report(
         .signature_from_bytes(&signature[ed25519_dalek::SIGNATURE_LENGTH..])
         .ok_or_else(|| anyhow!("Failed to parse signature field"))?;
     match pq_scheme.verify(message.as_bytes(), sig_pq, pub_pq) {
-        Ok(_) => log::info!("ML-DSA87 scheme is now verified"),
+        Ok(()) => log::info!("ML-DSA87 scheme is now verified"),
         Err(e) => return Err(anyhow!("ML-DSA87 scheme is not verified: {e}")),
     }
     // If the signature is invalid an error is thrown
@@ -430,7 +426,7 @@ mod tests_out {
             av_pass: true,
             av_report: Vec::new(),
             yara_pass: true,
-            yara_report: "".to_string(),
+            yara_report: String::new(),
             timestamp: "timestamp".to_string(),
             is_corrupted: false,
             file_type: "txt".to_string(),
@@ -448,7 +444,7 @@ mod tests_out {
         // Validate fields
         assert_eq!(file_data.filename, meta.name);
         assert_eq!(file_data.file_type, meta.file_type);
-        assert_eq!(meta.is_valid, true);
+        assert!(meta.is_valid);
     }
 
     #[test]
@@ -482,7 +478,7 @@ mod tests_out {
             av_pass: true,
             av_report: Vec::new(),
             yara_pass: true,
-            yara_report: "".to_string(),
+            yara_report: String::new(),
             timestamp: "timestamp".to_string(),
             is_corrupted: false,
             file_type: "txt".to_string(),
@@ -552,8 +548,7 @@ mod tests_out {
         } else {
             panic!("Signature is not 64 bytes long!");
         }
-        assert_eq!(
-            true,
+        assert!(
             pub_cl
                 .verify_strict(
                     concat.as_bytes(),
@@ -562,8 +557,7 @@ mod tests_out {
                 .is_ok()
         );
 
-        assert_eq!(
-            true,
+        assert!(
             pq_scheme
                 .verify(
                     concat.as_bytes(),
