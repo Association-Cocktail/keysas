@@ -37,7 +37,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use x509_cert::certificate::*;
+use x509_cert::certificate::Certificate;
 use x509_cert::der::EncodePem;
 use x509_cert::der::asn1::BitString;
 use x509_cert::name::RdnSequence;
@@ -160,6 +160,13 @@ impl HybridKeyPair {
     /// The keys will be saved in DER encoded PKCS8 files at: keys_path/name-{cl|pq}.p8
     /// The certificates will be saved in PEM files at: certs_path/name-{cl|pq}.pem
     /// pwd is used for encrypting the PKCS8 files
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// * It fails to save either the classic or post-quantum private key. This could be due to issues with file creation, writing permissions, or the key encryption process.
+    /// * It fails to encode the certificates to the PEM format.
+    /// * It fails to create or write the certificate files to the specified path.
     pub fn save(
         &self,
         name: &str,
@@ -169,7 +176,7 @@ impl HybridKeyPair {
     ) -> Result<(), anyhow::Error> {
         // Save keys
         let cl_key_path = keys_path.join(name.to_owned() + "-cl.p8");
-        log::debug!("cl_key_path: {cl_key_path:?}");
+        log::debug!("cl_key_path: {}", cl_key_path.display());
         self.classic.save_keys(&cl_key_path, pwd)?;
 
         let pq_key_path = keys_path.join(name.to_owned() + "-pq.p8");
@@ -179,13 +186,13 @@ impl HybridKeyPair {
         // Save certificates
         let cl_cert_path = certs_path.join(name.to_owned() + "-cl.pem");
         let cl_pem = self.classic_cert.to_pem(LineEnding::LF)?;
-        log::debug!("cl_cert_path: {cl_cert_path:?}");
+        log::debug!("cl_cert_path: {}", cl_cert_path.display());
         let mut cl_cert_file = File::create(cl_cert_path)?;
         write!(cl_cert_file, "{cl_pem}")?;
 
         let pq_cert_path = certs_path.join(name.to_owned() + "-pq.pem");
         let pq_pem = self.pq_cert.to_pem(LineEnding::LF)?;
-        log::debug!("pq_cert_path: {pq_cert_path:?}");
+        log::debug!("pq_cert_path: {}", pq_cert_path.display());
         let mut pq_cert_file = File::create(pq_cert_path)?;
         write!(pq_cert_file, "{pq_pem}")?;
 
@@ -204,17 +211,17 @@ impl HybridKeyPair {
         pwd: &str,
     ) -> Result<HybridKeyPair, anyhow::Error> {
         // Load keys
-        log::debug!("PKI dir: {pki_dir:?}");
+        log::debug!("PKI dir: {}", pki_dir.display());
 
         let keys_dir = pki_dir.join(".".to_owned() + &keys_path.to_string_lossy());
-        log::debug!("Keys dir: {keys_dir:?}");
+        log::debug!("Keys dir: {}", keys_dir.display());
 
         let cl_key_path = keys_dir.join(name.to_owned() + "-cl.p8");
-        log::debug!("Classic: {cl_key_path:?}");
+        log::debug!("Classic: {}", cl_key_path.display());
 
         let classic: SigningKey = SigningKey::load_keys(&cl_key_path, pwd)?;
         let pq_key_path = keys_dir.join(name.to_owned() + "-pq.p8");
-        log::debug!("PQ: {pq_key_path:?}");
+        log::debug!("PQ: {}", pq_key_path.display());
 
         let pq = KeysasPQKey::load_keys(&pq_key_path, pwd)?;
 
@@ -222,13 +229,13 @@ impl HybridKeyPair {
         let certs_dir = pki_dir.join(".".to_owned() + &certs_path.to_string_lossy());
 
         let cl_cert_path = certs_dir.join(name.to_owned() + "-cl.pem");
-        log::debug!("cl_cert_path: {cl_cert_path:?}");
+        log::debug!("cl_cert_path: {}", cl_cert_path.display());
 
         let cl_cert_pem = fs::read_to_string(cl_cert_path)?;
         let classic_cert = Certificate::from_pem(cl_cert_pem)?;
 
         let pq_cert_path = certs_dir.join(name.to_owned() + "-pq.pem");
-        log::debug!("pq_cert_path: {pq_cert_path:?}");
+        log::debug!("pq_cert_path: {}", pq_cert_path.display());
 
         let pq_cert_pem = fs::read_to_string(pq_cert_path)?;
         let pq_cert = Certificate::from_pem(pq_cert_pem)?;

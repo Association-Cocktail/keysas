@@ -375,8 +375,8 @@ fn parse_args() -> Configuration {
 
     // Unwrap should not panic with default values
     Configuration {
-        socket_in: matches.get_one::<String>("socket_in").unwrap().to_string(),
-        socket_out: matches.get_one::<String>("socket_out").unwrap().to_string(),
+        socket_in: matches.get_one::<String>("socket_in").unwrap().clone(),
+        socket_out: matches.get_one::<String>("socket_out").unwrap().clone(),
         socket_analyze: matches
             .get_one::<String>("socket_analyze")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
@@ -390,9 +390,9 @@ fn parse_args() -> Configuration {
             .split(',')
             .map(String::from)
             .collect(),
-        clamav_ip: matches.get_one::<String>("clamavip").unwrap().to_string(),
+        clamav_ip: matches.get_one::<String>("clamavip").unwrap().clone(),
         clamav_port: *matches.get_one::<u16>("clamavport").unwrap(),
-        rule_path: matches.get_one::<String>("rules_path").unwrap().to_string(),
+        rule_path: matches.get_one::<String>("rules_path").unwrap().clone(),
         yara_timeout: *matches.get_one::<i32>("yara_timeout").unwrap(),
         yara_rules: None,
         type_off: matches.get_flag("type_off"),
@@ -814,12 +814,12 @@ fn main() -> Result<()> {
 
     // Landlock initialization
     match sandbox::landlock_sandbox(&config.rule_path) {
-        Ok(_) => log::info!("Landlock sandbox activated."),
+        Ok(()) => log::info!("Landlock sandbox activated."),
         Err(e) => log::warn!("Landlock sandbox cannot be activated: {e}"),
     }
     // Seccomp initialization
     match sandbox::init() {
-        Ok(_) => log::info!("Seccomp sandbox activated."),
+        Ok(()) => log::info!("Seccomp sandbox activated."),
         Err(e) => log::warn!("Seccomp sandbox cannot be activated: {e}"),
     }
     // Initilize clamd client
