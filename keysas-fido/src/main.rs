@@ -32,14 +32,13 @@ use yubico_manager::config::{Mode, Slot};
 use yubico_manager::configure::DeviceModeConfig;
 use yubico_manager::hmacmode::HmacKey;
 mod errors;
-use crate::errors::*;
+use crate::errors::Result;
 use kv::Config as kvConfig;
-use kv::*;
+use kv::{Raw, Store};
 use std::fs::create_dir_all;
-use std::ops::Deref;
 use std::path::Path;
 
-fn store_key(name: String, hex_string: String) -> Result<bool> {
+fn store_key(name: &str, hex_string: &String) -> Result<bool> {
     // Configure the database
     if !Path::new("/etc/keysas/yubikey_db").is_dir() {
         create_dir_all("/etc/keysas/yubikey_db")?;
@@ -50,15 +49,15 @@ fn store_key(name: String, hex_string: String) -> Result<bool> {
     let store = Store::new(cfg)?;
     let enrolled_yubikeys = store.bucket::<String, String>(Some("Keysas"))?;
 
-    match enrolled_yubikeys.get(&hex_string)? {
-        Some(_) => Ok(false),
-        None => {
-            enrolled_yubikeys.set(&hex_string, &name)?;
-            Ok(true)
-        }
+    if enrolled_yubikeys.get(hex_string)?.is_some() {
+        Ok(false)
+    } else {
+        enrolled_yubikeys.set(hex_string, &name.to_string())?;
+        Ok(true)
     }
 }
-fn remove_key(hex_string: String) -> Result<()> {
+
+fn remove_key(hex_string: &String) -> Result<()> {
     // Configure the database
     let cfg = kvConfig::new("/etc/keysas/yubikey_db");
 
@@ -91,16 +90,16 @@ fn manage_db(name: &str, enroll: bool, revoke: bool) -> Result<()> {
         // In HMAC Mode, the result will always be the SAME for the SAME provided challenge
         let hmac_result = yubi.challenge_response_hmac(challenge.as_bytes(), config)?;
 
-        let v: &[u8] = hmac_result.deref();
+        let v: &[u8] = &hmac_result;
         let hex_string = hex::encode(v);
         if enroll && !revoke {
-            match store_key(name.to_string(), hex_string.clone()) {
+            match store_key(name, &hex_string) {
                 Ok(true) => println!("Enrollment sucessfull for user {name}: {hex_string}"),
                 Ok(false) => println!("Error: Yubikey already enrolled: {hex_string}"),
                 Err(why) => println!("Error: {why:?}"),
             }
         } else if !enroll && revoke {
-            remove_key(hex_string)?;
+            remove_key(&hex_string)?;
         } else {
             println!("Error on revoke/enroll values !")
         }
@@ -195,8 +194,8 @@ fn main() -> Result<()> {
 
     if init {
         init_yubikey()?;
-    } else if enroll | revoke {
-        manage_db(name, enroll, revoke)?
+    } else if enroll || revoke {
+        manage_db(name, enroll, revoke)?;
     } else {
         println!("Error: Try keysas-fido --help");
     }

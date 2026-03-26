@@ -62,7 +62,7 @@ pub struct MetaData {
     pub file_type: String,
     /// True if the file is correct
     pub is_valid: bool,
-    /// Object containing the detailled [FileReport]
+    /// Object containing the detailled [`FileReport`]
     pub report: FileReport,
 }
 
@@ -72,7 +72,7 @@ pub struct MetaData {
 pub struct Bd {
     /// SHA256 digest of the file encoded in base64
     pub file_digest: String,
-    /// SHA256 digest of the [MetaData] associated to the file
+    /// SHA256 digest of the [`MetaData`] associated to the file
     pub metadata_digest: String,
     /// Station certificates: concatenation of its ED25519 and ML-DSA87 signing certificates with a '|' delimiter
     pub station_certificate: String,
@@ -84,7 +84,7 @@ pub struct Bd {
 /// The structure can be serialized to JSON.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Report {
-    /// [MetaData] of the file analysis
+    /// [`MetaData`] of the file analysis
     pub metadata: MetaData,
     /// [Bd] binding of the file and the report with the station signature
     pub binding: Bd,

@@ -88,14 +88,14 @@ pub fn landlock_sandbox(sas_out: &String) -> Result<(), RulesetError> {
     match status.ruleset {
         // The FullyEnforced case must be tested.
         RulesetStatus::FullyEnforced => {
-            log::info!("Keysas-out is now fully sandboxed using Landlock !")
+            log::info!("Keysas-out is now fully sandboxed using Landlock !");
         }
         RulesetStatus::PartiallyEnforced => {
-            log::warn!("Keysas-out is only partially sandboxed using Landlock !")
+            log::warn!("Keysas-out is only partially sandboxed using Landlock !");
         }
         // Users should be warned that they are not protected.
         RulesetStatus::NotEnforced => {
-            log::warn!("Keysas-out: Not sandboxed with Landlock ! Please update your kernel.")
+            log::warn!("Keysas-out: Not sandboxed with Landlock ! Please update your kernel.");
         }
     }
     Ok(())

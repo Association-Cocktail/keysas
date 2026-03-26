@@ -38,14 +38,14 @@ extern crate sys_mount;
 #[macro_use]
 extern crate serde_derive;
 
-use crate::errors::*;
+use crate::errors::{Context, Result};
 use bytemuck::cast_slice;
 use ed25519_dalek::Signature as SignatureDalek;
 use keysas_lib::init_logger;
 use keysas_lib::keysas_key::PublicKeys;
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, KeysasHybridSignature};
 use kv::Config as kvConfig;
-use kv::*;
+use kv::Store;
 use libc::{c_int, c_short, c_ulong, c_void};
 use oqs::sig::{Algorithm, Sig};
 use proc_mounts::MountIter;
@@ -280,9 +280,8 @@ fn get_signature(device: &str) -> Result<KeysasHybridSignature> {
         Err(e) => return Err(anyhow!("Cannot construct new ML-DSA87 algorithm: {e}")),
     };
 
-    let sig_pq = match pq_scheme.signature_from_bytes(&s_pq_decoded) {
-        Some(sig) => sig,
-        None => return Err(anyhow!("Cannot parse PQ signature from bytes")),
+    let Some(sig_pq) = pq_scheme.signature_from_bytes(&s_pq_decoded) else {
+        return Err(anyhow!("Cannot parse PQ signature from bytes"));
     };
     Ok(KeysasHybridSignature {
         classic: sig_dalek,
