@@ -315,7 +315,7 @@ export default {
 </script>
 
 <style lang="scss">
-@import "../assets/style/app.scss";
+@use "../assets/style/app" as *;
 
 .AppGuichet-item {
 	padding: 20px;

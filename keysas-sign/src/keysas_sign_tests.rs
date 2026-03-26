@@ -38,7 +38,7 @@ fn test_generate_signing_keypair() {
     // Test the CSRs by reconstructing them from the function result
     let mut csr = csrs.split('|');
     let csr_cl = csr.next().unwrap();
-    let csr_pq = csr.remainder().unwrap();
+    let csr_pq = csr.next().unwrap();
     CertReq::from_pem(csr_cl).unwrap();
     CertReq::from_pem(csr_pq).unwrap();
 }

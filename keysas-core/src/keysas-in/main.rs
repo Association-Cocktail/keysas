@@ -23,7 +23,7 @@
 #![warn(overflowing_literals)]
 #![warn(deprecated)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Arg, ArgAction, Command, crate_version};
 use itertools::MultiUnzip;
 use keysas_lib::append_ext;
