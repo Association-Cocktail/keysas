@@ -308,9 +308,7 @@ pub fn parse_report(
         ca_cert_cl,
     )?;
     let cert_pq = validate_signing_certificate(
-        certs
-            .next()
-            .ok_or(anyhow!("No ML-DSA87 certificate"))?,
+        certs.next().ok_or(anyhow!("No ML-DSA87 certificate"))?,
         ca_cert_pq,
     )?;
 

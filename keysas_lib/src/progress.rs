@@ -100,17 +100,17 @@ impl AnalysisStep {
     /// dynamic content that cannot be pre-translated.
     pub fn description(&self) -> String {
         match self {
-            AnalysisStep::Pending            => "progress.pending".to_string(),
-            AnalysisStep::Hashing            => "progress.hashing".to_string(),
-            AnalysisStep::CheckingSize       => "progress.checking_size".to_string(),
-            AnalysisStep::CheckingFileType   => "progress.checking_file_type".to_string(),
-            AnalysisStep::AntivirusScan      => "progress.antivirus_scan".to_string(),
-            AnalysisStep::YaraScan           => "progress.yara_scan".to_string(),
+            AnalysisStep::Pending => "progress.pending".to_string(),
+            AnalysisStep::Hashing => "progress.hashing".to_string(),
+            AnalysisStep::CheckingSize => "progress.checking_size".to_string(),
+            AnalysisStep::CheckingFileType => "progress.checking_file_type".to_string(),
+            AnalysisStep::AntivirusScan => "progress.antivirus_scan".to_string(),
+            AnalysisStep::YaraScan => "progress.yara_scan".to_string(),
             AnalysisStep::SpecializedAnalysis => "progress.specialized_analysis".to_string(),
-            AnalysisStep::VirusTotalScan     => "progress.virustotal_scan".to_string(),
+            AnalysisStep::VirusTotalScan => "progress.virustotal_scan".to_string(),
             AnalysisStep::VerifyingSignature => "progress.verifying_signature".to_string(),
-            AnalysisStep::Complete           => "progress.complete".to_string(),
-            AnalysisStep::Failed(reason)     => reason.clone(),
+            AnalysisStep::Complete => "progress.complete".to_string(),
+            AnalysisStep::Failed(reason) => reason.clone(),
         }
     }
 
@@ -123,7 +123,7 @@ impl AnalysisStep {
             AnalysisStep::AntivirusScan => 50,
             AnalysisStep::YaraScan => 65,
             AnalysisStep::SpecializedAnalysis => 75,
-            AnalysisStep::VirusTotalScan     => 85,
+            AnalysisStep::VirusTotalScan => 85,
             AnalysisStep::VerifyingSignature => 93,
             AnalysisStep::Complete => 100,
             AnalysisStep::Failed(_) => 0,

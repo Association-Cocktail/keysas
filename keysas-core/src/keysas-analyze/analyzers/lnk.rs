@@ -10,14 +10,27 @@ use std::os::unix::io::FromRawFd;
 
 /// Suspicious executables in LNK targets (blocking)
 const SUSPICIOUS_CMDLINE: &[&str] = &[
-    "powershell", "cmd.exe", "wscript", "cscript", "mshta", "rundll32",
-    "regsvr32", "msiexec", "certutil", "bitsadmin", "wmic",
+    "powershell",
+    "cmd.exe",
+    "wscript",
+    "cscript",
+    "mshta",
+    "rundll32",
+    "regsvr32",
+    "msiexec",
+    "certutil",
+    "bitsadmin",
+    "wmic",
 ];
 
 /// Suspicious temp/user-writable paths (blocking)
 const SUSPICIOUS_PATHS: &[&str] = &[
-    "%temp%", "%appdata%", "%localappdata%", "%programdata%",
-    "\\temp\\", "\\tmp\\",
+    "%temp%",
+    "%appdata%",
+    "%localappdata%",
+    "%programdata%",
+    "\\temp\\",
+    "\\tmp\\",
 ];
 
 pub fn analyze(fd: i32, _filename: &str) -> (bool, String) {
@@ -80,7 +93,10 @@ pub fn analyze(fd: i32, _filename: &str) -> (bool, String) {
 fn extract_target_path(text: &str) -> Option<String> {
     for word in text.split_whitespace() {
         // Drive letter path: C:\...
-        if word.len() > 3 && word.chars().next()?.is_ascii_alphabetic() && word[1..].starts_with(":\\") {
+        if word.len() > 3
+            && word.chars().next()?.is_ascii_alphabetic()
+            && word[1..].starts_with(":\\")
+        {
             return Some(word.chars().take(80).collect());
         }
         // UNC path: \\server\...

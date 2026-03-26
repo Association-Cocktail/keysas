@@ -97,7 +97,9 @@ pub fn landlock_sandbox(sas_in: &String) -> Result<()> {
     if let Ok(path_fd) = PathFd::new("/run/keysas-in") {
         ruleset = ruleset.add_rule(PathBeneath::new(path_fd, allow_write))?;
     } else {
-        log::warn!("Could not add Landlock rule for /run/keysas-in, progress tracking may not work");
+        log::warn!(
+            "Could not add Landlock rule for /run/keysas-in, progress tracking may not work"
+        );
     }
 
     let status = ruleset.restrict_self()?;

@@ -244,7 +244,11 @@ fn main() {
         info!("VT lookup for: {}", req.sha256);
         let (pass, detections, summary) = vt.lookup(&req.sha256);
 
-        let resp = VtResponse { pass, detections, summary };
+        let resp = VtResponse {
+            pass,
+            detections,
+            summary,
+        };
         match bincode::encode_to_vec(&resp, bc_config) {
             Ok(data) => {
                 if let Err(e) = stream.write_all(&data) {

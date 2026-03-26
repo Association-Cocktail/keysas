@@ -10,13 +10,13 @@ use std::io::Read;
 
 /// Known packer section name prefixes (case-insensitive).
 const PACKER_SECTIONS: &[&str] = &[
-    "upx",        // UPX
-    ".themida",   // Themida / WinLicense
+    "upx",      // UPX
+    ".themida", // Themida / WinLicense
     ".winlicen",
-    ".mpress",    // MPRESS
-    ".aspack",    // ASPack
-    ".nsp",       // NsPack
-    ".obsidium",  // Obsidium
+    ".mpress",   // MPRESS
+    ".aspack",   // ASPack
+    ".nsp",      // NsPack
+    ".obsidium", // Obsidium
     "armadillo",
     ".enigma",
 ];
@@ -97,7 +97,10 @@ pub fn analyze(fd: i32, filename: &str, _tmp_dir: &str) -> (bool, String) {
         }
     }
     if !suspicious_found.is_empty() {
-        info_findings.push(format!("suspicious imports: {}", suspicious_found.join(", ")));
+        info_findings.push(format!(
+            "suspicious imports: {}",
+            suspicious_found.join(", ")
+        ));
     }
 
     // Architecture / bitness for context

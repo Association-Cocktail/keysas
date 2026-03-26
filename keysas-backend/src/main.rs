@@ -125,16 +125,36 @@ pub fn list_files_in(directory: &str) -> Result<Vec<FileStatus>> {
     let re = Regex::new(r"^\.")?;
     let mut result = Vec::new();
     for entry in fs::read_dir(directory)?.filter_map(|e| e.ok()) {
-        let name = match entry.path().file_name().and_then(|n| n.to_str().map(String::from)) {
+        let name = match entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str().map(String::from))
+        {
             Some(n) => n,
             None => continue,
         };
-        if re.is_match(&name) { continue; }
+        if re.is_match(&name) {
+            continue;
+        }
         if name.ends_with(".ioerror") {
             let filename = name[..name.len() - ".ioerror".len()].to_string();
-            result.push(FileStatus { filename, is_valid: false, reason: Some("ioerror".to_string()), detail: None, checks: None, check_details: None });
+            result.push(FileStatus {
+                filename,
+                is_valid: false,
+                reason: Some("ioerror".to_string()),
+                detail: None,
+                checks: None,
+                check_details: None,
+            });
         } else {
-            result.push(FileStatus { filename: name, is_valid: true, reason: None, detail: None, checks: None, check_details: None });
+            result.push(FileStatus {
+                filename: name,
+                is_valid: true,
+                reason: None,
+                detail: None,
+                checks: None,
+                check_details: None,
+            });
         }
     }
     Ok(result)
@@ -151,12 +171,20 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
     let mut krp_files: Vec<String> = Vec::new();
 
     for entry in fs::read_dir(directory)?.filter_map(|e| e.ok()) {
-        let name = match entry.path().file_name().and_then(|n| n.to_str().map(String::from)) {
+        let name = match entry
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str().map(String::from))
+        {
             Some(n) => n,
             None => continue,
         };
-        if re.is_match(&name) { continue; }
-        if name.ends_with(".sha256") { continue; }
+        if re.is_match(&name) {
+            continue;
+        }
+        if name.ends_with(".sha256") {
+            continue;
+        }
         if name.ends_with(".krp") {
             krp_files.push(name);
         } else {
@@ -170,18 +198,28 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
     // Data files: present = passed (look up .krp only if KrpMode::Always wrote one)
     for name in &data_files {
         let krp_path = format!("{}/{}.krp", directory, name);
-        let (is_valid, reason, detail, checks, check_details) = if std::path::Path::new(&krp_path).exists() {
-            parse_krp(&krp_path)
-        } else {
-            (true, None, None, None, None)
-        };
-        result.push(FileStatus { filename: name.clone(), is_valid, reason, detail, checks, check_details });
+        let (is_valid, reason, detail, checks, check_details) =
+            if std::path::Path::new(&krp_path).exists() {
+                parse_krp(&krp_path)
+            } else {
+                (true, None, None, None, None)
+            };
+        result.push(FileStatus {
+            filename: name.clone(),
+            is_valid,
+            reason,
+            detail,
+            checks,
+            check_details,
+        });
     }
 
     // .krp-only files: blocked files (data file was not copied to OUT)
     for krp_name in &krp_files {
         let original = krp_name[..krp_name.len() - 4].to_string();
-        if data_set.contains(original.as_str()) { continue; } // already handled above
+        if data_set.contains(original.as_str()) {
+            continue;
+        } // already handled above
         let krp_path = format!("{}/{}", directory, krp_name);
         let (_, reason, detail, checks, check_details) = parse_krp(&krp_path);
         result.push(FileStatus {
@@ -199,7 +237,9 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
 
 /// Parse a .krp JSON report.
 /// Returns `(is_valid, reason_key, detail, checks, check_details)`.
-fn parse_krp(krp_path: &str) -> (
+fn parse_krp(
+    krp_path: &str,
+) -> (
     bool,
     Option<String>,
     Option<String>,
@@ -223,11 +263,20 @@ fn parse_krp(krp_path: &str) -> (
     // Build per-check human-readable detail map
     let mut check_details = std::collections::HashMap::new();
 
-    let av_ok = report["av"].as_array().map(|a| a.is_empty()).unwrap_or(true);
+    let av_ok = report["av"]
+        .as_array()
+        .map(|a| a.is_empty())
+        .unwrap_or(true);
     checks.insert("av".to_string(), av_ok);
     if !av_ok {
-        let av_detail = report["av"].as_array()
-            .map(|a| a.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
+        let av_detail = report["av"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
             .unwrap_or_default();
         check_details.insert("av".to_string(), av_detail);
     }
@@ -267,12 +316,21 @@ fn parse_krp(krp_path: &str) -> (
     // Specialized — only if actually performed
     let analyzer = report["specialized_analyzer"].as_str().unwrap_or("");
     if !analyzer.is_empty() || report["specialized_pass"].as_bool() == Some(false) {
-        checks.insert("specialized".to_string(), report["specialized_pass"].as_bool().unwrap_or(true));
+        checks.insert(
+            "specialized".to_string(),
+            report["specialized_pass"].as_bool().unwrap_or(true),
+        );
         let sp_summary = report["specialized_summary"].as_str().unwrap_or("");
-        check_details.insert("specialized".to_string(),
-            if analyzer.is_empty() { sp_summary.to_string() }
-            else if sp_summary.is_empty() { analyzer.to_string() }
-            else { format!("{analyzer}: {sp_summary}") });
+        check_details.insert(
+            "specialized".to_string(),
+            if analyzer.is_empty() {
+                sp_summary.to_string()
+            } else if sp_summary.is_empty() {
+                analyzer.to_string()
+            } else {
+                format!("{analyzer}: {sp_summary}")
+            },
+        );
     }
 
     // VirusTotal — only if a lookup was actually done (non-empty summary)
@@ -281,9 +339,14 @@ fn parse_krp(krp_path: &str) -> (
         let vt_pass = report["vt_pass"].as_bool().unwrap_or(true);
         checks.insert("vt".to_string(), vt_pass);
         let vt_detections = report["vt_detections"].as_u64().unwrap_or(0);
-        check_details.insert("vt".to_string(),
-            if vt_detections > 0 { format!("{vt_detections} détection(s) — {vt_summary}") }
-            else { vt_summary.to_string() });
+        check_details.insert(
+            "vt".to_string(),
+            if vt_detections > 0 {
+                format!("{vt_detections} détection(s) — {vt_summary}")
+            } else {
+                vt_summary.to_string()
+            },
+        );
     }
 
     if is_valid {
@@ -292,38 +355,102 @@ fn parse_krp(krp_path: &str) -> (
 
     // Primary failure reason
     if !not_corrupted {
-        return (false, Some("corrupted".to_string()), None, Some(checks), Some(check_details));
+        return (
+            false,
+            Some("corrupted".to_string()),
+            None,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if report["toobig"].as_bool() == Some(true) {
-        return (false, Some("toobig".to_string()), None, Some(checks), Some(check_details));
+        return (
+            false,
+            Some("toobig".to_string()),
+            None,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if !digest_ok {
-        return (false, Some("digest".to_string()), None, Some(checks), Some(check_details));
+        return (
+            false,
+            Some("digest".to_string()),
+            None,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if report["type_allowed"].as_bool() == Some(false) {
-        let detail = meta["file_type"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("forbidden".to_string()), detail, Some(checks), Some(check_details));
+        let detail = meta["file_type"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        return (
+            false,
+            Some("forbidden".to_string()),
+            detail,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if !av_ok {
-        let detail = report["av"].as_array()
+        let detail = report["av"]
+            .as_array()
             .and_then(|a| a.first())
             .and_then(|s| s.as_str())
             .map(String::from);
-        return (false, Some("antivirus".to_string()), detail, Some(checks), Some(check_details));
+        return (
+            false,
+            Some("antivirus".to_string()),
+            detail,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if !yara_ok {
         let detail = Some(yara_str.chars().take(80).collect());
-        return (false, Some("yara".to_string()), detail, Some(checks), Some(check_details));
+        return (
+            false,
+            Some("yara".to_string()),
+            detail,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if report["specialized_pass"].as_bool() == Some(false) {
-        let detail = report["specialized_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("specialized".to_string()), detail, Some(checks), Some(check_details));
+        let detail = report["specialized_summary"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        return (
+            false,
+            Some("specialized".to_string()),
+            detail,
+            Some(checks),
+            Some(check_details),
+        );
     }
     if report["vt_pass"].as_bool() == Some(false) {
-        let detail = report["vt_summary"].as_str().filter(|s| !s.is_empty()).map(String::from);
-        return (false, Some("virustotal".to_string()), detail, Some(checks), Some(check_details));
+        let detail = report["vt_summary"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+        return (
+            false,
+            Some("virustotal".to_string()),
+            detail,
+            Some(checks),
+            Some(check_details),
+        );
     }
-    (false, Some("digest".to_string()), None, Some(checks), Some(check_details))
+    (
+        false,
+        Some("digest".to_string()),
+        None,
+        Some(checks),
+        Some(check_details),
+    )
 }
 
 pub fn daemon_status() -> Result<[bool; 3]> {
@@ -420,10 +547,17 @@ fn main() -> Result<()> {
                 };
 
                 // Read progress files - only send when actively processing
-                let progress_in = read_progress_file("/run/keysas-in/progress.json")
-                    .filter(|v| v.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false));
+                let progress_in = read_progress_file("/run/keysas-in/progress.json").filter(|v| {
+                    v.get("is_processing")
+                        .and_then(|b| b.as_bool())
+                        .unwrap_or(false)
+                });
                 let progress_transit = read_progress_file("/run/keysas-transit/progress.json")
-                    .filter(|v| v.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false));
+                    .filter(|v| {
+                        v.get("is_processing")
+                            .and_then(|b| b.as_bool())
+                            .unwrap_or(false)
+                    });
 
                 let working_in = progress_in.is_some() || !is_empty_fs_in;
                 let working_transit = progress_transit.is_some();

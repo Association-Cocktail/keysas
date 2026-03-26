@@ -346,7 +346,11 @@ fn is_signed(
 fn copy_device_in(device: &Path) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let mount_point = dir.path();
-    info!("Unsigned USB device {} will be mounted on path: {}", device.display(), mount_point.display());
+    info!(
+        "Unsigned USB device {} will be mounted on path: {}",
+        device.display(),
+        mount_point.display()
+    );
     let supported = SupportedFilesystems::new()?;
     let mount_result = Mount::builder()
         .fstype(FilesystemType::from(&supported))
@@ -377,7 +381,11 @@ fn copy_device_in(device: &Path) -> Result<()> {
 fn move_device_out(device: &Path) -> Result<PathBuf> {
     let dir = tempfile::tempdir()?;
     let mount_point = dir.path();
-    info!("Signed USB device {} will be mounted on path: {}", device.display(), mount_point.display());
+    info!(
+        "Signed USB device {} will be mounted on path: {}",
+        device.display(),
+        mount_point.display()
+    );
     let supported = SupportedFilesystems::new()?;
     let mount_result = Mount::builder()
         .fstype(FilesystemType::from(&supported))
@@ -386,7 +394,10 @@ fn move_device_out(device: &Path) -> Result<PathBuf> {
     match mount_result {
         Ok(mount) => {
             // Moving files to the mounted device.
-            info!("Temporary out mount point for signed key: {}", mount_point.display());
+            info!(
+                "Temporary out mount point for signed key: {}",
+                mount_point.display()
+            );
             move_files_out(&mount_point.to_path_buf())?;
             // Make the mount temporary, so that it will be unmounted on drop.
             let _mount = mount.into_unmount_drop(UnmountFlags::DETACH);

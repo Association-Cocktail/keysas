@@ -92,10 +92,7 @@ fn parse_args() -> Config {
         .get_matches();
 
     Config {
-        socket_name: matches
-            .get_one::<String>("socket_analyze")
-            .unwrap()
-            .clone(),
+        socket_name: matches.get_one::<String>("socket_analyze").unwrap().clone(),
         tmp_dir: matches.get_one::<String>("tmp_dir").unwrap().clone(),
     }
 }

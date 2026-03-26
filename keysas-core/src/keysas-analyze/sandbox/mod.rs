@@ -115,7 +115,8 @@ pub fn init() -> Result<()> {
 
 pub fn landlock_sandbox(tmp_dir: &str) -> Result<(), RulesetError> {
     let abi = ABI::V2;
-    let allow_write = make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | MakeReg | RemoveFile});
+    let allow_write =
+        make_bitflags!(AccessFs::{ReadFile | ReadDir | WriteFile | MakeReg | RemoveFile});
     // External tools (diec, strings, python, olevba, pdfid) need Execute in addition to Read
     let allow_exec = make_bitflags!(AccessFs::{ReadFile | ReadDir | Execute});
 
@@ -129,10 +130,7 @@ pub fn landlock_sandbox(tmp_dir: &str) -> Result<(), RulesetError> {
             allow_exec,
         ))?
         // Read-only: configuration files (no execute needed)
-        .add_rules(path_beneath_rules(
-            &["/etc"],
-            AccessFs::from_read(abi),
-        ))?;
+        .add_rules(path_beneath_rules(&["/etc"], AccessFs::from_read(abi)))?;
 
     // Read-write: runtime directory for subprocess temp files
     // Directory is created by systemd RuntimeDirectory= before sandbox activation

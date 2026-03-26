@@ -29,8 +29,8 @@ use clamav_tcp::version;
 use clap::{Arg, ArgAction, Command, crate_version};
 use infer::get;
 use keysas_lib::init_logger;
-use keysas_lib::sha256_digest;
 use keysas_lib::progress::{AnalysisStep, ProgressTracker};
+use keysas_lib::sha256_digest;
 use log::{error, info, warn};
 use nix::unistd;
 use std::fs::File;
@@ -97,7 +97,9 @@ fn call_vt_analyzer(socket_name: &str, sha256: &str) -> (bool, u32, String) {
             return (true, 0, String::new());
         }
     };
-    let req = VtRequest { sha256: sha256.to_string() };
+    let req = VtRequest {
+        sha256: sha256.to_string(),
+    };
     let config = bincode::config::standard();
     let data = match bincode::encode_to_vec(&req, config) {
         Ok(d) => d,
@@ -120,7 +122,10 @@ fn call_vt_analyzer(socket_name: &str, sha256: &str) -> (bool, u32, String) {
     };
     match bincode::decode_from_slice::<VtResponse, _>(&buf[..n], config) {
         Ok((resp, _)) => {
-            info!("VT result for {sha256}: pass={}, detections={}, summary={}", resp.pass, resp.detections, resp.summary);
+            info!(
+                "VT result for {sha256}: pass={}, detections={}, summary={}",
+                resp.pass, resp.detections, resp.summary
+            );
             (resp.pass, resp.detections, resp.summary)
         }
         Err(e) => {
@@ -195,7 +200,10 @@ fn call_specialized_analyzer(
     match bincode::decode_from_slice::<AnalyzeResponse, _>(&buf, config) {
         Ok((resp, _)) => {
             if resp.performed {
-                info!("Specialized analysis by {}: pass={}, summary={}", resp.analyzer, resp.passed, resp.summary);
+                info!(
+                    "Specialized analysis by {}: pass={}, summary={}",
+                    resp.analyzer, resp.passed, resp.summary
+                );
             }
             (resp.passed, resp.analyzer, resp.summary)
         }
@@ -247,17 +255,17 @@ struct FileData {
 
 /// Daemon configuration arguments
 struct Configuration {
-    socket_in: String,            // path for the socket with keysas-in
-    socket_out: String,           // path for the socket with keysas-out
+    socket_in: String,              // path for the socket with keysas-in
+    socket_out: String,             // path for the socket with keysas-out
     socket_analyze: Option<String>, // path for the socket with keysas-analyze (optional)
-    socket_vt: Option<String>,    // path for the socket with keysas-virustotal (optional)
-    max_size: u64,                // Maximum size for files
-    magic_list: Vec<String>,      // List of allowed file type
-    clamav_ip: String,            // ClamAV IP address
-    clamav_port: u16,             // ClamAV port number
-    rule_path: String,            // Path to yara rules
-    yara_timeout: i32,            // Timeout for yara
-    yara_rules: Option<Rules>,    // Yara rules
+    socket_vt: Option<String>,      // path for the socket with keysas-virustotal (optional)
+    max_size: u64,                  // Maximum size for files
+    magic_list: Vec<String>,        // List of allowed file type
+    clamav_ip: String,              // ClamAV IP address
+    clamav_port: u16,               // ClamAV port number
+    rule_path: String,              // Path to yara rules
+    yara_timeout: i32,              // Timeout for yara
+    yara_rules: Option<Rules>,      // Yara rules
     type_off: bool,
 }
 
@@ -478,11 +486,11 @@ fn is_likely_text(buf: &[u8]) -> bool {
 /// This means a `malware.zip` renamed to `foo.jar` is allowed only if `jar` is whitelisted,
 /// but keysas-analyze and ClamAV still scan the content.
 const ZIP_BASED_EXTENSIONS: &[&str] = &[
-    "jar", "war", "ear",            // Java archives
-    "docx", "xlsx", "pptx",         // Office Open XML
-    "odt", "ods", "odp",            // LibreOffice
-    "epub",                         // eBook
-    "apk",                          // Android (not whitelisted by default)
+    "jar", "war", "ear", // Java archives
+    "docx", "xlsx", "pptx", // Office Open XML
+    "odt", "ods", "odp",  // LibreOffice
+    "epub", // eBook
+    "apk",  // Android (not whitelisted by default)
 ];
 
 /// This function returns true if the file type is in the list provided.
@@ -543,7 +551,14 @@ fn get_extension(buf: Vec<u8>) -> String {
 ///     - Yara rules check
 /// Checks results are marked in file metadata.
 /// This function does not modify the files.
-fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: String, progress_tracker: &ProgressTracker, socket_analyze: Option<&str>, socket_vt: Option<&str>) {
+fn check_files(
+    files: &mut Vec<FileData>,
+    conf: &Configuration,
+    clam_addr: String,
+    progress_tracker: &ProgressTracker,
+    socket_analyze: Option<&str>,
+    socket_vt: Option<&str>,
+) {
     for f in files {
         // Start tracking this file
         progress_tracker.start_file(f.md.filename.clone());
@@ -674,7 +689,8 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                 match limited_reader.read_to_end(&mut buffer) {
                     Ok(_) => {
                         if !conf.type_off {
-                            f.md.is_type_allowed = check_is_extension_allowed(&buffer, &f.md.filename, conf);
+                            f.md.is_type_allowed =
+                                check_is_extension_allowed(&buffer, &f.md.filename, conf);
                             f.md.file_type = get_extension(buffer);
                         } else {
                             f.md.is_type_allowed = true;
@@ -700,9 +716,8 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                 // Specialized analysis (oletools, peepdf, die, etc.)
                 if let Some(sock) = socket_analyze {
                     progress_tracker.update_step(AnalysisStep::SpecializedAnalysis);
-                    let (pass, analyzer, summary) = call_specialized_analyzer(
-                        sock, nfd, &f.md.filename, &f.md.file_type,
-                    );
+                    let (pass, analyzer, summary) =
+                        call_specialized_analyzer(sock, nfd, &f.md.filename, &f.md.file_type);
                     f.md.specialized_pass = pass;
                     f.md.specialized_analyzer = analyzer;
                     f.md.specialized_summary = summary;
@@ -710,7 +725,9 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     match unistd::lseek(nfd, 0, unistd::Whence::SeekSet) {
                         Ok(_) => (),
                         Err(e) => {
-                            error!("Unable to lseek after specialized analysis: {e:?}, killing myself.");
+                            error!(
+                                "Unable to lseek after specialized analysis: {e:?}, killing myself."
+                            );
                             process::exit(1);
                         }
                     }
@@ -723,7 +740,10 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
                     f.md.vt_detections = detections;
                     f.md.vt_summary = summary;
                     if !pass {
-                        warn!("VT blocked file {}: {} detection(s)", f.md.filename, detections);
+                        warn!(
+                            "VT blocked file {}: {} detection(s)",
+                            f.md.filename, detections
+                        );
                     }
                 }
             }
@@ -766,7 +786,11 @@ fn check_files(files: &mut Vec<FileData>, conf: &Configuration, clam_addr: Strin
 
 /// This functions send the files filedescriptor and metadata to the socket.
 /// Returns Err if the connection to keysas-out is broken (e.g. broken pipe).
-fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &ProgressTracker) -> Result<()> {
+fn send_files(
+    files: &Vec<FileData>,
+    stream: &UnixStream,
+    _progress_tracker: &ProgressTracker,
+) -> Result<()> {
     let config = bincode::config::standard();
     for file in files {
         // Get metadata
@@ -794,8 +818,14 @@ fn send_files(files: &Vec<FileData>, stream: &UnixStream, _progress_tracker: &Pr
         }
         // Close the file descriptor
         match unistd::close(file.fd) {
-            Ok(_) => info!("File descriptor {} closed for file {}.", file.fd, file.md.filename),
-            Err(e) => error!("Failed to close file descriptor {} for file {}: {e}", file.fd, file.md.filename),
+            Ok(_) => info!(
+                "File descriptor {} closed for file {}.",
+                file.fd, file.md.filename
+            ),
+            Err(e) => error!(
+                "Failed to close file descriptor {} for file {}: {e}",
+                file.fd, file.md.filename
+            ),
         }
     }
     Ok(())
@@ -957,7 +987,14 @@ fn main() -> Result<()> {
             progress_tracker.add_files_to_queue(filenames);
 
             // Run check on message received
-            check_files(&mut files, &config, url.clone(), &progress_tracker, config.socket_analyze.as_deref(), config.socket_vt.as_deref());
+            check_files(
+                &mut files,
+                &config,
+                url.clone(),
+                &progress_tracker,
+                config.socket_analyze.as_deref(),
+                config.socket_vt.as_deref(),
+            );
 
             // Send fd and report to out; break to re-accept if connection is broken
             if let Err(e) = send_files(&files, &out_stream, &progress_tracker) {

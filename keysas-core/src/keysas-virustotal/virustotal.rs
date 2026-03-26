@@ -98,11 +98,7 @@ impl VtClient {
             }
             Err(e) => {
                 log::warn!("VT: API error for {sha256}: {e}");
-                return (
-                    self.fail_open,
-                    0,
-                    format!("VT unreachable: {}", e),
-                );
+                return (self.fail_open, 0, format!("VT unreachable: {}", e));
             }
         };
 
@@ -139,7 +135,11 @@ impl VtClient {
     fn insert_cache(&mut self, sha256: &str, detections: u32, summary: String, now: Instant) {
         self.cache.insert(
             sha256.to_string(),
-            CacheEntry { detections, summary, inserted: now },
+            CacheEntry {
+                detections,
+                summary,
+                inserted: now,
+            },
         );
     }
 }

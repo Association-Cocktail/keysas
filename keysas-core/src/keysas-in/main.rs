@@ -44,8 +44,8 @@ use time::OffsetDateTime;
 mod sandbox;
 mod tests;
 
-use keysas_lib::{convert_ioslice, init_logger, list_files, sha256_digest};
 use keysas_lib::progress::{AnalysisStep, ProgressTracker};
+use keysas_lib::{convert_ioslice, init_logger, list_files, sha256_digest};
 
 const CONFIG_DIRECTORY: &str = "/etc/keysas";
 
@@ -110,7 +110,6 @@ fn command_args(config: &mut Config) {
     if let Some(p) = matches.get_one::<String>("socket_in") {
         config.socket_in.clone_from(p);
     }
-
 }
 
 fn is_corrupted(file: PathBuf) -> bool {
@@ -144,7 +143,12 @@ fn is_corrupted(file: PathBuf) -> bool {
     }
 }
 
-fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_tracker: &ProgressTracker) -> Result<()> {
+fn send_files(
+    files: &[String],
+    stream: &UnixStream,
+    sas_in: &String,
+    progress_tracker: &ProgressTracker,
+) -> Result<()> {
     //Remove any file starting by .(dot)
     let re = Regex::new(r"^\.")?;
     let mut files = files.to_owned();
@@ -245,7 +249,8 @@ fn send_files(files: &[String], stream: &UnixStream, sas_in: &String, progress_t
 
         // Mark all files in batch as completed
         for (file_path, _) in fs.iter().zip(fds.iter()) {
-            let filename = file_path.file_name()
+            let filename = file_path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?
                 .to_string();
@@ -330,7 +335,10 @@ fn main() -> Result<()> {
             // Update progress tracker with new files
             if !files.is_empty() {
                 progress_tracker.add_files_to_queue(files.clone());
-                info!("📁 {} fichier(s) détecté(s) dans la file d'attente", files.len());
+                info!(
+                    "📁 {} fichier(s) détecté(s) dans la file d'attente",
+                    files.len()
+                );
             }
 
             if let Err(e) = send_files(&files, &unix_stream, &config.sas_in, &progress_tracker) {
