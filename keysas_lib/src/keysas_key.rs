@@ -82,8 +82,8 @@ pub trait PublicKeys<T> {
     ) -> Result<Option<KeysasHybridPubKeys>, anyhow::Error>;
     fn verify_key_signatures(
         message: &[u8],
-        signatures: KeysasHybridSignature,
-        pubkeys: KeysasHybridPubKeys,
+        signatures: &KeysasHybridSignature,
+        pubkeys: &KeysasHybridPubKeys,
     ) -> Result<(), anyhow::Error>;
 }
 
@@ -145,8 +145,8 @@ impl PublicKeys<KeysasHybridPubKeys> for KeysasHybridPubKeys {
     }
     fn verify_key_signatures(
         message: &[u8],
-        signatures: KeysasHybridSignature,
-        pubkeys: KeysasHybridPubKeys,
+        signatures: &KeysasHybridSignature,
+        pubkeys: &KeysasHybridPubKeys,
     ) -> Result<(), anyhow::Error> {
         pubkeys
             .classic
