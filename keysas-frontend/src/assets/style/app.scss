@@ -1,7 +1,9 @@
-@import 'bootstrap';
-// @import 'bootstrap-icons';
-@import '_colors.scss';
-@import '_fonts.scss';
+@forward 'mixins';
+@forward 'colors';
+@use 'bootstrap' as bs;
+@use 'colors' as *;
+// @use 'bootstrap-icons' as *;
+@use 'fonts';
 
 body {
   font-family: Overpass;
@@ -19,25 +21,25 @@ body {
 
 h2 {
   font-size: 1.4rem;
-  @include media-breakpoint-down(lg) {
+  @include bs.media-breakpoint-down(lg) {
     font-size: 1.3rem;
   }
 }
 h3 {
   font-size: 1.15rem;
-  @include media-breakpoint-down(lg) {
+  @include bs.media-breakpoint-down(lg) {
     font-size: 1.05rem;
   }
 }
 h4 {
   font-size: 1.05rem;
-  @include media-breakpoint-down(lg) {
+  @include bs.media-breakpoint-down(lg) {
     font-size: 0.95rem;
   }
 }
 h5 {
   font-size: 0.95rem;
-  @include media-breakpoint-down(lg) {
+  @include bs.media-breakpoint-down(lg) {
     font-size: 0.85rem;
   }
 }

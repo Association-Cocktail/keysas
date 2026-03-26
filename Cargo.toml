@@ -17,3 +17,8 @@ exclude = [
     "keysas-admin/src-tauri",
     "keysas-firewall"
 ]
+
+[profile.release]
+lto = true
+opt-level = 3
+debug = false

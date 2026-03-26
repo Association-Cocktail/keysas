@@ -74,7 +74,7 @@ export default {
 </script>
 
 <style lang="scss">
-@import "../assets/style/app.scss";
+@use "../assets/style/app" as *;
 
 pre {
   background: $navy;

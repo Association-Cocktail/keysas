@@ -470,7 +470,7 @@ fn is_likely_text(buf: &[u8]) -> bool {
         return true;
     }
     let sample = &buf[..buf.len().min(8192)];
-    !sample.contains(&0u8) && std::str::from_utf8(sample).is_ok()
+    !sample.contains(&0u8) && str::from_utf8(sample).is_ok()
 }
 
 /// ZIP-based formats: infer returns "zip" for all of them because they share the PK magic.

@@ -38,8 +38,6 @@ extern crate regex;
 
 const SAS_IN: &str = "/var/local/in";
 const SAS_OUT: &str = "/var/local/out";
-const LOCK_IN: &str = "/run/keysas-in";
-const LOCK_TRANSIT: &str = "/run/keysas-transit";
 const LOCK_OUT: &str = "/run/keysas-out";
 const NEVER_SIGNED: &str = "/usr/share/keysas/neversigned";
 

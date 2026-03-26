@@ -7,8 +7,6 @@
  * This file is the main file for udev management.
  */
 
-#![feature(atomic_from_mut)]
-#![feature(str_split_remainder)]
 #![feature(random)]
 
 extern crate libc;
@@ -259,7 +257,7 @@ fn get_signature(device: &str) -> Result<KeysasHybridSignature> {
         }
     };
 
-    let s_pq = match signatures.remainder() {
+    let s_pq = match signatures.next() {
         Some(pq) => pq,
         None => return Err(anyhow!("Cannot parse PQ signature from USB device")),
     };
