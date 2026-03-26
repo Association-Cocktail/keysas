@@ -2,7 +2,7 @@
 /*
  * keysas-virustotal
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * VirusTotal hash lookup daemon.
  * Receives SHA256 hashes from keysas-transit via Unix abstract socket (bincode),
@@ -141,9 +141,9 @@ fn parse_args() -> Config {
         socket_name: matches
             .get_one::<String>("socket_virustotal")
             .unwrap()
-            .to_string(),
-        api_key: matches.get_one::<String>("api_key").unwrap().to_string(),
-        api_url: matches.get_one::<String>("api_url").unwrap().to_string(),
+            .clone(),
+        api_key: matches.get_one::<String>("api_key").unwrap().clone(),
+        api_url: matches.get_one::<String>("api_url").unwrap().clone(),
         fail_open: *matches.get_one::<bool>("fail_open").unwrap(),
         block_threshold: *matches.get_one::<u32>("block_threshold").unwrap(),
         timeout_ms: *matches.get_one::<u64>("timeout_ms").unwrap(),
@@ -172,8 +172,8 @@ fn main() {
     }
 
     let mut vt = virustotal::VtClient::new(
-        config.api_key.clone(),
-        config.api_url.clone(),
+        &config.api_key,
+        &config.api_url,
         config.fail_open,
         config.block_threshold,
         config.timeout_ms,

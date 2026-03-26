@@ -36,17 +36,18 @@ pub struct VtClient {
 }
 
 impl VtClient {
+    #[must_use]
     pub fn new(
-        api_key: String,
-        api_url: String,
+        api_key: &str,
+        api_url: &str,
         fail_open: bool,
         block_threshold: u32,
         timeout_ms: u64,
         cache_ttl_secs: u64,
     ) -> Self {
         Self {
-            api_key,
-            api_url,
+            api_key: api_key.to_string(),
+            api_url: api_url.to_string(),
             fail_open,
             block_threshold,
             timeout: Duration::from_millis(timeout_ms),
@@ -61,6 +62,7 @@ impl VtClient {
     /// - `pass`       — true if the file may proceed
     /// - `detections` — number of engines reporting the file as malicious
     /// - `summary`    — human-readable result string for the .krp report
+    #[must_use]
     pub fn lookup(&mut self, sha256: &str) -> (bool, u32, String) {
         let now = Instant::now();
 

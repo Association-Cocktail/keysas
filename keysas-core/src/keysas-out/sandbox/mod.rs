@@ -2,7 +2,7 @@
 /*
  * The "keysas-out".
  *
- * (C) Copyright 2019-2025 Stephane Neveu
+ * (C) Copyright 2019-2026 Stephane Neveu
  *
  * This file contains various funtions
  * to sandbox this binary using seccomp.

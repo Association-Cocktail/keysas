@@ -2,7 +2,7 @@
 /*
  * keysas-analyze
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * Specialized file analysis daemon.
  * Receives files from keysas-transit via Unix socket (SCM_RIGHTS + bincode),
@@ -95,12 +95,13 @@ fn parse_args() -> Config {
         socket_name: matches
             .get_one::<String>("socket_analyze")
             .unwrap()
-            .to_string(),
-        tmp_dir: matches.get_one::<String>("tmp_dir").unwrap().to_string(),
+            .clone(),
+        tmp_dir: matches.get_one::<String>("tmp_dir").unwrap().clone(),
     }
 }
 
 /// Detect type category from MIME/magic string and filename extension
+#[must_use]
 fn detect_category(filename: &str, file_type: &str) -> &'static str {
     let ext = std::path::Path::new(filename)
         .extension()

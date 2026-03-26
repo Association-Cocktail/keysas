@@ -2,7 +2,7 @@
 /*
  * keysas-virustotal
  *
- * (C) Copyright 2019-2025 Stephane Neveu, Luc Bonnafoux
+ * (C) Copyright 2019-2026 Stephane Neveu, Luc Bonnafoux
  *
  * Sandbox configuration for keysas-virustotal (Landlock + Seccomp).
  * This process requires network access for HTTPS calls to the VT API,

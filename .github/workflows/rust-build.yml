@@ -1,0 +1,108 @@
+name: Rust build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Clippy linting — fails immediately if standards are not met
+  check-quality:
+    name: Linting with Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust with Clippy
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          components: clippy
+
+      - name: Install Ubuntu dependencies
+        run: |
+          sudo apt update -yq
+          sudo apt -y install \
+            libyara-dev \
+            libudev-dev \
+            libseccomp-dev
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -A warnings
+
+  build:
+    name: Build (debug) and audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          components: cargo
+
+      - name: Install Ubuntu dependencies
+        run: |
+          sudo apt-get update -yq
+          sudo apt -y install \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libyara-dev \
+            libyara10 \
+            make \
+            lsb-release \
+            software-properties-common \
+            libseccomp-dev \
+            pkg-config \
+            git \
+            bash \
+            libudev-dev \
+            cmake \
+            libjavascriptcoregtk-4.1-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Install LLVM from apt.llvm.org
+        run: sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+
+      - name: Build (verbose, all features)
+        run: cargo build --verbose --all-features
+
+      - name: Run tests (verbose, all features)
+        run: cargo test --verbose --all-features
+
+      - name: Run Cargo audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  # Formatting check — non-blocking (informational only)
+  formatting:
+    name: Formatting check
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust with formatter
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@559aa3035a47390ba96088dffa783b5d26da9326 # v1.1.1
