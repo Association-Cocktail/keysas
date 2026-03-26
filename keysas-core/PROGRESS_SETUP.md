@@ -1,39 +1,29 @@
-# Progress Tracking Setup
+# Progress Tracking
 
-## Important: Directory Setup
+`keysas-in` and `keysas-transit` write live progress to JSON files under `/run/`:
 
-The progress tracking feature requires `/var/lock/keysas/` directory to be created BEFORE starting the services.
+| Daemon           | Progress file                         |
+|------------------|---------------------------------------|
+| keysas-in        | `/run/keysas-in/progress.json`        |
+| keysas-transit   | `/run/keysas-transit/progress.json`   |
 
-The daemons are sandboxed with Landlock and cannot create this directory themselves.
-
-## Setup Instructions
-
-```bash
-# Create the progress directory with correct permissions
-sudo mkdir -p /var/lock/keysas
-sudo chown -R keysas-in:keysas-in /var/lock/keysas/
-sudo chmod 755 /var/lock/keysas/
-
-# Verify permissions
-ls -la /var/lock/keysas/
-# Should show: drwxr-xr-x keysas-in keysas-in
-
-# NOW start the services
-sudo systemctl start keysas-in.service keysas-transit.service keysas-out.service keysas-backend.service
-```
+These directories are created by `make install` and are managed by the respective systemd services. They are on a tmpfs (`/run`) and do not persist across reboots.
 
 ## Troubleshooting
 
-If progress files are not created:
+If progress is not displayed in the frontend:
 
-1. Check directory exists: `ls -la /var/lock/keysas/`
-2. Check permissions: `stat /var/lock/keysas/`
-3. Check daemon logs: `sudo journalctl -u keysas-transit.service -f`
-4. Verify Landlock status in logs
-
-## Progress Files Location
-
-- `/var/lock/keysas/keysas-in-progress.json` - Input daemon progress
-- `/var/lock/keysas/keysas-transit-progress.json` - Analysis daemon progress
-
-These files are updated in real-time during file processing.
+1. Check that the directories exist and have correct ownership:
+   ```bash
+   ls -la /run/keysas-in /run/keysas-transit
+   ```
+2. Check daemon logs:
+   ```bash
+   sudo journalctl -u keysas-in.service -f
+   sudo journalctl -u keysas-transit.service -f
+   ```
+3. Check Landlock status in logs — the sandbox must allow write access to `/run/keysas-{in,transit}`.
+4. Verify the backend is reading the progress files:
+   ```bash
+   sudo journalctl -u keysas-backend.service -f
+   ```

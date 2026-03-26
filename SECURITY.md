@@ -17,4 +17,4 @@ Please report security vulnerabilities to one of the contributors. You will rece
 Remaining unpatched facts :
 - Keysas-lib: Hybrid signatures remain optional in generated reports and must be explicitly enabled by the administrator.
 - Keysas-core: Landlock and Seccomp sandboxes do not cause any daemons crash if not applied/supported by the host.
-- Toolchain requirement: Nightly (May 2025)
+- Toolchain requirement: Nightly
