@@ -35,9 +35,48 @@ udev = "0.8"
 simple_logger = "4.1"
 aya = "0.11"
 aya-log = "0.1"
-tokio = "1.34"
+tokio = { version = "1.34", features = ["rt-multi-thread", "time", "macros"] }
 zbus_polkit = "3.0"
 zbus = "3.14"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Packaging Debian — cargo-deb
+# Build : cargo install cargo-deb && cargo deb
+# ─────────────────────────────────────────────────────────────────────────────
+[package.metadata.deb]
+name            = "keysas-firewall"
+maintainer      = "Association Cocktail <contact@asso-cocktail.fr>"
+copyright       = "2023-2024, Keysas contributors"
+license-file    = ["../../../LICENSE", "0"]
+extended-description = """\
+Keysas USB Firewall daemon for Linux.
+Controls USB device access via an eBPF LSM hook (file_open) and a udev monitor.
+Only USB keys signed by the Keysas admin CA are granted read or read/write access;
+all others are blocked at the kernel level."""
+section         = "security"
+priority        = "optional"
+# $auto → détection automatique des .so via ldd (libc6, libudev1, …)
+depends         = "$auto, systemd"
+recommends      = "bpftool"
+conf-files      = ["/etc/keysas/firewall/keysas-firewall-conf.toml"]
+
+assets = [
+    # Binaire principal
+    ["target/release/keysas-usbfilter-daemon", "usr/bin/", "755"],
+    # Fichier de configuration exemple → conf-file
+    ["pkg/keysas-firewall-conf.toml", "etc/keysas/firewall/keysas-firewall-conf.toml", "640"],
+    # Unité systemd
+    ["pkg/keysas-firewall.service", "lib/systemd/system/keysas-firewall.service", "644"],
+    # Page de manuel (section 8 — administration système)
+    ["pkg/keysas-usbfilter-daemon.8.gz", "usr/share/man/man8/keysas-usbfilter-daemon.8.gz", "644"],
+]
+
+maintainer-scripts = "pkg/debian/"
+
+[package.metadata.deb.systemd-units]
+unit-name = "keysas-firewall"
+enable    = false   # l'admin active manuellement après avoir fourni les certificats
+start     = false
 
 [target.'cfg(target_os = "windows")'.dependencies]
 libmailslot = {path = "../libmailslot"}

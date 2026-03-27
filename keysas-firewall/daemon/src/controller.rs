@@ -297,7 +297,9 @@ impl ServiceController {
     ///
     /// * `update` - Contains the new authorization status requested by the user
     pub fn request_usb_update(&self, _update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
-        todo!()
+        // TODO: look up device in mounted_usb, update auth, push to BPF map
+        warn!("request_usb_update: not yet implemented");
+        Ok(())
     }
 
     /// Called by the GUI to update a File policy in the firewall
@@ -373,13 +375,35 @@ impl ServiceController {
         }
     }
 
-    /// Update information about a USB device
+    /// Update information about a USB device once it is mounted.
+    ///
+    /// Moves the device from `unmounted_usb` to `mounted_usb` with the mount
+    /// point set, then pushes the authorization decision to the eBPF POLICY_MAP
+    /// via the file filter interface.
     ///
     /// # Arguments
     ///
-    /// * `device` - information on the usb key
-    pub fn update_usb(&self, _device: &UsbDevice) -> Result<(), anyhow::Error> {
-        todo!()
+    /// * `device` - USB device info with `mnt_point` set to the mounted path
+    pub fn update_usb(&mut self, device: &UsbDevice) -> Result<(), anyhow::Error> {
+        let mut policy = match self.unmounted_usb.remove(&device.device_id) {
+            Some(p) => p,
+            None => {
+                return Err(anyhow!(
+                    "update_usb: device {:?} not found in unmounted list",
+                    device.device_id
+                ))
+            }
+        };
+        policy.device.mnt_point = device.mnt_point.clone();
+
+        // Push decision to eBPF POLICY_MAP
+        if let Err(e) = self.driver_if.update_usb_auth(&policy) {
+            warn!("Failed to update BPF policy for {:?}: {e}", device.device_id);
+        }
+
+        self.mounted_usb.insert(device.device_id.clone(), policy);
+
+        Ok(())
     }
 
     /// Decide to authorize a file

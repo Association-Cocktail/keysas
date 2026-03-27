@@ -1,0 +1,28 @@
+[Unit]
+Description=Keysas USB Firewall Daemon
+Documentation=https://github.com/Association-Cocktail/keysas
+After=systemd-udev-settle.service sys-fs-bpf.mount
+Requires=sys-fs-bpf.mount
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/keysas-usbfilter-daemon \
+    --config /etc/keysas/firewall/keysas-firewall-conf.toml \
+    --ca_cl  /etc/keysas/firewall/st-ca-cl.pem \
+    --ca_pq  /etc/keysas/firewall/st-ca-pq.pem \
+    --usb_cl /etc/keysas/firewall/usb-ca-cl.pem \
+    --usb_pq /etc/keysas/firewall/usb-ca-pq.pem
+
+# Chargement de programmes eBPF : root requis
+# (futur : remplacer par AmbientCapabilities=CAP_BPF CAP_NET_ADMIN)
+User=root
+
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keysas-firewall
+
+[Install]
+WantedBy=multi-user.target

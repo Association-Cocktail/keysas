@@ -1,0 +1,20 @@
+# Keysas USB Firewall — politique de sécurité
+# /etc/keysas/firewall/keysas-firewall-conf.toml
+#
+# Toutes les valeurs sont optionnelles (défaut : false).
+# Redémarrer le service après modification : systemctl restart keysas-firewall
+
+# Si true : les clés USB sans signature sont autorisées (mode permissif).
+# ATTENTION : désactive entièrement la vérification cryptographique.
+disable_unsigned_usb = false
+
+# Si true : l'utilisateur peut manuellement autoriser une clé non signée
+# via l'interface graphique (tray-app).
+allow_user_usb_authorization = false
+
+# Si true : l'utilisateur peut autoriser la lecture d'un fichier sans rapport .krp valide.
+allow_user_file_read = false
+
+# Si true : l'utilisateur peut autoriser l'écriture sur une clé USB.
+# Requiert allow_user_file_read = true.
+allow_user_file_write = false

@@ -1,0 +1,288 @@
+.TH KEYSAS\-USBFILTER\-DAEMON 8 "2024-03" "Keysas 0.1" "System Administration"
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH NAME
+keysas\-usbfilter\-daemon \- pare-feu USB Keysas pour Linux
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH SYNOPSIS
+.B keysas\-usbfilter\-daemon
+.RB [ \-c
+.IR fichier-config ]
+.RB [ \-l
+.IR ca-ed25519.pem ]
+.RB [ \-q
+.IR ca-mldsa.pem ]
+.RB [ \-\-usb_cl
+.IR usb-ca-ed25519.pem ]
+.RB [ \-\-usb_pq
+.IR usb-ca-mldsa.pem ]
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH DESCRIPTION
+.B keysas\-usbfilter\-daemon
+est le composant principal du pare-feu USB Keysas pour Linux.
+Il surveille les événements udev pour détecter l'insertion de périphériques
+USB, vérifie leur signature cryptographique hybride (Ed25519 + ML-DSA87),
+puis enforces la décision d'accès via un programme eBPF attaché au hook LSM
+.BR file_open .
+.PP
+À l'insertion d'une clé USB, le daemon :
+.RS
+.IP 1. 4
+Lit le bloc de signature hybride à l'offset 512 de l'image disque (MBR).
+.IP 2. 4
+Vérifie les deux signatures (Ed25519 et ML-DSA87) contre la CA USB fournie.
+.IP 3. 4
+Détermine la décision d'autorisation selon la politique de sécurité :
+.BR Block ", " AllowRead ", " AllowRW " ou " AllowAll .
+.IP 4. 4
+Attend le montage de la partition (jusqu'à 30 secondes, via
+.BR /proc/mounts ).
+.IP 5. 4
+Insère la décision dans la BPF map
+.I POLICY_MAP
+épinglée sous
+.IR /sys/fs/bpf/keysas/ .
+.IP 6. 4
+Le programme eBPF applique la décision à chaque appel
+.BR open (2)
+sur le point de montage : les accès non autorisés reçoivent
+.BR EACCES .
+.RE
+.PP
+Le daemon requiert un noyau Linux \(>= 5.15 avec BTF activé
+.RB ( CONFIG_DEBUG_INFO_BTF=y )
+et le support eBPF LSM
+.RB ( CONFIG_BPF_LSM=y ).
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " " \fIfichier\fR
+Chemin vers le fichier de politique de sécurité au format TOML.
+.br
+Défaut : \fI./keysas-firewall-conf.toml\fR
+.TP
+.BR \-l ", " \-\-ca_cl " " \fIfichier\fR
+Chemin vers le certificat PEM de la CA station (clé publique Ed25519).
+Utilisé pour valider les rapports d'analyse
+.IR .krp .
+.br
+Défaut : \fI./st-ca-cl.pem\fR
+.TP
+.BR \-q ", " \-\-ca_pq " " \fIfichier\fR
+Chemin vers le certificat PEM de la CA station (clé publique ML-DSA87).
+.br
+Défaut : \fI./st-ca-pq.pem\fR
+.TP
+.BR \-\-usb_cl " " \fIfichier\fR
+Chemin vers le certificat PEM de la CA USB (clé publique Ed25519).
+Utilisé pour vérifier la signature des clés USB enrôlées.
+.br
+Défaut : \fI./usb-ca-cl.pem\fR
+.TP
+.BR \-\-usb_pq " " \fIfichier\fR
+Chemin vers le certificat PEM de la CA USB (clé publique ML-DSA87).
+.br
+Défaut : \fI./usb-ca-pq.pem\fR
+.TP
+.BR \-h ", " \-\-help
+Afficher l'aide et quitter.
+.TP
+.BR \-V ", " \-\-version
+Afficher la version et quitter.
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH CONFIGURATION
+La politique de sécurité est un fichier TOML. Toutes les clés sont optionnelles
+et valent
+.B false
+par défaut.
+.TP
+.B disable_unsigned_usb
+Si
+.BR true ,
+toutes les clés USB sont autorisées sans vérification de signature
+.RB ( AllowAll ).
+.B ATTENTION :
+désactive entièrement la protection cryptographique.
+.TP
+.B allow_user_usb_authorization
+Si
+.BR true ,
+l'utilisateur peut manuellement autoriser via l'interface graphique une clé
+dont la signature est absente ou invalide.
+Sans effet si
+.B disable_unsigned_usb
+est
+.BR true .
+.TP
+.B allow_user_file_read
+Si
+.BR true ,
+l'utilisateur peut autoriser la lecture d'un fichier ne disposant pas d'un
+rapport d'analyse
+.I .krp
+valide.
+.TP
+.B allow_user_file_write
+Si
+.BR true ,
+l'utilisateur peut autoriser l'écriture sur une clé USB signée.
+Requiert
+.BR allow_user_file_read = true .
+.PP
+Exemple minimal (mode strict) :
+.PP
+.RS
+.nf
+disable_unsigned_usb      = false
+allow_user_usb_authorization = false
+allow_user_file_read      = false
+allow_user_file_write     = false
+.fi
+.RE
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH DÉCISIONS D'AUTORISATION
+.TS
+tab(|);
+lb lb lb
+l l l.
+Signée|Politique|Décision
+_
+Oui|allow_user_file_write=false|AllowRead
+Oui|allow_user_file_write=true|AllowRW
+Non|disable_unsigned_usb=false|Block
+Non|disable_unsigned_usb=true|AllowAll
+.TE
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH FICHIERS
+.TP
+.I /etc/keysas/firewall/keysas-firewall-conf.toml
+Politique de sécurité par défaut installée par le paquet Debian.
+.TP
+.I /etc/keysas/firewall/st-ca-cl.pem
+Certificat CA station — clé publique Ed25519 (à fournir par l'administrateur).
+.TP
+.I /etc/keysas/firewall/st-ca-pq.pem
+Certificat CA station — clé publique ML-DSA87 (à fournir par l'administrateur).
+.TP
+.I /etc/keysas/firewall/usb-ca-cl.pem
+Certificat CA USB — clé publique Ed25519 (à fournir par l'administrateur).
+.TP
+.I /etc/keysas/firewall/usb-ca-pq.pem
+Certificat CA USB — clé publique ML-DSA87 (à fournir par l'administrateur).
+.TP
+.I /sys/fs/bpf/keysas/POLICY_MAP
+BPF map épinglée contenant les décisions par point de montage.
+Clé : chemin de montage null-padé sur 64 octets.
+Valeur : décision (u32 : 1=Block, 2=AllowRead, 3=AllowRW, 4=AllowAll).
+.TP
+.I /sys/fs/bpf/keysas/PATH_BUF
+BPF map de scratch per-CPU utilisée par le programme eBPF.
+.TP
+.I /lib/systemd/system/keysas-firewall.service
+Unité systemd installée par le paquet Debian.
+.TP
+.I /proc/mounts
+Consulté périodiquement (toutes les 500 ms, max 30 s) pour détecter
+le montage d'une partition USB nouvellement insérée.
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH PRÉREQUIS NOYAU
+.TP
+.B Kernel >= 5.15
+Support BTF et eBPF LSM.
+.TP
+.B CONFIG_DEBUG_INFO_BTF=y
+Requis pour charger le programme LSM via aya/BTF.
+Vérifier avec :
+.BR "ls /sys/kernel/btf/vmlinux" .
+.TP
+.B CONFIG_BPF_LSM=y
+Requis pour attacher un programme au hook
+.BR file_open .
+Vérifier avec :
+.BR "cat /sys/kernel/security/lsm | grep bpf" .
+.TP
+.B BPF filesystem monté
+.I /sys/fs/bpf
+doit être monté (type
+.IR bpf ).
+Le service systemd le requiert via
+.BR Requires=sys-fs-bpf.mount .
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH STATUT DE SORTIE
+.TP
+.B 0
+Terminaison normale (signal ou arrêt du service).
+.TP
+.B 1
+Erreur de démarrage (certificats introuvables, noyau non compatible,
+fichier de configuration invalide, etc.).
+Les détails sont disponibles dans le journal systemd.
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH DIAGNOSTICS
+Consulter les journaux du service :
+.PP
+.RS
+.nf
+journalctl \-u keysas\-firewall \-f
+.fi
+.RE
+.PP
+Vérifier que le hook eBPF est chargé :
+.PP
+.RS
+.nf
+bpftool prog list | grep file_open
+.fi
+.RE
+.PP
+Inspecter la POLICY_MAP :
+.PP
+.RS
+.nf
+bpftool map dump pinned /sys/fs/bpf/keysas/POLICY_MAP
+.fi
+.RE
+.PP
+Les messages du programme eBPF sont visibles dans la trace ring-buffer :
+.PP
+.RS
+.nf
+cat /sys/kernel/debug/tracing/trace_pipe
+.fi
+.RE
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH SÉCURITÉ
+Le daemon s'exécute en root pour charger des programmes eBPF.
+Une future révision utilisera
+.B CAP_BPF
+et
+.B CAP_NET_ADMIN
+via les
+.I capabilities
+Linux pour réduire la surface d'attaque.
+.PP
+Les certificats dans
+.I /etc/keysas/firewall/
+doivent être protégés en lecture (mode 640, propriétaire root).
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH VOIR AUSSI
+.BR keysas\-admin (8),
+.BR keysas\-transit (8),
+.BR bpftool (8),
+.BR udev (7),
+.BR systemd.service (5)
+.PP
+Documentation complète :
+.I keysas-firewall/INSTALL.md
+dans le dépôt source.
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH AUTEURS
+Luc Bonnafoux, Stephane Neveu et les contributeurs Keysas.
+.br
+Mainteneur du fork : Association Cocktail <contact@asso\-cocktail.fr>
+.\" ─────────────────────────────────────────────────────────────────────────
+.SH LICENCE
+Ce programme est distribué sous la licence
+.B GNU General Public License v3.0
+ou ultérieure. Voir
+.UR https://www.gnu.org/licenses/gpl\-3.0.html
+.UE .

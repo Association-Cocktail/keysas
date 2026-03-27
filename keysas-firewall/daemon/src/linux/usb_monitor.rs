@@ -29,9 +29,12 @@ use std::{
     io::{self, Read, Seek, SeekFrom},
     os::fd::AsRawFd,
     ptr,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use udev::{Event, MonitorBuilder};
 
@@ -64,16 +67,21 @@ extern "C" {
     ) -> c_int;
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct LinuxUsbMonitor {}
+#[derive(Debug, Clone)]
+pub struct LinuxUsbMonitor {
+    /// Shared flag to request the monitor thread to stop
+    stop_flag: Arc<AtomicBool>,
+}
 
 impl LinuxUsbMonitor {
     pub fn init() -> Result<LinuxUsbMonitor, anyhow::Error> {
-        Ok(LinuxUsbMonitor {})
+        Ok(LinuxUsbMonitor {
+            stop_flag: Arc::new(AtomicBool::new(false)),
+        })
     }
 }
 
-/// Get the mount point of a device node
+/// Get the mount point of a device node by scanning /proc/mounts.
 ///
 /// # Argument
 ///
@@ -94,6 +102,29 @@ fn get_mount_point(devnode: &OsStr) -> Result<OsString, anyhow::Error> {
     }
 
     Err(anyhow!("Mount point not found"))
+}
+
+/// Poll /proc/mounts until the device is mounted or the timeout expires.
+///
+/// # Arguments
+///
+/// `devnode`      - Device node path (e.g. "/dev/sda1")
+/// `timeout_secs` - Maximum number of seconds to wait
+///
+/// # Return value
+///
+/// The mount point as `OsString` if found within the timeout, `None` otherwise.
+fn wait_for_mount(devnode: &OsStr, timeout_secs: u64) -> Option<OsString> {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        if let Ok(mnt) = get_mount_point(devnode) {
+            return Some(mnt);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
 }
 
 /// Extract the information about a USB device and its signature if it exists
@@ -153,8 +184,9 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
 
 impl UsbMonitor for LinuxUsbMonitor {
     fn start(&self, ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error> {
-        // Spawn a new thread to monitor udev
         let ctrl_hdl = ctrl.clone();
+        let stop_flag = self.stop_flag.clone();
+
         thread::spawn(move || -> Result<(), anyhow::Error> {
             // Look for usb device
             let monitor = MonitorBuilder::new()?.match_subsystem("block")?.listen()?;
@@ -165,19 +197,38 @@ impl UsbMonitor for LinuxUsbMonitor {
                 revents: 0,
             }];
 
-            // Loop over USB events
+            // 1-second timeout so the stop flag is checked regularly
+            let mut timeout = libc::timespec {
+                tv_sec: 1,
+                tv_nsec: 0,
+            };
+
             loop {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 let res = unsafe {
                     ppoll(
                         (&mut fds[..]).as_mut_ptr(),
                         fds.len() as nfds_t,
-                        ptr::null_mut(),
+                        &mut timeout as *mut libc::timespec,
                         ptr::null(),
                     )
                 };
 
                 if res < 0 {
-                    return Err(anyhow!("ppol error: {}", io::Error::last_os_error()));
+                    let err = io::Error::last_os_error();
+                    // EINTR (4) is normal when a signal interrupts ppoll
+                    if err.raw_os_error() == Some(4) {
+                        continue;
+                    }
+                    return Err(anyhow!("ppoll error: {}", err));
+                }
+
+                if res == 0 {
+                    // Timeout — loop back to check stop_flag
+                    continue;
                 }
 
                 let event = match monitor.iter().next() {
@@ -188,56 +239,87 @@ impl UsbMonitor for LinuxUsbMonitor {
                     }
                 };
 
-                // TODO - Work on event selection
+                // Only process partition add events
                 if event.action() == Some(OsStr::new("add"))
                     && event.device().property_value(OsStr::new("DEVTYPE"))
                         == Some(OsStr::new("partition"))
                 {
-                    // Fetch information from the device
                     let (mut device, signature) = match extract_usb_info(event) {
                         Ok((d, s)) => (d, s),
                         Err(e) => {
-                            println!("Error while parsing event: {e}");
+                            log::warn!("Error while parsing udev event: {e}");
                             continue;
                         }
                     };
 
-                    println!("Usb device: {:?}", device);
+                    log::info!("USB partition detected: {:?}", device.device_id);
 
-                    match ctrl_hdl
+                    // Authorize the device (signature check + policy)
+                    let authorized = match ctrl_hdl
                         .lock()
                         .unwrap()
                         .authorize_usb(&device, signature.as_deref())
                     {
-                        Ok(true) => {
-                            println!("USB device authorized");
-                        }
-                        Ok(false) => {
-                            println!("USB device blocked");
-                        }
+                        Ok(auth) => auth,
                         Err(e) => {
-                            println!("Failed to verify USB device: {e}");
+                            log::warn!("Failed to authorize USB device: {e}");
                             continue;
+                        }
+                    };
+
+                    log::info!(
+                        "USB device {:?}: {}",
+                        device.device_id,
+                        if authorized { "authorized" } else { "blocked" }
+                    );
+
+                    // Wait for the OS to mount the partition (regardless of decision,
+                    // so the BPF map can enforce the right policy on the mount point).
+                    match wait_for_mount(&device.device_id, 30) {
+                        Some(mnt) => {
+                            device.mnt_point = Some(mnt.clone());
+                            log::info!(
+                                "USB partition mounted at {:?}, pushing BPF policy",
+                                mnt
+                            );
+                            if let Err(e) = ctrl_hdl.lock().unwrap().update_usb(&device) {
+                                log::warn!("Failed to push BPF policy for USB device: {e}");
+                            }
+                        }
+                        None => {
+                            log::info!(
+                                "USB partition {:?} was not mounted within timeout",
+                                device.device_id
+                            );
                         }
                     }
                 }
             }
+
+            Ok(())
         });
 
         Ok(())
     }
 
-    /// Update a usb policy
+    /// Update the mount state of a USB key partition.
+    ///
+    /// This is called by the controller when the GUI requests a policy change.
+    /// On Linux we cannot force a remount from here; we just log the request.
     ///
     /// # Arguments
     ///
     /// `update` - Information on the usb key and the new authorization status
     fn update_usb_auth(&self, update: &UsbDevice) -> Result<(), anyhow::Error> {
-        todo!()
+        log::info!(
+            "update_usb_auth called for {:?} (remount not supported)",
+            update.device_id
+        );
+        Ok(())
     }
 
-    /// Stop the monitor
+    /// Stop the monitor thread by setting the stop flag.
     fn stop(self: Box<Self>) {
-        todo!()
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 }
