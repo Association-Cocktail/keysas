@@ -261,8 +261,8 @@ impl LinuxGuiInterface {
                 };
                 for sig in iter {
                     if let Ok(args) = sig.args() {
-                        if args.id() == id {
-                            let _ = tx1.send(args.action_key() == "allow");
+                        if *args.id() == id {
+                            let _ = tx1.send(*args.action_key() == "allow");
                             return;
                         }
                     }
@@ -286,7 +286,7 @@ impl LinuxGuiInterface {
                 };
                 for sig in iter {
                     if let Ok(args) = sig.args() {
-                        if args.id() == id {
+                        if *args.id() == id {
                             let _ = tx2.send(false); // closed = deny
                             return;
                         }

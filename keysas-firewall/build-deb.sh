@@ -8,6 +8,9 @@
 #   cargo install cargo-deb
 #   apt install -y libudev-dev clang llvm
 #
+# Prérequis tray-app (si on compile aussi la tray-app) :
+#   apt install -y libsoup2.4-dev libgtk-3-dev libwebkit2gtk-4.1-dev nodejs
+#
 # Usage :
 #   ./build-deb.sh            # build debug eBPF + release daemon
 #   ./build-deb.sh --release  # build release eBPF + release daemon

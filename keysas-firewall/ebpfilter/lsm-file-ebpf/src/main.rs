@@ -8,7 +8,7 @@
 
 mod vmlinux;
 
-use aya_bpf::{
+use aya_ebpf::{
     bindings::path,
     cty::{c_char, c_long},
     helpers::bpf_d_path,
@@ -27,15 +27,9 @@ const PATH_LENGTH: usize = 64;
 /// Linux O_ACCMODE: mask for access mode bits in f_flags
 const O_ACCMODE: u32 = 3;
 
-#[derive(Copy, Clone)]
-#[repr(C)]
-struct PathBuf {
-    path: [u8; PATH_LENGTH],
-}
-
 /// Per-CPU scratch buffer for path strings (avoids eBPF stack limits)
 #[map]
-static mut PATH_BUF: PerCpuArray<PathBuf> = PerCpuArray::with_max_entries(1, 0);
+static mut PATH_BUF: PerCpuArray<[u8; PATH_LENGTH]> = PerCpuArray::with_max_entries(1, 0);
 
 /// Policy map: mount point path (null-padded, KEY_LEN bytes) → UsbAuthorization as u32
 ///
@@ -87,7 +81,7 @@ unsafe fn try_file_open(ctx: LsmContext) -> Result<i32, c_long> {
 
     let f: *const file = ctx.arg(0);
     let p = &(*f).f_path as *const _ as *mut path;
-    let len = get_bpf_d_path(p, &mut buf.path)?;
+    let len = get_bpf_d_path(p, buf)?;
     if len == 0 || len >= PATH_LENGTH {
         return Ok(0);
     }
@@ -107,15 +101,10 @@ unsafe fn try_file_open(ctx: LsmContext) -> Result<i32, c_long> {
         if i >= len {
             break;
         }
-        let c = buf.path[i];
+        let c = buf[i];
         if c == b'/' && i > 0 {
             if let Some(&decision) = POLICY_MAP.get(&key) {
-                info!(
-                    &ctx,
-                    "keysas: USB policy on {}: decision={}",
-                    core::str::from_utf8_unchecked(&buf.path[..len]),
-                    decision
-                );
+                info!(&ctx, "keysas: USB policy hit: decision={}", decision);
                 return Ok(apply_decision(decision, is_write));
             }
         }

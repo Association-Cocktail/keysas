@@ -62,8 +62,18 @@ rustup component add rust-src --toolchain nightly
 # Linker BPF
 cargo install bpf-linker
 
-# Dépendances système (Debian/Ubuntu)
+# Dépendances système — daemon (Debian/Ubuntu)
 apt install -y libudev-dev clang llvm pkg-config
+
+# Dépendances système — tray-app (Debian/Ubuntu)
+# libsoup-2.4, GTK 3 et WebKitGTK requis par Tauri
+apt install -y libsoup2.4-dev libgtk-3-dev \
+    libwebkit2gtk-4.1-dev || \
+apt install -y libsoup2.4-dev libgtk-3-dev \
+    libwebkit2gtk-4.0-dev
+# Node.js requis par Tauri pour compiler le frontend
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+apt install -y nodejs
 ```
 
 ---

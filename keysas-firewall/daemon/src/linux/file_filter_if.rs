@@ -26,8 +26,9 @@
 use anyhow::anyhow;
 use aya::{include_bytes_aligned, programs::lsm::Lsm, BpfLoader, Btf};
 use aya_log::BpfLogger;
-use aya::maps::{HashMap as BpfHashMap, MapData};
 use log::*;
+use std::ffi::CString;
+use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::{
     boxed::Box,
@@ -50,6 +51,78 @@ const BPF_PIN_PATH: &str = "/sys/fs/bpf/keysas";
 
 /// Path to the policy map pin
 const POLICY_MAP_PIN: &str = "/sys/fs/bpf/keysas/POLICY_MAP";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Raw BPF syscall helpers (aya 0.11 does not expose a public pinned-map API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Open a pinned BPF object (map or program) and return its file descriptor.
+/// Equivalent to `BPF_OBJ_GET`.
+fn bpf_obj_get(path: &CString) -> Result<libc::c_int, std::io::Error> {
+    // bpf_attr layout for BPF_OBJ_GET / BPF_OBJ_PIN:
+    //   offset 0: pathname (__aligned_u64 = u64)
+    //   offset 8: bpf_fd  (u32)
+    //   offset 12: file_flags (u32)
+    #[repr(C)]
+    struct BpfAttrObjGet {
+        pathname: u64,
+        bpf_fd: u32,
+        file_flags: u32,
+    }
+    let mut attr: BpfAttrObjGet = unsafe { mem::zeroed() };
+    attr.pathname = path.as_ptr() as u64;
+
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_bpf,
+            7i32, // BPF_OBJ_GET
+            &mut attr as *mut BpfAttrObjGet as *mut libc::c_void,
+            mem::size_of::<BpfAttrObjGet>() as u32,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(fd as libc::c_int)
+    }
+}
+
+/// Update or insert a key/value pair in a BPF map.
+/// Equivalent to `BPF_MAP_UPDATE_ELEM` with `BPF_ANY` flag.
+fn bpf_map_update_elem<K, V>(fd: libc::c_int, key: &K, value: &V) -> Result<(), std::io::Error> {
+    // bpf_attr layout for BPF_MAP_*_ELEM:
+    //   offset 0:  map_fd (u32) + 4 bytes padding
+    //   offset 8:  key    (__aligned_u64)
+    //   offset 16: value  (__aligned_u64)
+    //   offset 24: flags  (u64)
+    #[repr(C)]
+    struct BpfAttrMapElem {
+        map_fd: u32,
+        _pad: u32,
+        key: u64,
+        value: u64,
+        flags: u64,
+    }
+    let mut attr: BpfAttrMapElem = unsafe { mem::zeroed() };
+    attr.map_fd = fd as u32;
+    attr.key = key as *const K as u64;
+    attr.value = value as *const V as u64;
+    attr.flags = 0; // BPF_ANY
+
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_bpf,
+            2i32, // BPF_MAP_UPDATE_ELEM
+            &mut attr as *mut BpfAttrMapElem as *mut libc::c_void,
+            mem::size_of::<BpfAttrMapElem>() as u32,
+        )
+    };
+    if ret < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct LinuxFileFilterInterface {}
@@ -159,17 +232,19 @@ impl FileFilterInterface for LinuxFileFilterInterface {
         key[..copy_len].copy_from_slice(&mnt_bytes[..copy_len]);
         // Remaining bytes are already 0 (null sentinel)
 
-        // Open the pinned POLICY_MAP and insert/update the decision
-        let map_data = MapData::from_pin(POLICY_MAP_PIN)
-            .map_err(|e| anyhow!("Failed to open POLICY_MAP: {e}"))?;
-        let mut policy_map: BpfHashMap<MapData, [u8; BPF_KEY_LEN], u32> =
-            BpfHashMap::try_from(map_data)
-                .map_err(|e| anyhow!("Failed to interpret POLICY_MAP: {e}"))?;
+        let decision: u32 = update.auth.as_u8() as u32;
 
-        let decision = update.auth.as_u8() as u32;
-        policy_map
-            .insert(key, decision, 0)
-            .map_err(|e| anyhow!("Failed to insert in POLICY_MAP: {e}"))?;
+        // aya 0.11 does not expose a public API for opening pinned maps.
+        // Use the raw bpf(2) syscall directly:
+        //   BPF_OBJ_GET (cmd=7)  → get fd from pinned path
+        //   BPF_MAP_UPDATE_ELEM (cmd=2) → insert/update map entry
+        let path_cstr = CString::new(POLICY_MAP_PIN)
+            .map_err(|e| anyhow!("Invalid map pin path: {e}"))?;
+        let map_fd = bpf_obj_get(&path_cstr)
+            .map_err(|e| anyhow!("BPF_OBJ_GET {POLICY_MAP_PIN}: {e}"))?;
+        let result = bpf_map_update_elem(map_fd, &key, &decision);
+        unsafe { libc::close(map_fd) };
+        result.map_err(|e| anyhow!("BPF_MAP_UPDATE_ELEM: {e}"))?;
 
         info!(
             "BPF policy updated: mount={} decision={}",
