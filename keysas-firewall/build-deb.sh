@@ -12,24 +12,18 @@
 #   apt install -y libsoup2.4-dev libgtk-3-dev libwebkit2gtk-4.1-dev nodejs
 #
 # Usage :
-#   ./build-deb.sh            # build debug eBPF + release daemon
-#   ./build-deb.sh --release  # build release eBPF + release daemon
+#   ./build-deb.sh  # build release eBPF + release daemon
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EBPF_DIR="$SCRIPT_DIR/ebpfilter"
 DAEMON_DIR="$SCRIPT_DIR/daemon"
-RELEASE_FLAG=""
-
-if [[ "${1:-}" == "--release" ]]; then
-    RELEASE_FLAG="--release"
-fi
 
 echo "==> [1/3] Compilation du programme eBPF..."
 (
     cd "$EBPF_DIR"
-    cargo xtask build-ebpf $RELEASE_FLAG
+    cargo xtask build-ebpf --release
 )
 
 echo "==> [2/3] Compilation du daemon (release)..."

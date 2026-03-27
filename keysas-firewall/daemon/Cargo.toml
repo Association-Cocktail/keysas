@@ -47,7 +47,7 @@ zbus = "3.14"
 name            = "keysas-firewall"
 maintainer      = "Association Cocktail <contact@asso-cocktail.fr>"
 copyright       = "2023-2024, Keysas contributors"
-license-file    = ["../../../LICENSE", "0"]
+license-file    = ["../../LICENSE", "0"]
 extended-description = """\
 Keysas USB Firewall daemon for Linux.
 Controls USB device access via an eBPF LSM hook (file_open) and a udev monitor.
