@@ -677,6 +677,35 @@ impl ServiceController {
         }
     }
 
+    /// Return the list of USB devices currently tracked as a flat tuple list.
+    ///
+    /// Each tuple is `(device_id, mount_point, name, auth_u8)`.
+    /// Used by the D-Bus `get_usb_list` method for tray-app polling.
+    pub fn list_usb_devices(&self) -> Vec<(String, String, String, u8)> {
+        let mut result = Vec::new();
+        for (_, usb) in self.unmounted_usb.iter() {
+            result.push((
+                usb.device.device_id.to_string_lossy().into_owned(),
+                String::new(),
+                usb.device.get_name(),
+                usb.auth.as_u8(),
+            ));
+        }
+        for (_, usb) in self.mounted_usb.iter() {
+            result.push((
+                usb.device.device_id.to_string_lossy().into_owned(),
+                usb.device
+                    .mnt_point
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                usb.device.get_name(),
+                usb.auth.as_u8(),
+            ));
+        }
+        result
+    }
+
     /// Send the list of Usb devices and files currently registered in the firewall
     /// 
     /// For now, send the list of USB devices registered

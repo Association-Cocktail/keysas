@@ -69,6 +69,8 @@ assets = [
     ["pkg/keysas-firewall.service", "lib/systemd/system/keysas-firewall.service", "644"],
     # Page de manuel (section 8 — administration système)
     ["pkg/keysas-usbfilter-daemon.8.gz", "usr/share/man/man8/keysas-usbfilter-daemon.8.gz", "644"],
+    # Politique D-Bus (system bus)
+    ["pkg/fr.asso-cocktail.keysas.Firewall1.conf", "etc/dbus-1/system.d/fr.asso-cocktail.keysas.Firewall1.conf", "644"],
 ]
 
 maintainer-scripts = "pkg/debian/"
