@@ -73,9 +73,12 @@ pub fn file_open(ctx: LsmContext) -> i32 {
 }
 
 unsafe fn try_file_open(ctx: LsmContext) -> Result<i32, c_long> {
-    // Get per-CPU scratch buffer
+    // Get per-CPU scratch buffer.
+    // Use addr_of_mut! to obtain a raw pointer before creating any reference,
+    // avoiding the static_mut_refs lint (shared ref to mutable static).
     let buf = {
-        let buf_ptr = PATH_BUF.get_ptr_mut(0).ok_or(-1i64)?;
+        let buf_ptr = (&raw mut PATH_BUF).as_mut().ok_or(-1i64)?
+            .get_ptr_mut(0).ok_or(-1i64)?;
         &mut *buf_ptr
     };
 
@@ -97,13 +100,16 @@ unsafe fn try_file_open(ctx: LsmContext) -> Result<i32, c_long> {
     //   i=11 ('/'): key="/media/usb0"→ match → apply decision
     let mut key = [0u8; KEY_LEN];
 
+    // Access POLICY_MAP through a raw pointer to avoid static_mut_refs lint.
+    let policy_map = (&raw const POLICY_MAP).as_ref().ok_or(-1i64)?;
+
     for i in 0..PATH_LENGTH {
         if i >= len {
             break;
         }
         let c = buf[i];
         if c == b'/' && i > 0 {
-            if let Some(&decision) = POLICY_MAP.get(&key) {
+            if let Some(&decision) = policy_map.get(&key) {
                 info!(&ctx, "keysas: USB policy hit: decision={}", decision);
                 return Ok(apply_decision(decision, is_write));
             }
