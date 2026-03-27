@@ -84,12 +84,13 @@ use std::thread;
 use std::ffi::{OsString, c_void};
 use std::sync::{Arc, Mutex};
 use widestring::U16CString;
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::InstallableFileSystems::{
     FilterConnectCommunicationPort, FilterGetMessage, FILTER_MESSAGE_HEADER, FILTER_REPLY_HEADER, FilterReplyMessage,
     FilterSendMessage
 };
+use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
 use windows::Win32::Foundation::{GetLastError, STATUS_SUCCESS};
 
 use crate::controller::{FileAuthorization, FilteredFile, ServiceController, FilePolicy, UsbDevicePolicy};
@@ -156,6 +157,35 @@ impl WindowsFileFilterInterface {
 
 /// Name of the communication port with the driver
 const DRIVER_COM_PORT: &str = "\\KeysasPort";
+
+/// Message type: file authorization update  [0x01 | file_id_32 | auth_u8]
+const MSG_FILE_AUTH: u8 = 0x01;
+/// Message type: USB volume authorization update  [0x02 | auth_u8 | nt_vol_name_utf16_null]
+const MSG_USB_AUTH: u8 = 0x02;
+
+/// Resolve a DOS drive letter (e.g. "D:") to its NT device path (e.g. "\Device\HarddiskVolume3")
+/// using QueryDosDeviceW.
+fn query_dos_device(drive: &str) -> Result<String, anyhow::Error> {
+    let drive_wide = U16CString::from_str(drive)
+        .map_err(|e| anyhow!("Invalid drive name '{}': {}", drive, e))?;
+    let mut buf = vec![0u16; 512];
+
+    let len = unsafe {
+        QueryDosDeviceW(
+            PCWSTR(drive_wide.as_ptr()),
+            PWSTR(buf.as_mut_ptr()),
+            buf.len() as u32,
+        )
+    };
+
+    if len == 0 {
+        let err = unsafe { GetLastError() };
+        return Err(anyhow!("QueryDosDeviceW failed for '{}': {:?}", drive, err));
+    }
+
+    let end = buf[..len as usize].iter().position(|&c| c == 0).unwrap_or(len as usize);
+    String::from_utf16(&buf[..end]).map_err(|e| anyhow!("NT path encoding error: {e}"))
+}
 
 impl FileFilterInterface for WindowsFileFilterInterface {
     /// Start listening to the drivers' requests
@@ -238,14 +268,18 @@ impl FileFilterInterface for WindowsFileFilterInterface {
 
     /// Update the control policy on a file
     ///
+    /// Sends a MSG_FILE_AUTH message to the minifilter:
+    ///   [0x01 | file_id_32 | auth_u8]  = 34 bytes
+    ///
     /// # Arguments
     ///
     /// `update` - Information on the file and the new authorization status
     fn update_file_auth(&self, update: &FilePolicy) -> Result<(), anyhow::Error> {
-        let mut msg: [u8; 33] = [0; 33];
-        msg[..32].copy_from_slice(&update.file.id);
-        msg[32] = update.auth.as_u8();
-        
+        let mut msg: [u8; 34] = [0; 34];
+        msg[0] = MSG_FILE_AUTH;
+        msg[1..33].copy_from_slice(&update.file.id);
+        msg[33] = update.auth.as_u8();
+
         let mut nb_bytes_ret: u32 = 0;
         unsafe {
             if let Err(_) = FilterSendMessage(
@@ -257,23 +291,69 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                 &mut nb_bytes_ret as *mut u32
             ) {
                 let err = GetLastError();
-                println!("Error: {:?}", err);
-                return Err(anyhow!("Failed to send message to driver"));
+                log::error!("update_file_auth FilterSendMessage failed: {:?}", err);
+                return Err(anyhow!("Failed to send file auth update to driver"));
             }
         }
 
-        // TODO - Handle response from driver
-
         Ok(())
     }
-    
-    /// Update the control policy on a partition
+
+    /// Update the authorization policy for a USB volume in the minifilter.
+    ///
+    /// Resolves the DOS drive letter to the NT device path via QueryDosDeviceW,
+    /// then sends a MSG_USB_AUTH message:
+    ///   [0x02 | auth_u8 | nt_vol_name_utf16_null]
+    ///
+    /// The minifilter matches the NT path against its attached instances and updates
+    /// the instance context authorization accordingly.
     ///
     /// # Arguments
     ///
-    /// `update` - Information on the partition and the new authorization status, the mount point must be specified
+    /// `update` - USB device policy including mount point and new authorization level
     fn update_usb_auth(&self, update: &UsbDevicePolicy) -> Result<(), anyhow::Error> {
-        todo!()
+        let mnt_point = match &update.device.mnt_point {
+            Some(p) => p,
+            None => return Err(anyhow!("USB device has no mount point")),
+        };
+
+        // Strip trailing separator to get the drive letter (e.g. "D:\" -> "D:")
+        let path_str = mnt_point.to_string_lossy();
+        let drive = path_str.trim_end_matches(['\\', '/']);
+
+        // Resolve "D:" -> "\Device\HarddiskVolume3"
+        let nt_path = query_dos_device(drive)?;
+
+        log::info!("update_usb_auth: {} -> {} auth={}", drive, nt_path, update.auth.as_u8());
+
+        // Build message: [0x02 | auth_u8 | nt_path_utf16_null_terminated]
+        let auth_byte = update.auth.as_u8();
+        let nt_wide: Vec<u16> = nt_path.encode_utf16().chain(std::iter::once(0u16)).collect();
+
+        let mut msg: Vec<u8> = Vec::with_capacity(2 + nt_wide.len() * 2);
+        msg.push(MSG_USB_AUTH);
+        msg.push(auth_byte);
+        for w in &nt_wide {
+            msg.extend_from_slice(&w.to_le_bytes());
+        }
+
+        let mut nb_bytes_ret: u32 = 0;
+        unsafe {
+            if let Err(_) = FilterSendMessage(
+                self.handle,
+                msg.as_ptr() as *const c_void,
+                msg.len().try_into()?,
+                None,
+                0,
+                &mut nb_bytes_ret as *mut u32
+            ) {
+                let err = GetLastError();
+                log::error!("update_usb_auth FilterSendMessage failed: {:?}", err);
+                return Err(anyhow!("Failed to send USB auth update to driver"));
+            }
+        }
+
+        Ok(())
     }
 
     /// Close the communication with the driver

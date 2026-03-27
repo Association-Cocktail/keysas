@@ -150,3 +150,52 @@ jobs:
       - name: cargo check
         working-directory: keysas-firewall/tray-app/src-tauri
         run: cargo check
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4. Build the tray-app MSI (Windows)
+  #    Uses Tauri v1 + WiX v3 (downloaded automatically by Tauri).
+  #    Produces a .msi installer for the tray-app only (no kernel drivers).
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-tray-app-msi:
+    name: Build tray-app MSI (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: keysas-firewall/tray-app/package-lock.json
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: msi-${{ runner.os }}-${{ hashFiles('keysas-firewall/tray-app/src-tauri/Cargo.lock') }}
+          restore-keys: msi-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: keysas-firewall/tray-app
+        run: npm ci
+
+      - name: Build MSI (tauri build)
+        working-directory: keysas-firewall/tray-app
+        run: npm run tauri build -- --bundles msi
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keysas-firewall-msi
+          path: keysas-firewall/tray-app/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 7
