@@ -24,7 +24,7 @@
 
 use crate::filter_store::{FileAuth, FilterStore, UsbDevice};
 use crate::service_if::{FileUpdateMessage, FileAuthorization, ServiceInterface,
-    UsbAuthorization, ServiceInterfaceBuilder, UsbUpdateMessage};
+    ServiceInterfaceBuilder, UsbUpdateMessage};
 
 use anyhow::anyhow;
 use std::sync::{Arc, RwLock};

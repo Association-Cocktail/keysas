@@ -142,11 +142,11 @@ impl ServiceInterfaceBuilder {
     pub fn build() -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
         cfg_if! {
             if #[cfg(target_os = "linux")] {
-                return Ok(Box::new(LinuxServiceInterface::init()?)
-                            as Box<dyn ServiceInterface + Send + Sync>)
+                let iface: Box<dyn ServiceInterface + Send + Sync> = Box::new(LinuxServiceInterface::init()?);
+                return Ok(iface)
             } else if #[cfg(target_os = "windows")] {
-                return Ok(Box::new(WindowsServiceInterface::init()?)
-                            as Box<dyn ServiceInterface + Send + Sync>)
+                let iface: Box<dyn ServiceInterface + Send + Sync> = Box::new(WindowsServiceInterface::init()?);
+                return Ok(iface)
             } else {
                 return Err(anyhow!("OS not supported"))
             }

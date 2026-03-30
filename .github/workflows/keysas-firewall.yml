@@ -150,6 +150,9 @@ jobs:
           key: trayapp-${{ runner.os }}-${{ hashFiles('keysas-firewall/tray-app/src-tauri/Cargo.lock') }}
           restore-keys: trayapp-${{ runner.os }}-
 
+      - name: Create stub frontend dist (required by generate_context!)
+        run: mkdir -p keysas-firewall/tray-app/dist
+
       - name: cargo check
         working-directory: keysas-firewall/tray-app/src-tauri
         run: cargo check
