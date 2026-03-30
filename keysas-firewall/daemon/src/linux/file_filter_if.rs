@@ -28,7 +28,7 @@ use aya::{include_bytes_aligned, programs::lsm::Lsm, BpfLoader, Btf};
 use aya_log::BpfLogger;
 use log::*;
 use std::ffi::CString;
-use std::mem;
+use std::mem::{self, size_of};
 use std::os::unix::ffi::OsStrExt;
 use std::{
     boxed::Box,
@@ -77,7 +77,7 @@ fn bpf_obj_get(path: &CString) -> Result<libc::c_int, std::io::Error> {
             libc::SYS_bpf,
             7i32, // BPF_OBJ_GET
             &mut attr as *mut BpfAttrObjGet as *mut libc::c_void,
-            mem::size_of::<BpfAttrObjGet>() as u32,
+            size_of::<BpfAttrObjGet>() as u32,
         )
     };
     if fd < 0 {
@@ -114,7 +114,7 @@ fn bpf_map_update_elem<K, V>(fd: libc::c_int, key: &K, value: &V) -> Result<(), 
             libc::SYS_bpf,
             2i32, // BPF_MAP_UPDATE_ELEM
             &mut attr as *mut BpfAttrMapElem as *mut libc::c_void,
-            mem::size_of::<BpfAttrMapElem>() as u32,
+            size_of::<BpfAttrMapElem>() as u32,
         )
     };
     if ret < 0 {

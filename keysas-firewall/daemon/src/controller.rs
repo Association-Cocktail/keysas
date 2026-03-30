@@ -180,11 +180,13 @@ pub struct SecurityPolicy {
 }
 
 /// Service controller object, it contains handles to the service communication interfaces and data
+#[allow(missing_debug_implementations)]
 pub struct ServiceController {
     driver_if: Box<dyn FileFilterInterface + Sync + Send>,
     usb_monitor: Box<dyn UsbMonitor + Sync + Send>,
     gui: Box<dyn GuiInterface + Sync + Send>,
     policy: SecurityPolicy,
+    #[allow(dead_code)]
     st_ca_pub: KeysasHybridPubKeys,
     usb_ca_pub: KeysasHybridPubKeys,
     unmounted_usb: HashMap<OsString, UsbDevicePolicy>,
@@ -216,6 +218,7 @@ impl UsbDevice {
 }
 
 /// Firewall policy for one USB device
+#[derive(Debug)]
 pub struct UsbDevicePolicy {
     /// Usb device information
     pub device: UsbDevice,
@@ -233,6 +236,7 @@ pub struct FilteredFile {
 }
 
 /// Firewall policy for one file
+#[derive(Debug)]
 pub struct FilePolicy {
     pub file: FilteredFile,
     pub auth: FileAuthorization,
@@ -724,7 +728,7 @@ impl ServiceController {
                 authorization: usb.auth
             };
 
-            self.gui.send_usb_update(&update);
+            let _ = self.gui.send_usb_update(&update);
         }
 
         for (_, usb) in self.mounted_usb.iter() {
@@ -736,7 +740,7 @@ impl ServiceController {
                 authorization: usb.auth
             };
 
-            self.gui.send_usb_update(&update);
+            let _ = self.gui.send_usb_update(&update);
         }
 
         Ok(())

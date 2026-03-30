@@ -18,8 +18,6 @@ pub fn load_security_policy(config: &Config) -> Result<SecurityPolicy, anyhow::E
     let config_toml = match fs::read_to_string(&config.config) {
         Ok(s) => s,
         Err(e) => {
-            let cur_env = std::env::current_exe().unwrap();
-            let exe_path = cur_env.to_str().unwrap();
             return Err(anyhow!(
                 "Failed to read configuration file {:#?} from {:#?}: {e}",
                 &config.config,

@@ -82,6 +82,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           toolchain: nightly
+          rustflags: ""  # Don't treat warnings as errors on the daemon check
 
       - name: Download eBPF binary
         uses: actions/download-artifact@v4

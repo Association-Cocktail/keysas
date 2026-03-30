@@ -78,6 +78,7 @@ use crate::windows::file_filter_if::WindowsFileFilterInterface;
 #[cfg(target_os = "linux")]
 use crate::linux::file_filter_if::LinuxFileFilterInterface;
 
+#[derive(Debug, Copy, Clone)]
 pub struct FileFilterInterfaceBuilder {}
 
 impl FileFilterInterfaceBuilder {

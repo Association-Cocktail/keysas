@@ -24,7 +24,6 @@
 #![warn(overflowing_literals)]
 #![warn(deprecated)]
 #![warn(unused_imports)]
-#![feature(vec_into_raw_parts)]
 #![feature(str_split_remainder)]
 
 #[macro_use]

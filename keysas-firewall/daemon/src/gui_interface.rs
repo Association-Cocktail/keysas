@@ -113,7 +113,7 @@ use crate::windows::gui_interface::WindowsGuiInterface;
 use crate::linux::gui_interface::LinuxGuiInterface;
 
 /// Message code used to differentiate requests between GUI and Controller
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum GuiMessageCode {
     UsbUpdateMessage,
     FileUpdateMessage,
