@@ -78,7 +78,7 @@ use cfg_if::cfg_if;
 use std::boxed::Box;
 use std::sync::{Arc, Mutex};
 
-use crate::controller::{ServiceController, UsbDevice};
+use crate::controller::ServiceController;
 
 #[cfg(target_os = "windows")]
 use crate::windows::usb_monitor::WindowsUsbMonitor;

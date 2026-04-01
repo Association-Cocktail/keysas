@@ -157,7 +157,9 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
     // Its `authorized` attribute is used to deauthorize uncertified devices.
     let usb_syspath = device
         .parent_with_subsystem_devtype(OsStr::new("usb"), OsStr::new("usb_device"))
-        .map(|p| p.syspath().to_os_string());
+        .ok()
+        .flatten()
+        .map(|p| p.syspath().as_os_str().to_os_string());
 
     let usb_device = UsbDevice {
         device_id: devnode.as_os_str().to_os_string(),
