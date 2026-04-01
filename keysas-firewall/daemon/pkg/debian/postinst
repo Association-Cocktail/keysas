@@ -8,14 +8,12 @@ case "$1" in
         # Créer le répertoire des certificats avec les bons droits
         install -d -m 750 "$CONF_DIR"
 
-        # Monter le BPF filesystem si absent
-        if ! mountpoint -q /sys/fs/bpf 2>/dev/null; then
-            mount -t bpf bpf /sys/fs/bpf || true
-        fi
+        # Créer le point de montage pour les clés certifiées
+        install -d -m 755 /run/keysas/media || true
 
-        # Ajouter l'entrée fstab si absente
-        if ! grep -qs '/sys/fs/bpf' /etc/fstab; then
-            echo 'bpf /sys/fs/bpf bpf defaults 0 0' >> /etc/fstab
+        # Recharger les règles udev
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules || true
         fi
 
         # Recharger systemd

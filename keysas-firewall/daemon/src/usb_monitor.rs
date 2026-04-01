@@ -113,13 +113,6 @@ pub trait UsbMonitor {
     /// `ctrl` - Handle to the controller
     fn start(&self, ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error>;
 
-    /// Update a usb policy
-    ///
-    /// # Arguments
-    ///
-    /// `update` - Information on the usb key and the new authorization status
-    fn update_usb_auth(&self, update: &UsbDevice) -> Result<(), anyhow::Error>;
-
     /// Stop the monitor
     fn stop(self: Box<Self>);
 }

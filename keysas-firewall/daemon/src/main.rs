@@ -32,7 +32,6 @@ extern crate rust_i18n;
 i18n!("locales");
 
 pub mod controller;
-pub mod file_filter_if;
 pub mod gui_interface;
 pub mod usb_monitor;
 

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Keysas firewall — udev rules for USB storage control
+#
+# Strategy (two layers):
+#
+#   Layer 1 (this rule): set UDISKS_IGNORE=1 on every USB block partition as
+#   soon as the kernel announces it.  This prevents udisks2 / the desktop
+#   environment from auto-mounting the device before the daemon has had time
+#   to check its certificate.  It also prevents the device from appearing in
+#   file managers.
+#
+#   Layer 2 (daemon): the keysas-firewall daemon receives the same udev event
+#   via its netlink socket, reads the Keysas signature from sector 1 of the
+#   raw block device (no mount required), and verifies it against the USB CA.
+#
+#     - Certified key   → daemon mounts the partition read-only under
+#                         /run/keysas/media/<devname>/ and notifies the GUI.
+#     - Uncertified key → daemon writes 0 to
+#                         /sys/…/<usb_parent>/authorized, which causes the
+#                         kernel to disconnect the USB device entirely.
+#
+# This combination closes the race window between device appearance and
+# policy enforcement without requiring any eBPF or kernel module.
+
+SUBSYSTEM=="block", ACTION=="add", ENV{ID_BUS}=="usb", ENV{UDISKS_IGNORE}="1"

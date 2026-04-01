@@ -33,8 +33,8 @@ rust-i18n = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 udev = "0.8"
 simple_logger = "4.1"
-aya = "0.11"
-aya-log = "0.1"
+aya = "0.13"
+aya-log = "0.2"
 tokio = { version = "1.34", features = ["rt-multi-thread", "time", "macros"] }
 zbus_polkit = "3.0"
 zbus = "3.14"
@@ -50,13 +50,13 @@ copyright       = "2023-2024, Keysas contributors"
 license-file    = ["../../LICENSE", "0"]
 extended-description = """\
 Keysas USB Firewall daemon for Linux.
-Controls USB device access via an eBPF LSM hook (file_open) and a udev monitor.
-Only USB keys signed by the Keysas admin CA are granted read or read/write access;
-all others are blocked at the kernel level."""
+Controls USB device access via udev rules and kernel USB deauthorization.
+Only USB keys signed by the Keysas admin CA are mounted (read-only under
+/run/keysas/media/); all others are disconnected at the USB level."""
 section         = "security"
 priority        = "optional"
 # $auto → détection automatique des .so via ldd (libc6, libudev1, …)
-depends         = "$auto, systemd"
+depends         = "$auto, systemd, udev"
 recommends      = "bpftool"
 conf-files      = ["/etc/keysas/firewall/keysas-firewall-conf.toml"]
 
@@ -71,6 +71,8 @@ assets = [
     ["pkg/keysas-usbfilter-daemon.8.gz", "usr/share/man/man8/keysas-usbfilter-daemon.8.gz", "644"],
     # Politique D-Bus (system bus)
     ["pkg/fr.asso-cocktail.keysas.Firewall1.conf", "etc/dbus-1/system.d/fr.asso-cocktail.keysas.Firewall1.conf", "644"],
+    # Règle udev : bloque l'automount UDP et déclenche la vérification de certificat
+    ["pkg/60-keysas-firewall.rules", "lib/udev/rules.d/60-keysas-firewall.rules", "644"],
 ]
 
 maintainer-scripts = "pkg/debian/"

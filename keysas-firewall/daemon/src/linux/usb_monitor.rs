@@ -153,6 +153,12 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         .property_value(OsStr::new("ID_SERIAL"))
         .ok_or_else(|| anyhow!("Serial number not found"))?;
 
+    // Walk up the sysfs tree to the parent USB device node.
+    // Its `authorized` attribute is used to deauthorize uncertified devices.
+    let usb_syspath = device
+        .parent_with_subsystem_devtype(OsStr::new("usb"), OsStr::new("usb_device"))
+        .map(|p| p.syspath().to_os_string());
+
     let usb_device = UsbDevice {
         device_id: devnode.as_os_str().to_os_string(),
         mnt_point: None, // Partition not mounted yet
@@ -160,6 +166,7 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         model: model.to_os_string(),
         revision: revision.to_os_string(),
         serial: serial.to_os_string(),
+        usb_syspath,
     };
 
     // Try to extract a signature
@@ -273,24 +280,71 @@ impl UsbMonitor for LinuxUsbMonitor {
                         if authorized { "authorized" } else { "blocked" }
                     );
 
-                    // Wait for the OS to mount the partition (regardless of decision,
-                    // so the BPF map can enforce the right policy on the mount point).
-                    match wait_for_mount(&device.device_id, 30) {
-                        Some(mnt) => {
-                            device.mnt_point = Some(mnt.clone());
-                            log::info!(
-                                "USB partition mounted at {:?}, pushing BPF policy",
-                                mnt
-                            );
-                            if let Err(e) = ctrl_hdl.lock().unwrap().update_usb(&device) {
-                                log::warn!("Failed to push BPF policy for USB device: {e}");
+                    if !authorized {
+                        // Deauthorize the USB device at the kernel level.
+                        // Writing 0 to the parent USB device's `authorized` sysfs attribute
+                        // causes the kernel to disconnect it entirely — no /dev node remains.
+                        // The udev rule (60-keysas-firewall.rules) has already set
+                        // UDISKS_IGNORE=1, so no automount can race this write.
+                        match &device.usb_syspath {
+                            Some(syspath) => {
+                                let auth_path = std::path::Path::new(syspath).join("authorized");
+                                match std::fs::write(&auth_path, b"0\n") {
+                                    Ok(_) => log::info!(
+                                        "USB device {:?} deauthorized via {:?}",
+                                        device.device_id, auth_path
+                                    ),
+                                    Err(e) => log::warn!(
+                                        "Failed to deauthorize {:?} via {:?}: {e}",
+                                        device.device_id, auth_path
+                                    ),
+                                }
                             }
-                        }
-                        None => {
-                            log::info!(
-                                "USB partition {:?} was not mounted within timeout",
+                            None => log::warn!(
+                                "Cannot deauthorize {:?}: USB parent sysfs path not found",
                                 device.device_id
-                            );
+                            ),
+                        }
+                    } else {
+                        // Certified device: mount explicitly to /run/keysas/media/<devname>/.
+                        // This is necessary because the udev rule sets UDISKS_IGNORE=1 for
+                        // all USB block devices, preventing udisks2 automounting.
+                        let dev_name = std::path::Path::new(&device.device_id)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "usb".to_string());
+                        let mnt_point = format!("/run/keysas/media/{}", dev_name);
+
+                        if let Err(e) = std::fs::create_dir_all(&mnt_point) {
+                            log::warn!("Failed to create mount point {}: {e}", mnt_point);
+                        } else {
+                            let status = std::process::Command::new("mount")
+                                .args([
+                                    "-o", "noexec,nosuid,nodev",
+                                    &device.device_id.to_string_lossy().as_ref(),
+                                    &mnt_point,
+                                ])
+                                .status();
+                            match status {
+                                Ok(s) if s.success() => {
+                                    device.mnt_point = Some(OsString::from(&mnt_point));
+                                    log::info!(
+                                        "Certified USB {:?} mounted at {}",
+                                        device.device_id, mnt_point
+                                    );
+                                    if let Err(e) = ctrl_hdl.lock().unwrap().update_usb(&device) {
+                                        log::warn!("Failed to update USB mount state: {e}");
+                                    }
+                                }
+                                Ok(s) => log::warn!(
+                                    "mount failed for {:?} (exit {:?})",
+                                    device.device_id, s.code()
+                                ),
+                                Err(e) => log::warn!(
+                                    "mount command error for {:?}: {e}",
+                                    device.device_id
+                                ),
+                            }
                         }
                     }
                 }
@@ -299,22 +353,6 @@ impl UsbMonitor for LinuxUsbMonitor {
             Ok(())
         });
 
-        Ok(())
-    }
-
-    /// Update the mount state of a USB key partition.
-    ///
-    /// This is called by the controller when the GUI requests a policy change.
-    /// On Linux we cannot force a remount from here; we just log the request.
-    ///
-    /// # Arguments
-    ///
-    /// `update` - Information on the usb key and the new authorization status
-    fn update_usb_auth(&self, update: &UsbDevice) -> Result<(), anyhow::Error> {
-        log::info!(
-            "update_usb_auth called for {:?} (remount not supported)",
-            update.device_id
-        );
         Ok(())
     }
 

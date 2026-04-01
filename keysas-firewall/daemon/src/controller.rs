@@ -105,7 +105,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::file_filter_if::{FileFilterInterface, FileFilterInterfaceBuilder};
 use crate::gui_interface::{
     FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, UsbUpdateMessage,
     GuiMessageCode
@@ -182,7 +181,6 @@ pub struct SecurityPolicy {
 /// Service controller object, it contains handles to the service communication interfaces and data
 #[allow(missing_debug_implementations)]
 pub struct ServiceController {
-    driver_if: Box<dyn FileFilterInterface + Sync + Send>,
     usb_monitor: Box<dyn UsbMonitor + Sync + Send>,
     gui: Box<dyn GuiInterface + Sync + Send>,
     policy: SecurityPolicy,
@@ -204,6 +202,10 @@ pub struct UsbDevice {
     pub model: OsString,
     pub revision: OsString,
     pub serial: OsString,
+    /// Sysfs path of the parent USB device node (e.g. /sys/devices/.../1-1.2/).
+    /// Used on Linux to deauthorize uncertified devices by writing 0 to
+    /// `{usb_syspath}/authorized`, which makes the kernel disconnect the device.
+    pub usb_syspath: Option<OsString>,
 }
 
 impl UsbDevice {
@@ -265,16 +267,12 @@ impl ServiceController {
             }
         };
 
-        // Start the interface with the kernel driver
-        let driver_if = FileFilterInterfaceBuilder::build()?;
-
         let usb_monitor = UsbMonitorBuilder::build()?;
 
         let gui = GuiInterfaceBuilder::build()?;
 
         // Initialize the controller
         let ctrl = Arc::new(Mutex::new(ServiceController {
-            driver_if,
             usb_monitor,
             gui,
             policy,
@@ -288,7 +286,6 @@ impl ServiceController {
         {
             let mut ctrl_hdl = ctrl.lock().unwrap();
             ctrl_hdl.gui.start(&ctrl)?;
-            ctrl_hdl.driver_if.start(&ctrl)?;
             ctrl_hdl.usb_monitor.start(&ctrl)?;
         }
 
@@ -381,9 +378,7 @@ impl ServiceController {
 
     /// Update information about a USB device once it is mounted.
     ///
-    /// Moves the device from `unmounted_usb` to `mounted_usb` with the mount
-    /// point set, then pushes the authorization decision to the eBPF POLICY_MAP
-    /// via the file filter interface.
+    /// Moves the device from `unmounted_usb` to `mounted_usb` with the mount point set.
     ///
     /// # Arguments
     ///
@@ -399,12 +394,6 @@ impl ServiceController {
             }
         };
         policy.device.mnt_point = device.mnt_point.clone();
-
-        // Push decision to eBPF POLICY_MAP
-        if let Err(e) = self.driver_if.update_usb_auth(&policy) {
-            warn!("Failed to update BPF policy for {:?}: {e}", device.device_id);
-        }
-
         self.mounted_usb.insert(device.device_id.clone(), policy);
 
         Ok(())

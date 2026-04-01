@@ -24,12 +24,12 @@
 #![warn(unused_imports)]
 
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, programs::lsm::Lsm, BpfLoader, Btf};
-use aya_log::BpfLogger;
+use aya::{include_bytes_aligned, programs::lsm::Lsm, EbpfLoader, Btf};
+use aya_log::EbpfLogger;
 use log::*;
 use std::ffi::CString;
 use std::mem::{self, size_of};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::{
     boxed::Box,
     fs::create_dir_all,
@@ -41,10 +41,6 @@ use tokio::runtime::Runtime;
 
 use crate::controller::{ServiceController, FilePolicy, UsbDevicePolicy};
 use crate::file_filter_if::FileFilterInterface;
-
-/// Size of the mount point path key in the BPF policy map.
-/// Must match KEY_LEN in lsm-file-common.
-const BPF_KEY_LEN: usize = 64;
 
 /// Path where the eBPF maps are pinned
 const BPF_PIN_PATH: &str = "/sys/fs/bpf/keysas";
@@ -150,19 +146,19 @@ async fn start_bpf() -> Result<(), anyhow::Error> {
     create_dir_all(lsm_base_path)?;
 
     #[cfg(debug_assertions)]
-    let mut bpf = BpfLoader::new()
+    let mut bpf = EbpfLoader::new()
         .map_pin_path(lsm_base_path)
         .load(include_bytes_aligned!(
             "../../../ebpfilter/target/bpfel-unknown-none/debug/lsm-file"
         ))?;
     #[cfg(not(debug_assertions))]
-    let mut bpf = BpfLoader::new()
+    let mut bpf = EbpfLoader::new()
         .map_pin_path(lsm_base_path)
         .load(include_bytes_aligned!(
             "../../../ebpfilter/target/bpfel-unknown-none/release/lsm-file"
         ))?;
 
-    if let Err(e) = BpfLogger::init(&mut bpf) {
+    if let Err(e) = EbpfLogger::init(&mut bpf) {
         // This can happen if you remove all log statements from your eBPF program.
         warn!("failed to initialize eBPF logger: {}", e);
     }
@@ -225,19 +221,17 @@ impl FileFilterInterface for LinuxFileFilterInterface {
             None => return Err(anyhow!("USB device has no mount point")),
         };
 
-        // Build the fixed-size null-padded key from the mount point path
-        let mut key = [0u8; BPF_KEY_LEN];
-        let mnt_bytes = mnt_point.as_bytes(); // OsStrExt, Unix only
-        let copy_len = mnt_bytes.len().min(BPF_KEY_LEN - 1);
-        key[..copy_len].copy_from_slice(&mnt_bytes[..copy_len]);
-        // Remaining bytes are already 0 (null sentinel)
+        // Obtain the device number of the mounted filesystem via stat(2).
+        // stat on the mount point follows the mount and returns s_dev of the
+        // mounted filesystem — the same value the eBPF program reads from
+        // file->f_inode->i_sb->s_dev.
+        let meta = std::fs::metadata(mnt_point)
+            .map_err(|e| anyhow!("stat({}) failed: {e}", mnt_point.to_string_lossy()))?;
+        let key: u32 = meta.dev() as u32;
 
         let decision: u32 = update.auth.as_u8() as u32;
 
-        // aya 0.11 does not expose a public API for opening pinned maps.
-        // Use the raw bpf(2) syscall directly:
-        //   BPF_OBJ_GET (cmd=7)  → get fd from pinned path
-        //   BPF_MAP_UPDATE_ELEM (cmd=2) → insert/update map entry
+        // Open the pinned BPF map and update the entry via raw bpf(2) syscall.
         let path_cstr = CString::new(POLICY_MAP_PIN)
             .map_err(|e| anyhow!("Invalid map pin path: {e}"))?;
         let map_fd = bpf_obj_get(&path_cstr)
@@ -247,8 +241,9 @@ impl FileFilterInterface for LinuxFileFilterInterface {
         result.map_err(|e| anyhow!("BPF_MAP_UPDATE_ELEM: {e}"))?;
 
         info!(
-            "BPF policy updated: mount={} decision={}",
+            "BPF policy updated: mount={} dev={:#x} decision={}",
             mnt_point.to_string_lossy(),
+            key,
             decision
         );
 

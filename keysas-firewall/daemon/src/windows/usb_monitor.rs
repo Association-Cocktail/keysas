@@ -48,7 +48,8 @@ impl UsbMonitor for WindowsUsbMonitor {
             vendor: OsString::from("Kingston"),
             model: OsString::from("Test"),
             revision: OsString::from("1"),
-            serial: OsString::from("Test")
+            serial: OsString::from("Test"),
+            usb_syspath: None, // Windows: deauthorization via sysfs n'existe pas
         };
 
         let mut ctrl_hdl = ctrl.lock().unwrap();
@@ -173,15 +174,6 @@ impl UsbMonitor for WindowsUsbMonitor {
         //         println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
         //     }
         // }
-    }
-
-    /// Update a usb policy
-    ///
-    /// # Arguments
-    ///
-    /// `update` - Information on the usb key and the new authorization status
-    fn update_usb_auth(&self, _update: &UsbDevice) -> Result<(), anyhow::Error> {
-        Err(anyhow!("USB authorization update not implemented"))
     }
 
     /// Stop the monitor

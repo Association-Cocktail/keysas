@@ -151,7 +151,7 @@ pub struct FileUpdateMessage {
 }
 
 /// Message for usb and files list request
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct UsbFileListRequest {
     /// Message code for the request, should be UsbFileListRequest
     pub code: GuiMessageCode
