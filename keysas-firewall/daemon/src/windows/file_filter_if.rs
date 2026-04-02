@@ -236,7 +236,8 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                     let controler = ctrl_hdl.lock().unwrap();
                 
                     match controler.authorize_file(&file, true) {
-                        Ok(r) => FileAuthorization::AllowRead,
+                        Ok(true) => FileAuthorization::AllowRead,
+                        Ok(false) => FileAuthorization::Block,
                         Err(e) => {
                             println!("Failed to handle driver request: {e}");
                             FileAuthorization::Block

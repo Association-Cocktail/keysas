@@ -24,232 +24,234 @@
 #![warn(unused_imports)]
 
 use anyhow::anyhow;
-use aya::{include_bytes_aligned, programs::lsm::Lsm, EbpfLoader, Btf};
-use aya_log::EbpfLogger;
 use log::*;
-use std::ffi::CString;
-use std::mem::{self, size_of};
-use std::os::unix::fs::MetadataExt;
-use std::{
-    boxed::Box,
-    fs::create_dir_all,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread,
-};
-use tokio::runtime::Runtime;
+use std::ffi::{CString, OsString};
+use std::mem;
+use std::os::unix::ffi::OsStrExt;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
-use crate::controller::{ServiceController, FilePolicy, UsbDevicePolicy};
+use crate::controller::{FilePolicy, FilteredFile, ServiceController, UsbAuthorization, UsbDevicePolicy};
 use crate::file_filter_if::FileFilterInterface;
 
-/// Path where the eBPF maps are pinned
-const BPF_PIN_PATH: &str = "/sys/fs/bpf/keysas";
-
-/// Path to the policy map pin
-const POLICY_MAP_PIN: &str = "/sys/fs/bpf/keysas/POLICY_MAP";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Raw BPF syscall helpers (aya 0.11 does not expose a public pinned-map API)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Open a pinned BPF object (map or program) and return its file descriptor.
-/// Equivalent to `BPF_OBJ_GET`.
-fn bpf_obj_get(path: &CString) -> Result<libc::c_int, std::io::Error> {
-    // bpf_attr layout for BPF_OBJ_GET / BPF_OBJ_PIN:
-    //   offset 0: pathname (__aligned_u64 = u64)
-    //   offset 8: bpf_fd  (u32)
-    //   offset 12: file_flags (u32)
-    #[repr(C)]
-    struct BpfAttrObjGet {
-        pathname: u64,
-        bpf_fd: u32,
-        file_flags: u32,
-    }
-    let mut attr: BpfAttrObjGet = unsafe { mem::zeroed() };
-    attr.pathname = path.as_ptr() as u64;
-
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_bpf,
-            7i32, // BPF_OBJ_GET
-            &mut attr as *mut BpfAttrObjGet as *mut libc::c_void,
-            size_of::<BpfAttrObjGet>() as u32,
-        )
-    };
-    if fd < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(fd as libc::c_int)
-    }
+#[derive(Debug, Clone)]
+pub struct LinuxFileFilterInterface {
+    fd: Arc<AtomicI32>,
 }
-
-/// Update or insert a key/value pair in a BPF map.
-/// Equivalent to `BPF_MAP_UPDATE_ELEM` with `BPF_ANY` flag.
-fn bpf_map_update_elem<K, V>(fd: libc::c_int, key: &K, value: &V) -> Result<(), std::io::Error> {
-    // bpf_attr layout for BPF_MAP_*_ELEM:
-    //   offset 0:  map_fd (u32) + 4 bytes padding
-    //   offset 8:  key    (__aligned_u64)
-    //   offset 16: value  (__aligned_u64)
-    //   offset 24: flags  (u64)
-    #[repr(C)]
-    struct BpfAttrMapElem {
-        map_fd: u32,
-        _pad: u32,
-        key: u64,
-        value: u64,
-        flags: u64,
-    }
-    let mut attr: BpfAttrMapElem = unsafe { mem::zeroed() };
-    attr.map_fd = fd as u32;
-    attr.key = key as *const K as u64;
-    attr.value = value as *const V as u64;
-    attr.flags = 0; // BPF_ANY
-
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_bpf,
-            2i32, // BPF_MAP_UPDATE_ELEM
-            &mut attr as *mut BpfAttrMapElem as *mut libc::c_void,
-            size_of::<BpfAttrMapElem>() as u32,
-        )
-    };
-    if ret < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct LinuxFileFilterInterface {}
 
 impl LinuxFileFilterInterface {
-    /// Initialize the kernel filter interface
+    /// Initialize the fanotify file filter interface.
+    ///
+    /// Creates a fanotify instance with FAN_CLASS_CONTENT for open-permission events.
     pub fn init() -> Result<LinuxFileFilterInterface, anyhow::Error> {
-        // Bump the memlock rlimit. This is needed for older kernels that don't use the
-        // new memcg based accounting, see https://lwn.net/Articles/837122/
-        let rlim = libc::rlimit {
-            rlim_cur: libc::RLIM_INFINITY,
-            rlim_max: libc::RLIM_INFINITY,
+        let fd = unsafe {
+            libc::fanotify_init(
+                libc::FAN_CLASS_CONTENT | libc::FAN_CLOEXEC,
+                (libc::O_RDONLY | libc::O_LARGEFILE) as libc::c_uint,
+            )
         };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
-        if ret != 0 {
-            debug!("remove limit on locked memory failed, ret is: {}", ret);
+        if fd < 0 {
+            return Err(anyhow!(
+                "fanotify_init failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-
-        Ok(LinuxFileFilterInterface {})
+        info!("fanotify initialized (fd={})", fd);
+        Ok(LinuxFileFilterInterface {
+            fd: Arc::new(AtomicI32::new(fd)),
+        })
     }
 }
 
-async fn start_bpf() -> Result<(), anyhow::Error> {
-    let lsm_base_path = Path::new(BPF_PIN_PATH);
-    create_dir_all(lsm_base_path)?;
-
-    #[cfg(debug_assertions)]
-    let mut bpf = EbpfLoader::new()
-        .map_pin_path(lsm_base_path)
-        .load(include_bytes_aligned!(
-            "../../../ebpfilter/target/bpfel-unknown-none/debug/lsm-file"
-        ))?;
-    #[cfg(not(debug_assertions))]
-    let mut bpf = EbpfLoader::new()
-        .map_pin_path(lsm_base_path)
-        .load(include_bytes_aligned!(
-            "../../../ebpfilter/target/bpfel-unknown-none/release/lsm-file"
-        ))?;
-
-    if let Err(e) = EbpfLogger::init(&mut bpf) {
-        // This can happen if you remove all log statements from your eBPF program.
-        warn!("failed to initialize eBPF logger: {}", e);
-    }
-
-    let lsm: &mut Lsm = bpf.program_mut("file_open").unwrap().try_into()?;
-    let btf = Btf::from_sys_fs()?;
-    lsm.load("file_open", &btf)?;
-    lsm.attach()?;
-
-    info!("eBPF LSM file_open hook loaded and attached");
-
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+impl Drop for LinuxFileFilterInterface {
+    fn drop(&mut self) {
+        let fd = self.fd.swap(-1, Ordering::Relaxed);
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+            info!("fanotify fd={} closed", fd);
+        }
     }
 }
 
 impl FileFilterInterface for LinuxFileFilterInterface {
-    /// Start listening for request on the interface
+    /// Start the fanotify event loop in a background thread.
     ///
-    /// # Arguments
-    ///
-    /// `ctrl` - Handle to the service controller
-    fn start(&self, _ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error> {
-        // Create a tokio runtime to handle BPF program loading and events
-        // Run it in its own thread
-        thread::spawn(|| -> Result<(), anyhow::Error> {
-            let rt = Runtime::new()?;
-            if let Err(e) = rt.block_on(start_bpf()) {
-                error!("BPF thread failed with error: {e}");
+    /// For each FAN_OPEN_PERM event the thread:
+    ///  1. Resolves the file path via /proc/self/fd/<N>
+    ///  2. Calls authorize_file() on the controller
+    ///  3. Writes FAN_ALLOW or FAN_DENY back to the fanotify fd
+    fn start(&self, ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error> {
+        let fd_arc = Arc::clone(&self.fd);
+        let ctrl = Arc::clone(ctrl);
+        let daemon_pid = unsafe { libc::getpid() };
+
+        thread::spawn(move || {
+            let event_size = mem::size_of::<libc::fanotify_event_metadata>();
+            let mut buf = vec![0u8; 4096];
+
+            loop {
+                let fan_fd = fd_arc.load(Ordering::Relaxed);
+                if fan_fd < 0 {
+                    break;
+                }
+
+                let ret = unsafe {
+                    libc::read(
+                        fan_fd,
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                    )
+                };
+
+                if ret < 0 {
+                    let err = std::io::Error::last_os_error();
+                    if err.kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    // EBADF means the fd was closed (stop() called)
+                    debug!("fanotify read returned error: {err}");
+                    break;
+                }
+
+                let bytes_read = ret as usize;
+                let mut offset = 0usize;
+
+                while offset + event_size <= bytes_read {
+                    // SAFETY: buffer is large enough and properly aligned via read_unaligned
+                    let event: libc::fanotify_event_metadata = unsafe {
+                        std::ptr::read_unaligned(
+                            buf.as_ptr().add(offset) as *const libc::fanotify_event_metadata,
+                        )
+                    };
+
+                    if event.event_len < event_size as u32 {
+                        error!("fanotify: malformed event (event_len={})", event.event_len);
+                        break;
+                    }
+
+                    if (event.mask & libc::FAN_OPEN_PERM) != 0 && event.fd >= 0 {
+                        // Events from the daemon itself are auto-allowed to prevent deadlocks
+                        // when authorize_file() accesses files on the watched mount.
+                        let allow = if event.pid == daemon_pid {
+                            true
+                        } else {
+                            // Resolve the path of the file being opened
+                            let proc_link = format!("/proc/self/fd/{}", event.fd);
+                            let file_path = std::fs::read_link(&proc_link)
+                                .ok()
+                                .map(OsString::from);
+
+                            let file = FilteredFile {
+                                path: file_path,
+                                id: [0u8; 32],
+                            };
+
+                            ctrl.lock()
+                                .map(|g| g.authorize_file(&file, false).unwrap_or(false))
+                                .unwrap_or(false)
+                        };
+
+                        let response = libc::fanotify_response {
+                            fd: event.fd,
+                            response: if allow { libc::FAN_ALLOW } else { libc::FAN_DENY },
+                        };
+
+                        let fan_fd_now = fd_arc.load(Ordering::Relaxed);
+                        if fan_fd_now >= 0 {
+                            unsafe {
+                                libc::write(
+                                    fan_fd_now,
+                                    &response as *const libc::fanotify_response
+                                        as *const libc::c_void,
+                                    mem::size_of::<libc::fanotify_response>(),
+                                );
+                            }
+                        }
+                        unsafe { libc::close(event.fd) };
+                    } else if event.fd >= 0 {
+                        // Non-permission event or queue overflow: just close the fd
+                        unsafe { libc::close(event.fd) };
+                    }
+
+                    offset += event.event_len as usize;
+                }
             }
-            Ok(())
         });
 
         Ok(())
     }
 
-    /// Update the control policy on a file
-    ///
-    /// # Arguments
-    ///
-    /// `update` - Information on the file and the new authorization status
+    /// Update the control policy on a file — no-op (per-mount marks cover all files).
     fn update_file_auth(&self, _update: &FilePolicy) -> Result<(), anyhow::Error> {
-        // File-level policy is not enforced via eBPF in this implementation;
-        // per-mount-point decisions cover all files on the device.
         Ok(())
     }
 
-    /// Update the control policy on a partition in the POLICY_MAP.
+    /// Add or remove a fanotify FAN_OPEN_PERM mark on the USB mount point.
     ///
-    /// Opens the pinned BPF map at `/sys/fs/bpf/keysas/POLICY_MAP` and inserts
-    /// or updates the entry for `update.device.mnt_point` with the decision
-    /// derived from `update.auth`.
-    ///
-    /// # Arguments
-    ///
-    /// `update` - USB device policy, must have `mnt_point` set
+    /// A mark is added when auth >= AllowRead and removed (blocked) otherwise.
     fn update_usb_auth(&self, update: &UsbDevicePolicy) -> Result<(), anyhow::Error> {
         let mnt_point = match &update.device.mnt_point {
             Some(p) => p,
             None => return Err(anyhow!("USB device has no mount point")),
         };
 
-        // Obtain the device number of the mounted filesystem via stat(2).
-        // stat on the mount point follows the mount and returns s_dev of the
-        // mounted filesystem — the same value the eBPF program reads from
-        // file->f_inode->i_sb->s_dev.
-        let meta = std::fs::metadata(mnt_point)
-            .map_err(|e| anyhow!("stat({}) failed: {e}", mnt_point.to_string_lossy()))?;
-        let key: u32 = meta.dev() as u32;
+        let fan_fd = self.fd.load(Ordering::Relaxed);
+        if fan_fd < 0 {
+            return Err(anyhow!("fanotify fd is not open"));
+        }
 
-        let decision: u32 = update.auth.as_u8() as u32;
+        let add_mark = matches!(
+            update.auth,
+            UsbAuthorization::AllowRead
+                | UsbAuthorization::AllowRW
+                | UsbAuthorization::AllowAll
+        );
 
-        // Open the pinned BPF map and update the entry via raw bpf(2) syscall.
-        let path_cstr = CString::new(POLICY_MAP_PIN)
-            .map_err(|e| anyhow!("Invalid map pin path: {e}"))?;
-        let map_fd = bpf_obj_get(&path_cstr)
-            .map_err(|e| anyhow!("BPF_OBJ_GET {POLICY_MAP_PIN}: {e}"))?;
-        let result = bpf_map_update_elem(map_fd, &key, &decision);
-        unsafe { libc::close(map_fd) };
-        result.map_err(|e| anyhow!("BPF_MAP_UPDATE_ELEM: {e}"))?;
+        let path_cstr = CString::new(mnt_point.as_os_str().as_bytes())
+            .map_err(|e| anyhow!("Invalid mount point path: {e}"))?;
+
+        let flags = if add_mark {
+            libc::FAN_MARK_ADD | libc::FAN_MARK_MOUNT
+        } else {
+            libc::FAN_MARK_REMOVE | libc::FAN_MARK_MOUNT
+        };
+
+        let ret = unsafe {
+            libc::fanotify_mark(
+                fan_fd,
+                flags as libc::c_uint,
+                libc::FAN_OPEN_PERM,
+                libc::AT_FDCWD,
+                path_cstr.as_ptr(),
+            )
+        };
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            // Ignore ENOENT when removing a mark that does not exist
+            if add_mark || err.raw_os_error() != Some(libc::ENOENT) {
+                return Err(anyhow!(
+                    "fanotify_mark {} on {:?}: {err}",
+                    if add_mark { "ADD" } else { "REMOVE" },
+                    mnt_point
+                ));
+            }
+        }
 
         info!(
-            "BPF policy updated: mount={} dev={:#x} decision={}",
-            mnt_point.to_string_lossy(),
-            key,
-            decision
+            "fanotify mark {}: mount={:?} auth={:?}",
+            if add_mark { "ADD" } else { "REMOVE" },
+            mnt_point,
+            update.auth
         );
 
         Ok(())
     }
 
-    /// Stop the interface and free resources
-    fn stop(self: Box<Self>) {}
+    /// Stop the file filter — closing the fanotify fd is handled by Drop.
+    fn stop(self: Box<Self>) {
+        // Drop runs LinuxFileFilterInterface::drop() which closes the fd.
+        info!("fanotify file filter stopping");
+    }
 }

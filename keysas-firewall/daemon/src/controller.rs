@@ -105,6 +105,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::file_filter_if::{FileFilterInterface, FileFilterInterfaceBuilder};
 use crate::gui_interface::{
     FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, UsbUpdateMessage,
     GuiMessageCode
@@ -183,6 +184,7 @@ pub struct SecurityPolicy {
 pub struct ServiceController {
     usb_monitor: Box<dyn UsbMonitor + Sync + Send>,
     gui: Box<dyn GuiInterface + Sync + Send>,
+    file_filter: Box<dyn FileFilterInterface + Sync + Send>,
     policy: SecurityPolicy,
     #[allow(dead_code)]
     st_ca_pub: KeysasHybridPubKeys,
@@ -271,10 +273,13 @@ impl ServiceController {
 
         let gui = GuiInterfaceBuilder::build()?;
 
+        let file_filter = FileFilterInterfaceBuilder::build()?;
+
         // Initialize the controller
         let ctrl = Arc::new(Mutex::new(ServiceController {
             usb_monitor,
             gui,
+            file_filter,
             policy,
             st_ca_pub,
             usb_ca_pub,
@@ -287,29 +292,57 @@ impl ServiceController {
             let mut ctrl_hdl = ctrl.lock().unwrap();
             ctrl_hdl.gui.start(&ctrl)?;
             ctrl_hdl.usb_monitor.start(&ctrl)?;
+            ctrl_hdl.file_filter.start(&ctrl)?;
         }
 
         Ok(ctrl)
     }
 
-    /// Called by the GUI to update a USB key policy in the firewall
+    /// Called by the GUI to update a USB key policy in the firewall.
+    ///
+    /// Looks up the device in `mounted_usb` by its device ID, then applies the
+    /// new fanotify mount mark via `file_filter.update_usb_auth()`.
     ///
     /// # Arguments
     ///
-    /// * `update` - Contains the new authorization status requested by the user
-    pub fn request_usb_update(&self, _update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
-        // TODO: look up device in mounted_usb, update auth, push to BPF map
-        warn!("request_usb_update: not yet implemented");
+    /// * `update` - Contains the device ID and new authorization status
+    pub fn request_usb_update(&self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
+        let device_key = OsString::from(&update.device);
+        match self.mounted_usb.get(&device_key) {
+            Some(policy) => {
+                let new_policy = UsbDevicePolicy {
+                    device: policy.device.clone(),
+                    auth: update.authorization,
+                };
+                self.file_filter.update_usb_auth(&new_policy)?;
+            }
+            None => {
+                warn!(
+                    "request_usb_update: device '{}' not found in mounted_usb",
+                    update.device
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Called by the GUI to update a File policy in the firewall
+    /// Called by the GUI to update a file policy in the firewall.
+    ///
+    /// Delegates to `file_filter.update_file_auth()`.  On Linux this is a no-op
+    /// because access decisions are taken per mount point via fanotify marks.
     ///
     /// # Arguments
     ///
-    /// * `update` - Contains the new authorization status requested by the user
-    pub fn request_file_update(&self, _update: &FileUpdateMessage) -> Result<(), anyhow::Error> {
-        todo!()
+    /// * `update` - Contains the file path and new authorization status
+    pub fn request_file_update(&self, update: &FileUpdateMessage) -> Result<(), anyhow::Error> {
+        let file_policy = FilePolicy {
+            file: FilteredFile {
+                path: Some(OsString::from(&update.path)),
+                id: [0u8; 32],
+            },
+            auth: update.authorization,
+        };
+        self.file_filter.update_file_auth(&file_policy)
     }
 
     /// Check a USB device to allow it not

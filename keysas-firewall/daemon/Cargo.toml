@@ -33,9 +33,6 @@ rust-i18n = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 udev = "0.8"
 simple_logger = "4.1"
-aya = "0.13"
-aya-log = "0.2"
-tokio = { version = "1.34", features = ["rt-multi-thread", "time", "macros"] }
 zbus_polkit = "3.0"
 zbus = "3.14"
 
