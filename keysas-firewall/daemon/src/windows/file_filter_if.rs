@@ -84,7 +84,7 @@ use std::thread;
 use std::ffi::{OsString, c_void};
 use std::sync::{Arc, Mutex};
 use widestring::U16CString;
-use windows::core::{PCWSTR, PWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::InstallableFileSystems::{
     FilterConnectCommunicationPort, FilterGetMessage, FILTER_MESSAGE_HEADER, FILTER_REPLY_HEADER, FilterReplyMessage,
@@ -173,8 +173,7 @@ fn query_dos_device(drive: &str) -> Result<String, anyhow::Error> {
     let len = unsafe {
         QueryDosDeviceW(
             PCWSTR(drive_wide.as_ptr()),
-            PWSTR(buf.as_mut_ptr()),
-            buf.len() as u32,
+            Some(&mut buf),
         )
     };
 
