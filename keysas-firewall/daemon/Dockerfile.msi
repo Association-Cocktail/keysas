@@ -6,25 +6,24 @@
 #   2. Package the binary into a Windows MSI using wixl (msitools), a Linux
 #      implementation of WiX v3 that produces .msi files without Wine or WiX.
 #
-# Usage (from the repo root or keysas-firewall/daemon/):
-#   docker build -f Dockerfile.msi \
-#                --output type=local,dest=./dist \
-#                .
-#   → produces ./dist/keysas-firewall-<version>-x64.msi
+# IMPORTANT: build context must be the repository root, not this directory.
 #
-# Or with docker buildx:
-#   docker buildx build -f Dockerfile.msi --output dist/ .
+# Usage (from the repository root):
+#   docker build \
+#       -f keysas-firewall/daemon/Dockerfile.msi \
+#       --output type=local,dest=./dist \
+#       .
+#   → dist/keysas-firewall-<version>-x64.msi
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM rust:1.82-bookworm AS builder
 
-# MinGW cross-compiler + msitools (provides wixl) + jq (version extraction)
+# MinGW cross-compiler + wixl (msitools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
         msitools \
-        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Register the Windows GNU target
@@ -35,21 +34,19 @@ RUN mkdir -p /root/.cargo && printf \
     '[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n' \
     >> /root/.cargo/config.toml
 
+# Copy path dependencies, preserving the relative layout expected by Cargo.toml:
+#   daemon/Cargo.toml: libmailslot  = { path = "../libmailslot"  }
+#   daemon/Cargo.toml: keysas_lib   = { path = "../../keysas_lib" }
 WORKDIR /src
+COPY keysas_lib/                        keysas_lib/
+COPY keysas-firewall/libmailslot/       keysas-firewall/libmailslot/
+COPY keysas-firewall/daemon/            keysas-firewall/daemon/
 
-# Copy only manifests first to cache dependency downloads
-COPY Cargo.toml Cargo.lock* ./
-# Bring in local path dependencies that Cargo.toml references
-COPY ../libmailslot ../libmailslot
-COPY ../../keysas_lib   ../../keysas_lib
-
-# Copy the full source tree
-COPY . .
-
-# ── Cross-compile ────────────────────────────────────────────────────────────
+# ── Cross-compile ─────────────────────────────────────────────────────────────
+WORKDIR /src/keysas-firewall/daemon
 RUN cargo build --release --target x86_64-pc-windows-gnu
 
-# ── Package MSI ──────────────────────────────────────────────────────────────
+# ── Package MSI ───────────────────────────────────────────────────────────────
 RUN VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
     BIN_DIR=target/x86_64-pc-windows-gnu/release && \
     wixl \
@@ -62,4 +59,4 @@ RUN VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') &
 
 # ── Stage 2: export ───────────────────────────────────────────────────────────
 FROM scratch AS export
-COPY --from=builder /src/keysas-firewall-*.msi /
+COPY --from=builder /src/keysas-firewall/daemon/keysas-firewall-*.msi /
