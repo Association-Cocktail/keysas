@@ -21,5 +21,9 @@
 #
 # This combination closes the race window between device appearance and
 # policy enforcement without requiring any eBPF or kernel module.
+#
+# Note: SUBSYSTEMS=="usb" (plural) walks the sysfs parent chain — more
+# reliable than ENV{ID_BUS}=="usb" which is not always propagated to
+# partition events (sdb1) by all udev versions.
 
-SUBSYSTEM=="block", ACTION=="add", ENV{ID_BUS}=="usb", ENV{UDISKS_IGNORE}="1"
+SUBSYSTEM=="block", ACTION=="add", SUBSYSTEMS=="usb", ENV{UDISKS_IGNORE}="1"

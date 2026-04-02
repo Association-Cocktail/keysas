@@ -486,7 +486,11 @@ impl ServiceController {
         if sig_cl_dec.len() == 64_usize {
             sig_cl_dec_casted.copy_from_slice(&sig_cl_dec);
         } else {
-            return Err(anyhow!("Signature is not 64 bytes long"));
+            return Err(anyhow!(
+                "ED25519 signature is {} bytes (expected 64); sig_cl base64 length={}",
+                sig_cl_dec.len(),
+                sig_cl.len()
+            ));
         }
 
         let sig_dalek = SignatureDalek::from_bytes(&sig_cl_dec_casted);
@@ -522,8 +526,12 @@ impl ServiceController {
         };
 
         let data = format!(
-            "{:?}/{:?}/{:?}/{:?}/{}",
-            device.vendor, device.model, device.revision, device.serial, "out"
+            "{}/{}/{}/{}/{}",
+            device.vendor.to_string_lossy(),
+            device.model.to_string_lossy(),
+            device.revision.to_string_lossy(),
+            device.serial.to_string_lossy(),
+            "out"
         );
 
         match KeysasHybridPubKeys::verify_key_signatures(

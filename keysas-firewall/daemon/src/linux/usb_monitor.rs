@@ -171,13 +171,30 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         usb_syspath,
     };
 
+    // The signature is written by keysas-admin at byte offset 512 on the RAW
+    // disk (e.g. /dev/sdb), not on the partition node (e.g. /dev/sdb1).
+    // Strip the trailing partition digit to obtain the raw device path.
+    let raw_device: std::path::PathBuf = {
+        let s = devnode.to_string_lossy();
+        let stripped = if s.ends_with(|c: char| c.is_ascii_digit()) {
+            &s[..s.len() - 1]
+        } else {
+            s.as_ref()
+        };
+        std::path::PathBuf::from(stripped)
+    };
+    log::info!(
+        "Reading signature from raw device {:?} (partition: {:?})",
+        raw_device, devnode
+    );
     // Try to extract a signature
-    let mut f = File::open(devnode)?;
+    let mut f = File::open(&raw_device)?;
     // First get the signature size
     let mut size_buf = [0u8; 4];
     f.seek(SeekFrom::Start(512))?;
     f.read_exact(&mut size_buf)?;
     let sig_size = u32::from_be_bytes(size_buf);
+    log::info!("Signature size read at offset 512: {} bytes", sig_size);
     // Size must not be greater than 7684 bytes LBA-MBR (8196-512)
     let signature = match sig_size <= 7684 {
         true => {
@@ -271,7 +288,13 @@ impl UsbMonitor for LinuxUsbMonitor {
                     {
                         Ok(auth) => auth,
                         Err(e) => {
-                            log::warn!("Failed to authorize USB device: {e}");
+                            // Authorization error (e.g. malformed signature): treat as blocked
+                            // and deauthorize the device to prevent any kernel-level access.
+                            log::warn!("Failed to authorize USB device: {e} — deauthorizing");
+                            if let Some(ref syspath) = device.usb_syspath {
+                                let auth_path = std::path::Path::new(syspath).join("authorized");
+                                let _ = std::fs::write(&auth_path, b"0\n");
+                            }
                             continue;
                         }
                     };
