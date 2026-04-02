@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Keysas Firewall — MSI builder (Linux container, cross-compile to Windows)
+#
+# Strategy:
+#   1. Cross-compile the daemon for x86_64-pc-windows-gnu (MinGW toolchain).
+#   2. Package the binary into a Windows MSI using wixl (msitools), a Linux
+#      implementation of WiX v3 that produces .msi files without Wine or WiX.
+#
+# Usage (from the repo root or keysas-firewall/daemon/):
+#   docker build -f Dockerfile.msi \
+#                --output type=local,dest=./dist \
+#                .
+#   → produces ./dist/keysas-firewall-<version>-x64.msi
+#
+# Or with docker buildx:
+#   docker buildx build -f Dockerfile.msi --output dist/ .
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+FROM rust:1.82-bookworm AS builder
+
+# MinGW cross-compiler + msitools (provides wixl) + jq (version extraction)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64 \
+        g++-mingw-w64-x86-64 \
+        msitools \
+        jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Register the Windows GNU target
+RUN rustup target add x86_64-pc-windows-gnu
+
+# Tell Cargo to use the MinGW linker for the Windows target
+RUN mkdir -p /root/.cargo && printf \
+    '[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n' \
+    >> /root/.cargo/config.toml
+
+WORKDIR /src
+
+# Copy only manifests first to cache dependency downloads
+COPY Cargo.toml Cargo.lock* ./
+# Bring in local path dependencies that Cargo.toml references
+COPY ../libmailslot ../libmailslot
+COPY ../../keysas_lib   ../../keysas_lib
+
+# Copy the full source tree
+COPY . .
+
+# ── Cross-compile ────────────────────────────────────────────────────────────
+RUN cargo build --release --target x86_64-pc-windows-gnu
+
+# ── Package MSI ──────────────────────────────────────────────────────────────
+RUN VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+    BIN_DIR=target/x86_64-pc-windows-gnu/release && \
+    wixl \
+        -D Version="${VERSION}" \
+        -D BinDir="${BIN_DIR}" \
+        -a x64 \
+        wix/main.wxs \
+        -o "keysas-firewall-${VERSION}-x64.msi" && \
+    echo "MSI built: keysas-firewall-${VERSION}-x64.msi"
+
+# ── Stage 2: export ───────────────────────────────────────────────────────────
+FROM scratch AS export
+COPY --from=builder /src/keysas-firewall-*.msi /

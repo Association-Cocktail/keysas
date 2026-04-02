@@ -100,3 +100,20 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Storage_FileSystem"
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Packaging Windows MSI
+#
+# Option A — Windows host (cargo-wix + WiX Toolset v3):
+#   cargo build --release --target x86_64-pc-windows-msvc
+#   cargo wix --define BinDir=target/release --nocapture
+#
+# Option B — Linux / Docker (MinGW cross-compile + wixl):
+#   docker build -f Dockerfile.msi --output dist/ .
+#   → dist/keysas-firewall-<version>-x64.msi
+# ─────────────────────────────────────────────────────────────────────────────
+[package.metadata.wix]
+upgrade-guid = "37C429B0-B7F9-47C6-B840-D55BD5024EE8"
+path-guid    = "083D9238-6965-4411-90DA-DCA99FEA26C5"
+eula         = false
+# wix/main.wxs is used instead of the auto-generated template

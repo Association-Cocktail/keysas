@@ -1,0 +1,172 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Keysas Firewall — WiX v3 installer source
+  Build: cargo wix  (requires cargo-wix + WiX Toolset v3 on Windows, or
+         cargo install cargo-wix then cargo wix on a cross-compile host)
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+  <Product
+    Id='*'
+    Name='Keysas USB Firewall'
+    UpgradeCode='37C429B0-B7F9-47C6-B840-D55BD5024EE8'
+    Manufacturer='Association Cocktail'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
+
+    <Package
+      Id='*'
+      Keywords='Installer'
+      Description='Keysas USB Firewall daemon — blocks uncertified USB keys'
+      Manufacturer='Association Cocktail'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      SummaryCodepage='1252'
+      Platform='x64'/>
+
+    <!-- Refuse downgrades; silently upgrade same-or-older installations -->
+    <MajorUpgrade
+      Schedule='afterInstallInitialize'
+      DowngradeErrorMessage='A newer version of [ProductName] is already installed.'/>
+
+    <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+    <Property Id='DiskPrompt' Value='Keysas USB Firewall Installation'/>
+
+    <!-- Require administrator rights at install time -->
+    <Property Id='MSIUSEREALADMINDETECTION' Value='1'/>
+
+    <!--
+      $(var.BinDir) must point to the directory containing
+      keysas-usbfilter-daemon.exe.  Pass it via:
+        cargo-wix : cargo wix --define BinDir=target/release
+        wixl      : wixl -D BinDir=target/x86_64-pc-windows-gnu/release ...
+    -->
+
+    <!-- ─────────────────────────────────────────────────────── directory tree -->
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+
+      <!-- Binary: C:\Program Files\Keysas Firewall\ -->
+      <Directory Id='ProgramFiles64Folder'>
+        <Directory Id='APPLICATIONFOLDER' Name='Keysas Firewall'>
+
+          <!-- Daemon executable + Windows Service registration -->
+          <Component Id='comp_binary' Guid='02B83024-9E87-4AFA-B324-11BB64B3D686' Win64='yes'>
+            <File
+              Id='exe_daemon'
+              Name='keysas-usbfilter-daemon.exe'
+              DiskId='1'
+              Source='$(var.BinDir)/keysas-usbfilter-daemon.exe'
+              KeyPath='yes'/>
+
+            <!--
+              Service name "Keysas Service" must match the value passed to
+              service_dispatcher::start() in windows/service.rs.
+              Start='demand' (manual start): the admin enables it after
+              depositing the CA certificates, just as on Linux.
+            -->
+            <ServiceInstall
+              Id='svc_install'
+              Type='ownProcess'
+              Name='Keysas Service'
+              DisplayName='Keysas USB Firewall'
+              Description='Verifies USB key certificates and blocks uncertified devices.'
+              Start='demand'
+              Account='LocalSystem'
+              ErrorControl='normal'/>
+
+            <ServiceControl
+              Id='svc_control'
+              Name='Keysas Service'
+              Stop='both'
+              Remove='uninstall'
+              Wait='yes'/>
+          </Component>
+
+          <!-- Registry: policy defaults + certificate paths -->
+          <!--
+            The keysas-admin deposits CA certificate files in
+            C:\ProgramData\Keysas\Firewall\ after installation.
+            The registry values below point to that location by default.
+            An admin can override them via regedit or Group Policy.
+
+            Registry path must match load_security_policy() / load_certificates()
+            in windows/service.rs:
+              HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config
+          -->
+          <Component Id='comp_registry' Guid='BFC665F7-039E-4513-902E-5C436657252C' Win64='yes'>
+            <RegistryKey
+              Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
+              Action='createAndRemoveOnUninstall'>
+
+              <!-- Security policy (0 = strict / false) -->
+              <RegistryValue Type='integer' Name='DisableUnsignedUsb'        Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization'  Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileRead'          Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileWrite'         Value='0'/>
+
+              <!-- CA certificate paths — adjust after depositing the .pem files -->
+              <RegistryValue Type='string' Name='StCaClCert'
+                Value='C:\ProgramData\Keysas\Firewall\st-ca-cl.pem'/>
+              <RegistryValue Type='string' Name='StCaPqCert'
+                Value='C:\ProgramData\Keysas\Firewall\st-ca-pq.pem'/>
+              <RegistryValue Type='string' Name='UsbCaClCert'
+                Value='C:\ProgramData\Keysas\Firewall\usb-ca-cl.pem'/>
+              <RegistryValue Type='string' Name='UsbCaPqCert'
+                Value='C:\ProgramData\Keysas\Firewall\usb-ca-pq.pem'/>
+            </RegistryKey>
+          </Component>
+
+        </Directory>
+      </Directory>
+
+      <!-- Certificate directory: C:\ProgramData\Keysas\Firewall\ -->
+      <Directory Id='CommonAppDataFolder'>
+        <Directory Id='KEYSASDATADIR' Name='Keysas'>
+          <Directory Id='CERTFOLDER' Name='Firewall'>
+            <Component Id='comp_certdir' Guid='7287E597-B0DC-41B4-A3FF-44117C03CCCD' Win64='yes'>
+              <CreateFolder/>
+              <!-- Remove the directory on uninstall only if empty -->
+              <RemoveFolder Id='rm_certdir'   Directory='CERTFOLDER'   On='uninstall'/>
+              <RemoveFolder Id='rm_keysasdir' Directory='KEYSASDATADIR' On='uninstall'/>
+              <RegistryValue
+                Root='HKLM'
+                Key='SOFTWARE\Keysas\Firewall'
+                Name='CertDir'
+                Type='string'
+                Value='[CERTFOLDER]'
+                KeyPath='yes'/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+
+    </Directory>
+    <!-- ─────────────────────────────────────────────────────── features -->
+
+    <Feature Id='Complete' Title='Keysas USB Firewall' Level='1'>
+      <ComponentRef Id='comp_binary'/>
+      <ComponentRef Id='comp_registry'/>
+      <ComponentRef Id='comp_certdir'/>
+    </Feature>
+
+    <!-- ─────────────────────────────────────────────────────── UI -->
+
+    <Property Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]'/>
+    <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+
+    <!--
+      UI is intentionally omitted: the MSI is designed for silent/unattended
+      installation (msiexec /i keysas-firewall.msi /quiet).
+      This also makes the .wxs compatible with wixl (Linux MSI builder) which
+      does not implement the WixUI extension.
+
+      To add a UI for interactive installs on a Windows build host:
+        <UIRef Id='WixUI_Minimal'/>
+        <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
+    -->
+
+  </Product>
+</Wix>
