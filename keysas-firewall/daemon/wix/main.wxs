@@ -24,11 +24,10 @@
       Languages='1033'
       Compressed='yes'
       SummaryCodepage='1252'
-      Platform='x64'/>
+      />
 
     <!-- Refuse downgrades; silently upgrade same-or-older installations -->
     <MajorUpgrade
-      Schedule='afterInstallInitialize'
       DowngradeErrorMessage='A newer version of [ProductName] is already installed.'/>
 
     <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
@@ -40,8 +39,8 @@
     <!--
       $(var.BinDir) must point to the directory containing
       keysas-usbfilter-daemon.exe.  Pass it via:
-        cargo-wix : cargo wix --define BinDir=target/release
-        wixl      : wixl -D BinDir=target/x86_64-pc-windows-gnu/release ...
+        cargo-wix : cargo wix -D BinDir=target/release
+        wixl      : wixl -D BinDir=target/x86_64-pc-windows-gnu/release
     -->
 
     <!-- ─────────────────────────────────────────────────────── directory tree -->
@@ -98,8 +97,7 @@
           <Component Id='comp_registry' Guid='BFC665F7-039E-4513-902E-5C436657252C' Win64='yes'>
             <RegistryKey
               Root='HKLM'
-              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
-              Action='createAndRemoveOnUninstall'>
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'>
 
               <!-- Security policy (0 = strict / false) -->
               <RegistryValue Type='integer' Name='DisableUnsignedUsb'        Value='0'/>
@@ -129,8 +127,7 @@
             <Component Id='comp_certdir' Guid='7287E597-B0DC-41B4-A3FF-44117C03CCCD' Win64='yes'>
               <CreateFolder/>
               <!-- Remove the directory on uninstall only if empty -->
-              <RemoveFolder Id='rm_certdir'   Directory='CERTFOLDER'   On='uninstall'/>
-              <RemoveFolder Id='rm_keysasdir' Directory='KEYSASDATADIR' On='uninstall'/>
+              <RemoveFolder Id='rm_certdir' On='uninstall'/>
               <RegistryValue
                 Root='HKLM'
                 Key='SOFTWARE\Keysas\Firewall'
@@ -155,7 +152,6 @@
     <!-- ─────────────────────────────────────────────────────── UI -->
 
     <Property Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]'/>
-    <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
 
     <!--
       UI is intentionally omitted: the MSI is designed for silent/unattended

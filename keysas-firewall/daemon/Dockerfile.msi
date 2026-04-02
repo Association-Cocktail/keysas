@@ -19,16 +19,18 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM rust:1.88-bookworm AS builder
 
-# MinGW cross-compiler + wixl + libclang (bindgen) + cmake + nasm (liboqs build)
+# MinGW cross-compiler + wixl (separate package from msitools on Debian)
+# + libclang (bindgen) + cmake + nasm (liboqs/oqs-sys build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
-        msitools \
+        wixl \
         clang \
         libclang-dev \
         cmake \
         nasm \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && wixl --version
 
 # Register the Windows GNU target
 RUN rustup target add x86_64-pc-windows-gnu

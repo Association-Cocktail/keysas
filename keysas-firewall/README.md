@@ -11,38 +11,37 @@ Supports **Windows** and **Linux**.
 
 ## Architecture
 
-The firewall components differ by platform:
-
 ### Linux
 
 ```
 Userspace
 ├── keysas-usbfilter-daemon
-│   ├── LinuxUsbMonitor           — listens to udev, reads MBR signature, decides (Block/AllowRead/AllowRW)
-│   ├── LinuxFileFilterInterface  — updates the eBPF POLICY_MAP via bpf(2) syscall
+│   ├── LinuxUsbMonitor           — listens to udev events, strips partition suffix to read
+│   │                               the MBR signature from the raw disk at offset 512,
+│   │                               decides Block / AllowRead / AllowRW
+│   │                               → blocked devices: writes 0 to /sys/.../authorized
+│   ├── LinuxFileFilterInterface  — updates mount-point policy (read/write permissions)
 │   └── LinuxGuiInterface         — exposes the D-Bus interface (fr.asso-cocktail.keysas.Firewall1)
 └── tray-app (Tauri)
     └── LinuxServiceInterface     — polls the daemon over D-Bus every 5 s
-
-Kernel space
-└── eBPF LSM program (file_open hook)
-    └── POLICY_MAP : mount point → decision
-        Block      → -EACCES (all accesses)
-        AllowRead  → -EACCES (writes only)
-        AllowRW+   → 0 (allowed)
 ```
+
+USB blocking uses the kernel USB deauthorization mechanism (`/sys/bus/usb/devices/.../authorized`). No eBPF or kernel module is required.
 
 ### Windows
 
 ```
-Kernel space
-├── USB bus filter driver  — intercepts USB connection events
-└── Minifilter             — intercepts filesystem syscalls
-
 Userspace
-├── Windows service (SCM)  — supervises drivers, verifies files and reports
-└── Tray app (Tauri)       — system tray user interface
+└── Windows service (SCM)
+    ├── WindowsUsbMonitor         — polls GetLogicalDrives() every 500 ms, detects new
+    │                               removable drives, maps volume → PhysicalDriveN via
+    │                               IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, reads MBR
+    │                               signature at offset 512, decides Block / AllowRead / AllowRW
+    │                               → blocked devices: FSCTL_LOCK + FSCTL_DISMOUNT + EJECT
+    └── WindowsGuiInterface       — (planned) tray-app interface
 ```
+
+No kernel driver is required. The service runs entirely in userspace.
 
 ---
 
@@ -74,39 +73,34 @@ The daemon requires four CA certificates in **PEM X.509** format (hybrid cryptog
 | `usb-ca-cl.pem` | USB CA — Ed25519 (validates the MBR signature of enrolled USB devices) |
 | `usb-ca-pq.pem` | USB CA — ML-DSA87 (validates the MBR signature of enrolled USB devices) |
 
-Certificates are generated and managed by `keysas-admin`. To deploy them on a workstation:
+Certificates are generated and managed by `keysas-admin`. To deploy them on a Linux workstation:
 
 ```bash
-# From the admin workstation, copy the public certificates (.pem only, not the .p8 private keys)
+# Copy the public certificates (.pem only, not the .p8 private keys)
 scp {PKI_DIR}/CA/st/st-ca-cl.pem   keysas@WORKSTATION:/etc/keysas/firewall/st-ca-cl.pem
 scp {PKI_DIR}/CA/st/st-ca-pq.pem   keysas@WORKSTATION:/etc/keysas/firewall/st-ca-pq.pem
 scp {PKI_DIR}/CA/usb/usb-cl.pem    keysas@WORKSTATION:/etc/keysas/firewall/usb-ca-cl.pem
 scp {PKI_DIR}/CA/usb/usb-pq.pem    keysas@WORKSTATION:/etc/keysas/firewall/usb-ca-pq.pem
 ```
 
-**Windows**: paths are stored in the registry (`StCaClCert`, `StCaPqCert`, `UsbCaClCert`, `UsbCaPqCert`).
+**Windows**: copy the four `.pem` files to `C:\ProgramData\Keysas\Firewall\` (paths configurable in registry).
 
 ---
 
 ## Linux Installation
 
-See [INSTALL.md](INSTALL.md) for full instructions.
-
 ### Recommended — Debian package
 
 ```bash
-# Prerequisites
-rustup toolchain install nightly
-rustup component add rust-src --toolchain nightly
-cargo install bpf-linker
-cargo install cargo-deb
+# Prerequisites (stable toolchain only — no nightly required)
 apt install -y libudev-dev clang llvm pkg-config
+cargo install cargo-deb
 
-# Build the .deb (from keysas-firewall/)
-./build-deb.sh
+# Build the .deb (from keysas-firewall/daemon/)
+cargo deb
 
 # Install
-apt install ./daemon/target/debian/keysas-firewall_*.deb
+apt install ./target/debian/keysas-firewall_*.deb
 
 # Deploy certificates to /etc/keysas/firewall/
 # then enable the service
@@ -130,23 +124,33 @@ Options:
 
 ## Windows Installation
 
-### Prerequisites
+See [docs/installation-windows-msi.md](../docs/installation-windows-msi.md) for the full guide.
 
-- Rust: <https://learn.microsoft.com/en-us/windows/dev-environment/rust/setup>
-- Clang (for bindgen): <https://rust-lang.github.io/rust-bindgen/requirements.html>
-- CMake: <https://cmake.org/>
-- Node.js / npm: <https://docs.npmjs.com/downloading-and-installing-node-js-and-npm>
-- Tauri: <https://tauri.app/>
-- Visual Studio 2022 with SDK and WDK 10.0.22621.0 (for kernel drivers)
-- Inno Setup: <https://jrsoftware.org/>
+### Build the MSI (Linux / Docker)
 
-### Driver compilation
+From the repository root (Linux host with Docker):
 
-The bus filter driver and minifilter are compiled with Visual Studio 2022 and have been tested on Windows 10 in debug mode (unsigned driver allowed).
+```bash
+docker build \
+  -f keysas-firewall/daemon/Dockerfile.msi \
+  --output type=local,dest=./dist \
+  .
+# → dist/keysas-firewall-0.1.0-x64.msi
+```
 
-### Installer creation
+### Install
 
-Once all build artifacts are ready (minifilter, driver, service, tray-app), build the installer with Inno Setup using the script `installer/keysas_firewall_install.iss`.
+```cmd
+msiexec /i keysas-firewall-0.1.0-x64.msi /quiet /norestart
+```
+
+The installer registers the service in manual start mode. After deploying the certificates to `C:\ProgramData\Keysas\Firewall\`, start the service:
+
+```powershell
+Start-Service "Keysas Service"
+# Optional: enable autostart
+Set-Service "Keysas Service" -StartupType Automatic
+```
 
 ---
 
@@ -154,8 +158,7 @@ Once all build artifacts are ready (minifilter, driver, service, tray-app), buil
 
 A GitHub Actions pipeline validates builds on every PR or push to `main`/`develop`:
 
-- **build-ebpf** — compiles the eBPF program (nightly toolchain)
-- **check-daemon** — `cargo check` on the Linux daemon (depends on build-ebpf)
+- **check-daemon** — `cargo check` on the Linux daemon (stable toolchain)
 - **check-tray-app** — `cargo check` on the Linux tray-app (stable toolchain)
 
 See `.github/workflows/keysas-firewall.yml`.
@@ -168,19 +171,20 @@ See `.github/workflows/keysas-firewall.yml`.
 
 - [x] USB monitoring via udev
 - [x] Hybrid signature verification (Ed25519 + ML-DSA87) on USB devices
-- [x] File access filtering via eBPF LSM (`file_open`)
+- [x] USB blocking via kernel sysfs deauthorization (`authorized=0`)
 - [x] D-Bus interface to the tray-app
 - [x] Tray-app: USB device display, manual authorization
 - [x] Debian packaging (`.deb`)
-- [x] GitHub Actions CI pipeline
-- [ ] File-level IOCTL interface for the tray-app (not yet implemented)
+- [ ] File-level access filtering (read/write policy enforcement)
+- [ ] File-level IOCTL interface for the tray-app
 
 ### Windows
 
-- [x] Minifilter: syscall interception and filtering
-- [x] Minifilter: per-file context, open/create/write filtering
-- [x] Windows service: report and file verification, security policy enforcement
-- [x] Inno Setup installer
-- [ ] IOCTL communication daemon → minifilter (WIP)
-- [ ] GPO / MSI support
-- [ ] Minifilter cleanup: IRQL, paging, fastIO, sparse files
+- [x] USB monitoring via drive polling (GetLogicalDrives)
+- [x] Hybrid signature verification (Ed25519 + ML-DSA87) on USB devices
+- [x] USB blocking via volume eject (lock + dismount + eject IOCTLs)
+- [x] Security policy via registry
+- [x] Certificate loading via registry
+- [x] MSI installer (Docker cross-build with wixl)
+- [ ] Tray-app interface
+- [ ] File-level access filtering
