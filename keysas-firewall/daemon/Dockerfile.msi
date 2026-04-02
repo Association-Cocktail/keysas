@@ -17,13 +17,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 
-# MinGW cross-compiler + wixl (msitools)
+# MinGW cross-compiler + wixl + libclang (bindgen) + cmake + nasm (liboqs build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64 \
         g++-mingw-w64-x86-64 \
         msitools \
+        clang \
+        libclang-dev \
+        cmake \
+        nasm \
     && rm -rf /var/lib/apt/lists/*
 
 # Register the Windows GNU target

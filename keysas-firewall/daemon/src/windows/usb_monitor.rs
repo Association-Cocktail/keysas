@@ -57,15 +57,20 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, GetDriveTypeW, GetLogicalDrives, ReadFile, SetFilePointerEx,
     FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING, DRIVE_REMOVABLE,
+    OPEN_EXISTING,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
     FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME, IOCTL_STORAGE_EJECT_MEDIA,
-    IOCTL_STORAGE_QUERY_PROPERTY, IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+    IOCTL_STORAGE_QUERY_PROPERTY,
     STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, PropertyStandardQuery,
     StorageDeviceProperty, VOLUME_DISK_EXTENTS,
 };
+
+// Raw constants not exposed by windows 0.52 under the expected module paths.
+// Values from the Windows SDK headers.
+const DRIVE_REMOVABLE: u32 = 2;
+const IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS: u32 = 0x0056_0000;
 
 use crate::controller::{ServiceController, UsbDevice};
 use crate::usb_monitor::UsbMonitor;
@@ -251,8 +256,7 @@ fn read_signature(disk_number: u32) -> Result<Option<String>, anyhow::Error> {
         SetFilePointerEx(handle, 512i64, None, FILE_BEGIN)?;
         ReadFile(
             handle,
-            Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
-            READ_SIZE as u32,
+            Some(&mut buf),
             Some(&mut bytes_read),
             None,
         )

@@ -24,7 +24,6 @@
 #![warn(overflowing_literals)]
 #![warn(deprecated)]
 #![warn(unused_imports)]
-#![feature(str_split_remainder)]
 
 #[macro_use]
 extern crate rust_i18n;

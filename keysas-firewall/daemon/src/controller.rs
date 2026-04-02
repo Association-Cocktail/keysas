@@ -495,7 +495,7 @@ impl ServiceController {
 
         let sig_dalek = SignatureDalek::from_bytes(&sig_cl_dec_casted);
 
-        let sig_pq = match signatures.remainder() {
+        let sig_pq = match signatures.next() {
             Some(s) => s,
             None => {
                 return Err(anyhow!("Cannot extract Dilithium 5 signature"));
