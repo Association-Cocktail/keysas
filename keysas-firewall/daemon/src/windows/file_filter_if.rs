@@ -93,17 +93,12 @@ use windows::Win32::Storage::InstallableFileSystems::{
 use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
 use windows::Win32::Foundation::{GetLastError, STATUS_SUCCESS};
 
-use crate::controller::{FileAuthorization, FilteredFile, ServiceController, FilePolicy, UsbDevicePolicy};
+use crate::controller::{FileAuthorization, FilteredFile, ServiceController, FilePolicy, UsbDevicePolicy, UsbAuthorization};
 use crate::file_filter_if::FileFilterInterface;
 
-/// Operation code for the request from a driver to userland
-#[derive(Debug, Clone, Copy)]
-pub enum KeysasFilterOperation {
-    /// Validate the signature of the file and the report
-    ScanFile = 0,
-    /// Ask to validate the USB drive signature
-    ScanUsb,
-}
+// C enum values from KEYSAS_FILTER_OPERATION in keysasCommunication.h
+const SCAN_FILE: u32 = 0;
+const SCAN_USB: u32 = 2;
 
 /// Format of a request from the driver to the service scanner
 #[derive(Debug)]
@@ -111,8 +106,9 @@ pub enum KeysasFilterOperation {
 struct DriverRequest {
     /// Header of the request managed by Windows
     header: FILTER_MESSAGE_HEADER,
-    /// Operation code defined in [KeysasFilterOperation]
-    operation: KeysasFilterOperation,
+    /// Operation code: raw u32 matching the C enum KEYSAS_FILTER_OPERATION
+    /// (SCAN_FILE=0, USER_ALLOW_FILE=1, SCAN_USB=2, ...)
+    operation: u32,
     /// Buffer with the content of the operation
     content: [u16; 1024],
 }
@@ -123,8 +119,9 @@ struct DriverRequest {
 struct UserReply {
     /// Header of the message, managed by Windows
     header: FILTER_REPLY_HEADER,
-    /// Result of the request => the authorization state to apply to the file or USB device
-    result: FileAuthorization,
+    /// Raw KEYSAS_AUTHORIZATION value for the kernel:
+    /// AUTH_PENDING=1, AUTH_BLOCK=2, AUTH_ALLOW_READ=3, AUTH_ALLOW_WARNING=4, AUTH_ALLOW_ALL=5
+    result: u8,
 }
 
 /// Handle to the driver interface
@@ -163,7 +160,7 @@ const MSG_FILE_AUTH: u8 = 0x01;
 /// Message type: USB volume authorization update  [0x02 | auth_u8 | nt_vol_name_utf16_null]
 const MSG_USB_AUTH: u8 = 0x02;
 
-/// Resolve a DOS drive letter (e.g. "D:") to its NT device path (e.g. "\Device\HarddiskVolume3")
+/// Resolve a DOS drive letter (e.g. "D:") to its NT device path (e.g. `\Device\HarddiskVolume3`)
 /// using QueryDosDeviceW.
 fn query_dos_device(drive: &str) -> Result<String, anyhow::Error> {
     let drive_wide = U16CString::from_str(drive)
@@ -186,6 +183,24 @@ fn query_dos_device(drive: &str) -> Result<String, anyhow::Error> {
     String::from_utf16(&buf[..end]).map_err(|e| anyhow!("NT path encoding error: {e}"))
 }
 
+/// Reverse-resolve a NT device path (e.g. `\Device\HarddiskVolume3`) to the
+/// corresponding DOS mount-point path (e.g. `D:\`) by enumerating drive letters.
+///
+/// Returns `None` if no drive letter resolves to the given NT path.
+fn nt_path_to_mnt_point(nt_path: &str) -> Option<OsString> {
+    let nt_norm = nt_path.trim_end_matches('\\');
+    for byte in b'A'..=b'Z' {
+        let drive = format!("{}:", byte as char);
+        if let Ok(resolved) = query_dos_device(&drive) {
+            let res_norm = resolved.trim_end_matches('\\');
+            if nt_norm.eq_ignore_ascii_case(res_norm) {
+                return Some(OsString::from(format!("{}\\", drive)));
+            }
+        }
+    }
+    None
+}
+
 impl FileFilterInterface for WindowsFileFilterInterface {
     /// Start listening to the drivers' requests
     ///
@@ -196,16 +211,17 @@ impl FileFilterInterface for WindowsFileFilterInterface {
         let handle = self.handle;
         let ctrl_hdl = ctrl.clone();
         thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Pre compute the request and response size
+            // Pre-compute the request and response sizes.
+            // UserReply.result is u8 (1 byte); the filter manager strips the header.
             let request_size = u32::try_from(size_of::<DriverRequest>())?;
             let reply_size = u32::try_from(size_of::<FILTER_REPLY_HEADER>())?
-                + u32::try_from(size_of::<FileAuthorization>())?;
+                + u32::try_from(size_of::<u8>())?;
 
             loop {
-                // Wait for a request from the driver
+                // Wait for a request from the driver.
                 let mut request = DriverRequest {
                     header: FILTER_MESSAGE_HEADER::default(),
-                    operation: KeysasFilterOperation::ScanUsb,
+                    operation: 0u32,
                     content: [0; 1024],
                 };
 
@@ -216,43 +232,78 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                     }
                 }
 
-                println!("Minifilter request: {:?}", request);
-
-                // Extract information about the file
-                let mut file = FilteredFile {
-                    path: Some(OsString::from(String::from_utf16(&request.content[32..])?)),
-                    id: [0; 32]
-                };
-
-                for i in 0..16 {
-                    let bytes = request.content[i].to_le_bytes();
-                    file.id[i*2] = bytes[0];
-                    file.id[i*2+1] = bytes[1]; 
-                }
-
-                // Ask controler for authorization
-                let result = {
-                    let controler = ctrl_hdl.lock().unwrap();
-                
-                    match controler.authorize_file(&file, true) {
-                        Ok(true) => FileAuthorization::AllowRead,
-                        Ok(false) => FileAuthorization::Block,
-                        Err(e) => {
-                            println!("Failed to handle driver request: {e}");
-                            FileAuthorization::Block
+                // Raw KEYSAS_AUTHORIZATION value to send back to the kernel.
+                let auth_kernel: u8 = match request.operation {
+                    SCAN_FILE => {
+                        // content = [FileID(16×u16 = 32 bytes) | FileName(utf16, null-terminated)]
+                        let mut file = FilteredFile {
+                            path: None,
+                            id: [0; 32],
+                        };
+                        for i in 0..16 {
+                            let bytes = request.content[i].to_le_bytes();
+                            file.id[i * 2] = bytes[0];
+                            file.id[i * 2 + 1] = bytes[1];
                         }
+                        let end = request.content[16..]
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(request.content.len() - 16);
+                        file.path = Some(OsString::from(
+                            String::from_utf16_lossy(&request.content[16..16 + end])
+                        ));
+
+                        let result = {
+                            let ctrl = ctrl_hdl.lock().unwrap();
+                            match ctrl.authorize_file(&file, true) {
+                                Ok(true) => FileAuthorization::AllowRead,
+                                Ok(false) => FileAuthorization::Block,
+                                Err(e) => {
+                                    println!("SCAN_FILE authorize_file error: {e}");
+                                    FileAuthorization::Block
+                                }
+                            }
+                        };
+                        println!("SCAN_FILE -> {:?} (kernel={})", result, result.to_kernel_u8());
+                        result.to_kernel_u8()
+                    }
+
+                    SCAN_USB => {
+                        // content = [nt_volume_name (utf16, null-terminated)]
+                        // e.g. "\Device\HarddiskVolume3"
+                        let end = request.content
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(request.content.len());
+                        let nt_vol = String::from_utf16_lossy(&request.content[..end]);
+                        println!("SCAN_USB for NT volume: {nt_vol}");
+
+                        // Reverse-resolve NT path → DOS drive letter → lookup auth.
+                        let auth = if let Some(mnt_point) = nt_path_to_mnt_point(&nt_vol) {
+                            let ctrl = ctrl_hdl.lock().unwrap();
+                            ctrl.get_usb_auth_by_mount(&mnt_point)
+                                .unwrap_or(UsbAuthorization::Block)
+                        } else {
+                            println!("SCAN_USB: cannot resolve NT path '{nt_vol}' to drive letter");
+                            UsbAuthorization::Block
+                        };
+                        println!("SCAN_USB -> {:?} (kernel={})", auth, auth.to_kernel_u8());
+                        auth.to_kernel_u8()
+                    }
+
+                    op => {
+                        println!("Unknown minifilter operation {op:#x}, blocking");
+                        2u8 // AUTH_BLOCK
                     }
                 };
 
-                println!("Sending authorization: {:?}", result);
-
-                // Prepare the response and send it
+                // Send the reply.
                 let reply = UserReply {
                     header: FILTER_REPLY_HEADER {
                         MessageId: request.header.MessageId,
                         Status: STATUS_SUCCESS,
                     },
-                    result,
+                    result: auth_kernel,
                 };
 
                 unsafe {
@@ -278,7 +329,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
         let mut msg: [u8; 34] = [0; 34];
         msg[0] = MSG_FILE_AUTH;
         msg[1..33].copy_from_slice(&update.file.id);
-        msg[33] = update.auth.as_u8();
+        msg[33] = update.auth.to_kernel_u8();
 
         let mut nb_bytes_ret: u32 = 0;
         unsafe {
@@ -324,10 +375,11 @@ impl FileFilterInterface for WindowsFileFilterInterface {
         // Resolve "D:" -> "\Device\HarddiskVolume3"
         let nt_path = query_dos_device(drive)?;
 
-        log::info!("update_usb_auth: {} -> {} auth={}", drive, nt_path, update.auth.as_u8());
+        log::info!("update_usb_auth: {} -> {} auth={}", drive, nt_path, update.auth.to_kernel_u8());
 
         // Build message: [0x02 | auth_u8 | nt_path_utf16_null_terminated]
-        let auth_byte = update.auth.as_u8();
+        // auth_byte must use the kernel KEYSAS_AUTHORIZATION values.
+        let auth_byte = update.auth.to_kernel_u8();
         let nt_wide: Vec<u16> = nt_path.encode_utf16().chain(std::iter::once(0u16)).collect();
 
         let mut msg: Vec<u8> = Vec::with_capacity(2 + nt_wide.len() * 2);

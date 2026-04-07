@@ -143,6 +143,15 @@ impl UsbAuthorization {
     pub fn as_u8(self) -> u8 {
         self as u8
     }
+
+    /// Returns the value expected by the Windows minifilter kernel (KEYSAS_AUTHORIZATION).
+    /// KEYSAS_AUTHORIZATION: AUTH_UNKNOWN=0, AUTH_PENDING=1, AUTH_BLOCK=2,
+    ///   AUTH_ALLOW_READ=3, AUTH_ALLOW_WARNING=4, AUTH_ALLOW_ALL=5
+    /// UsbAuthorization: Pending=0, Block=1, AllowRead=2, AllowRW=3, AllowAll=4
+    /// The kernel values are exactly one greater than the daemon values.
+    pub fn to_kernel_u8(self) -> u8 {
+        self as u8 + 1
+    }
 }
 
 /// Authorization states for files
@@ -162,6 +171,14 @@ pub enum FileAuthorization {
 impl FileAuthorization {
     pub fn as_u8(self) -> u8 {
         self as u8
+    }
+
+    /// Returns the value expected by the Windows minifilter kernel (KEYSAS_AUTHORIZATION).
+    /// FileAuthorization: Pending=0, Block=1, AllowRead=2, AllowRW=3
+    /// KEYSAS_AUTHORIZATION: AUTH_PENDING=1, AUTH_BLOCK=2, AUTH_ALLOW_READ=3, AUTH_ALLOW_WARNING=4
+    /// The kernel values are exactly one greater than the daemon values.
+    pub fn to_kernel_u8(self) -> u8 {
+        self as u8 + 1
     }
 }
 
@@ -429,6 +446,14 @@ impl ServiceController {
         policy.device.mnt_point = device.mnt_point.clone();
         self.mounted_usb.insert(device.device_id.clone(), policy);
 
+        // Notify the file filter immediately so it can place its mark on the
+        // mount point as soon as the device is mounted.
+        if let Some(p) = self.mounted_usb.get(&device.device_id) {
+            if let Err(e) = self.file_filter.update_usb_auth(p) {
+                warn!("update_usb: file filter mark failed: {e}");
+            }
+        }
+
         Ok(())
     }
 
@@ -689,13 +714,13 @@ impl ServiceController {
     }
 
     /// Get the authorization status for a filesystem on a USB device
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `mount` - Name of the filesystem partition
-    /// 
+    ///
     /// # Return value
-    /// 
+    ///
     /// *  if a device with a [mnt_point](UsbDevice) = `mount` => the [auth](UsbDevicePolicy) corresponding to its device policy
     /// * else an error
     pub fn get_usb_auth(&self, mount: &OsString) -> Result<UsbAuthorization, anyhow::Error> {
@@ -709,6 +734,16 @@ impl ServiceController {
                 Err(anyhow!("No device found"))
             }
         }
+    }
+
+    /// Look up USB authorization by DOS mount point path (e.g. `"D:\"`).
+    ///
+    /// Used on Windows to answer `SCAN_USB` requests from the minifilter,
+    /// after the NT volume path has been reverse-resolved to a DOS drive letter.
+    pub fn get_usb_auth_by_mount(&self, mnt_point: &OsString) -> Option<UsbAuthorization> {
+        self.mounted_usb.values()
+            .find(|p| p.device.mnt_point.as_ref() == Some(mnt_point))
+            .map(|p| p.auth)
     }
 
     /// Return the list of USB devices currently tracked as a flat tuple list.
