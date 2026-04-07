@@ -3,12 +3,12 @@ name: keysas-firewall CI
 # Triggered on PRs and pushes to main/develop when firewall sources change.
 on:
   pull_request:
-    branches: ["main", "develop"]
+    branches: ["main", "develop", "cert-agent"]
     paths:
       - "keysas-firewall/**"
       - ".github/workflows/keysas-firewall.yml"
   push:
-    branches: ["main", "develop"]
+    branches: ["main", "develop", "cert-agent"]
     paths:
       - "keysas-firewall/**"
       - ".github/workflows/keysas-firewall.yml"
@@ -206,4 +206,114 @@ jobs:
         with:
           name: keysas-firewall-msi
           path: keysas-firewall/tray-app/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 5. Build the full MSI : minifilter (WDK) + daemon (MSVC) + packaging (WiX v3)
+  #    Everything on one Windows runner — no cross-compilation, no Docker.
+  #
+  #    Driver signing: self-signed (test) by default.
+  #    For production, set repository secrets EV_CERT_PFX + EV_CERT_PASSWORD
+  #    and replace the "Self-sign" step with a signtool /f cert.pfx call.
+  #
+  #    Target machine requirement (test-signed driver):
+  #      bcdedit /set testsigning on  (+ reboot) before installing the MSI.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-windows-msi:
+    name: Build MSI daemon+minifilter (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      # ── Toolchain setup ────────────────────────────────────────────────────
+      - name: Set up Rust stable (MSVC)
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+          rustflags: ""
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: win-msi-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: win-msi-
+
+      # ── Windows Driver Kit ─────────────────────────────────────────────────
+      - name: Install Windows Driver Kit
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2249371" `
+            -OutFile "$env:TEMP\wdksetup.exe" -UseBasicParsing
+          Start-Process -Wait "$env:TEMP\wdksetup.exe" "/quiet /norestart"
+          Write-Host "WDK installed."
+
+      # ── Minifilter ─────────────────────────────────────────────────────────
+      - name: Build minifilter (Release x64)
+        shell: pwsh
+        working-directory: keysas-firewall/minifilter
+        run: |
+          msbuild KeysasMinifilter.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 /v:minimal
+
+      - name: Generate catalog file (inf2cat)
+        shell: pwsh
+        run: |
+          $inf2cat = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter inf2cat.exe -ErrorAction SilentlyContinue |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $inf2cat) { throw "inf2cat.exe not found" }
+
+          $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
+          Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
+          & $inf2cat /driver:"$outDir" /os:10_X64,Server10_X64
+          if ($LASTEXITCODE -ne 0) { throw "inf2cat failed" }
+
+      - name: Self-sign driver and catalog (test signing)
+        shell: pwsh
+        run: |
+          $outDir  = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
+          $cert    = New-SelfSignedCertificate -Type CodeSigningCert `
+                       -Subject "CN=Keysas Test Signing" `
+                       -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
+                        -Recurse -Filter signtool.exe |
+                        Where-Object { $_.FullName -match "x64" } |
+                        Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint `
+            /t http://timestamp.digicert.com `
+            "$outDir\KeysasMinifilter.sys" "$outDir\KeysasMinifilter.cat"
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
+
+      # ── Daemon ─────────────────────────────────────────────────────────────
+      - name: Build daemon (Release MSVC)
+        working-directory: keysas-firewall/daemon
+        run: cargo build --release
+
+      # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
+      - name: Install cargo-wix
+        run: cargo install --locked cargo-wix
+
+      - name: Package MSI (cargo wix)
+        shell: pwsh
+        working-directory: keysas-firewall/daemon
+        run: |
+          cargo wix `
+            --define BinDir=target\release `
+            --define MinifilterDir=..\minifilter\x64\Release\KeysasMinifilter `
+            --nocapture
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keysas-firewall-full-msi
+          path: keysas-firewall/daemon/target/wix/*.msi
           retention-days: 7

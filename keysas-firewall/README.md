@@ -126,17 +126,18 @@ Options:
 
 See [docs/installation-windows-msi.md](../docs/installation-windows-msi.md) for the full guide.
 
-### Build the MSI (Linux / Docker)
+### Build the MSI (GitHub Actions / Windows)
 
-From the repository root (Linux host with Docker):
+The MSI is built automatically by the `build-windows-msi` job in
+`.github/workflows/keysas-firewall.yml` on every push to `main`, `develop`,
+or `cert-agent`. The artifact `keysas-firewall-full-msi` is available for
+download from the Actions run for 7 days.
 
-```bash
-docker build \
-  -f keysas-firewall/daemon/Dockerfile.msi \
-  --output type=local,dest=./dist \
-  .
-# → dist/keysas-firewall-0.1.0-x64.msi
-```
+The job compiles the minifilter with the WDK, self-signs it (test signing),
+builds the daemon with MSVC, and packages everything with `cargo-wix`.
+
+> **Note:** test-signed drivers require `bcdedit /set testsigning on` + reboot
+> on the target machine.
 
 ### Install
 
@@ -156,10 +157,13 @@ Set-Service "Keysas Service" -StartupType Automatic
 
 ## Continuous Integration
 
-A GitHub Actions pipeline validates builds on every PR or push to `main`/`develop`:
+A GitHub Actions pipeline validates builds on every PR or push to `main`, `develop`, or `cert-agent`:
 
-- **check-daemon** — `cargo check` on the Linux daemon (stable toolchain)
-- **check-tray-app** — `cargo check` on the Linux tray-app (stable toolchain)
+- **build-ebpf** — compiles the eBPF kernel program (nightly)
+- **check-daemon** — `cargo check` on the Linux daemon (nightly)
+- **check-tray-app** — `cargo check` on the tray-app (stable, ubuntu-22.04)
+- **build-tray-app-msi** — Tauri MSI for the tray-app (Windows, stable)
+- **build-windows-msi** — minifilter (WDK) + daemon (MSVC) + full MSI (Windows)
 
 See `.github/workflows/keysas-firewall.yml`.
 
@@ -185,6 +189,6 @@ See `.github/workflows/keysas-firewall.yml`.
 - [x] USB blocking via volume eject (lock + dismount + eject IOCTLs)
 - [x] Security policy via registry
 - [x] Certificate loading via registry
-- [x] MSI installer (Docker cross-build with wixl)
+- [x] MSI installer (GitHub Actions Windows runner, WDK + cargo-wix)
 - [ ] Tray-app interface
 - [ ] File-level access filtering
