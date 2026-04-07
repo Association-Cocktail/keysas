@@ -262,6 +262,31 @@ jobs:
           $wdkVer = ($km -split "\\Include\\")[1].Split("\")[0]
           "WDK_VERSION=$wdkVer" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # ── WDK integration fix (CRITIQUE) ───────────────────────────────────────
+      - name: Fix WDK MSBuild integration
+        shell: pwsh
+        run: |
+          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+      
+          Write-Host "Searching for WindowsDriverKit.props..."
+          $props = Get-ChildItem $wdkRoot -Recurse -Filter WindowsDriverKit.props -ErrorAction SilentlyContinue | Select-Object -First 1
+          $targets = Get-ChildItem $wdkRoot -Recurse -Filter WindowsDriverKit.targets -ErrorAction SilentlyContinue | Select-Object -First 1
+      
+          if (-not $props -or -not $targets) {
+            throw "WDK props/targets not found"
+          }
+      
+          Write-Host "Found props: $($props.FullName)"
+          Write-Host "Found targets: $($targets.FullName)"
+      
+          $dest = "$env:VCTargetsPath\BuildCustomizations"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+      
+          Copy-Item $props.FullName "$dest\WindowsDriverKit.props" -Force
+          Copy-Item $targets.FullName "$dest\WindowsDriverKit.targets" -Force
+      
+          Write-Host "WDK integration installed into MSBuild"
+
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
         shell: pwsh
