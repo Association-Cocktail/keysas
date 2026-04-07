@@ -190,7 +190,7 @@ fn main() -> Result<(), anyhow::Error> {
     #[cfg(target_os = "windows")]
     {
         // Register Keysas service with the system and start the service
-        service::start_windows_service(true)?;
+        service::start_windows_service(false)?;
 
         Ok(())
     }

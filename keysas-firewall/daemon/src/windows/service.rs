@@ -48,7 +48,7 @@ fn keysas_service_main(_args: Vec<OsString>) {
     };
 
     // Register the service handler
-    let status_handle = match service_control_handler::register("Keysas", event_handler) {
+    let status_handle = match service_control_handler::register("Keysas Service", event_handler) {
         Ok(h) => h,
         Err(e) => {
             error!("Failed to get status handle: {e}");
