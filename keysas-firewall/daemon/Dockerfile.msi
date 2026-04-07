@@ -3,8 +3,18 @@
 #
 # Strategy:
 #   1. Cross-compile the daemon for x86_64-pc-windows-gnu (MinGW toolchain).
-#   2. Package the binary into a Windows MSI using wixl (msitools), a Linux
-#      implementation of WiX v3 that produces .msi files without Wine or WiX.
+#   2. Package daemon + minifilter driver into a Windows MSI via wixl (msitools).
+#
+# Prerequisites in the build context (repository root):
+#   keysas-firewall/minifilter/x64/Release/KeysasMinifilter/
+#     ├── KeysasMinifilter.sys   ← compiled with WDK on Windows (required)
+#     └── KeysasMinifilter.cat   ← catalog / signed with WDK signtool (required)
+#   The .inf is taken from the source tree.
+#
+# If the minifilter has not been built yet, create a placeholder to allow
+# the Docker build to proceed (the resulting MSI will not load the driver):
+#   mkdir -p keysas-firewall/minifilter/x64/Release/KeysasMinifilter
+#   touch keysas-firewall/minifilter/x64/Release/KeysasMinifilter/KeysasMinifilter.{sys,cat}
 #
 # IMPORTANT: build context must be the repository root, not this directory.
 #
@@ -40,24 +50,35 @@ RUN mkdir -p /root/.cargo && printf \
     '[target.x86_64-pc-windows-gnu]\nlinker = "x86_64-w64-mingw32-gcc"\n' \
     >> /root/.cargo/config.toml
 
-# Copy path dependencies, preserving the relative layout expected by Cargo.toml:
-#   daemon/Cargo.toml: libmailslot  = { path = "../libmailslot"  }
-#   daemon/Cargo.toml: keysas_lib   = { path = "../../keysas_lib" }
+# ── Copy sources ──────────────────────────────────────────────────────────────
+# Preserves the relative layout expected by Cargo.toml:
+#   daemon/Cargo.toml: libmailslot = { path = "../libmailslot" }
+#   daemon/Cargo.toml: keysas_lib  = { path = "../../keysas_lib" }
 WORKDIR /src
 COPY keysas_lib/                        keysas_lib/
 COPY keysas-firewall/libmailslot/       keysas-firewall/libmailslot/
 COPY keysas-firewall/daemon/            keysas-firewall/daemon/
 
-# ── Cross-compile ─────────────────────────────────────────────────────────────
+# ── Copy minifilter pre-built files ───────────────────────────────────────────
+# The .inf lives in the source tree; .sys and .cat must be compiled on Windows
+# with the WDK and placed at the expected path before running this build.
+COPY keysas-firewall/minifilter/KeysasMinifilter.inf \
+     keysas-firewall/minifilter/KeysasMinifilter.inf
+COPY keysas-firewall/minifilter/x64/Release/KeysasMinifilter/ \
+     keysas-firewall/minifilter/x64/Release/KeysasMinifilter/
+
+# ── Cross-compile daemon ──────────────────────────────────────────────────────
 WORKDIR /src/keysas-firewall/daemon
 RUN cargo build --release --target x86_64-pc-windows-gnu
 
 # ── Package MSI ───────────────────────────────────────────────────────────────
 RUN VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
     BIN_DIR=target/x86_64-pc-windows-gnu/release && \
+    MINIFILTER_DIR=../minifilter/x64/Release/KeysasMinifilter && \
     wixl \
         -D Version="${VERSION}" \
         -D BinDir="${BIN_DIR}" \
+        -D MinifilterDir="${MINIFILTER_DIR}" \
         -a x64 \
         wix/main.wxs \
         -o "keysas-firewall-${VERSION}-x64.msi" && \

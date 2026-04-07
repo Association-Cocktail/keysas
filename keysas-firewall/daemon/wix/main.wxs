@@ -1,8 +1,17 @@
 <?xml version='1.0' encoding='windows-1252'?>
 <!--
   Keysas Firewall — WiX v3 installer source
-  Build: cargo wix  (requires cargo-wix + WiX Toolset v3 on Windows, or
-         cargo install cargo-wix then cargo wix on a cross-compile host)
+  Build (Linux/Docker via wixl):
+    wixl -D Version=x.y.z -D BinDir=... -D MinifilterDir=... -a x64 wix/main.wxs
+
+  $(var.MinifilterDir) must contain:
+    KeysasMinifilter.sys   — compiled with WDK on Windows
+    KeysasMinifilter.cat   — catalog file (test-signed or production-signed)
+  The .inf is read directly from the source tree (no WDK needed).
+
+  NOTE: loading a kernel driver on Windows 11 requires either:
+    - a production EV code-signing certificate, or
+    - test-signing mode: bcdedit /set testsigning on  (+ reboot)
 -->
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
@@ -18,7 +27,7 @@
     <Package
       Id='*'
       Keywords='Installer'
-      Description='Keysas USB Firewall daemon — blocks uncertified USB keys'
+      Description='Keysas USB Firewall — minifilter driver + daemon service'
       Manufacturer='Association Cocktail'
       InstallerVersion='450'
       Languages='1033'
@@ -33,24 +42,20 @@
     <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
     <Property Id='DiskPrompt' Value='Keysas USB Firewall Installation'/>
 
-    <!-- Require administrator rights at install time -->
     <Property Id='MSIUSEREALADMINDETECTION' Value='1'/>
 
-    <!--
-      $(var.BinDir) must point to the directory containing
-      keysas-usbfilter-daemon.exe.  Pass it via:
-        cargo-wix : cargo wix -D BinDir=target/release
-        wixl      : wixl -D BinDir=target/x86_64-pc-windows-gnu/release
-    -->
-
-    <!-- ─────────────────────────────────────────────────────── directory tree -->
+    <!-- ───────────────────────────────────────────────── directory tree -->
     <Directory Id='TARGETDIR' Name='SourceDir'>
 
-      <!-- Binary: C:\Program Files\Keysas Firewall\ -->
+      <!-- ── Daemon binary: C:\Program Files\Keysas Firewall\ ── -->
       <Directory Id='ProgramFiles64Folder'>
         <Directory Id='APPLICATIONFOLDER' Name='Keysas Firewall'>
 
-          <!-- Daemon executable + Windows Service registration -->
+          <!--
+            Daemon executable + Windows Service registration.
+            The service depends on KeysasMinifilter: SCM will start the
+            driver automatically before starting the daemon.
+          -->
           <Component Id='comp_binary' Guid='02B83024-9E87-4AFA-B324-11BB64B3D686' Win64='yes'>
             <File
               Id='exe_daemon'
@@ -59,12 +64,6 @@
               Source='$(var.BinDir)/keysas-usbfilter-daemon.exe'
               KeyPath='yes'/>
 
-            <!--
-              Service name "Keysas Service" must match the value passed to
-              service_dispatcher::start() in windows/service.rs.
-              Start='demand' (manual start): the admin enables it after
-              depositing the CA certificates, just as on Linux.
-            -->
             <ServiceInstall
               Id='svc_install'
               Type='ownProcess'
@@ -73,7 +72,10 @@
               Description='Verifies USB key certificates and blocks uncertified devices.'
               Start='demand'
               Account='LocalSystem'
-              ErrorControl='normal'/>
+              ErrorControl='normal'>
+              <!-- Daemon must not start before the minifilter is running -->
+              <ServiceDependency Id='KeysasMinifilter'/>
+            </ServiceInstall>
 
             <ServiceControl
               Id='svc_control'
@@ -83,40 +85,101 @@
               Wait='yes'/>
           </Component>
 
-          <!-- Registry: policy defaults + certificate paths -->
-          <!--
-            The keysas-admin deposits CA certificate files in
-            C:\ProgramData\Keysas\Firewall\ after installation.
-            The registry values below point to that location by default.
-            An admin can override them via regedit or Group Policy.
-
-            Registry path must match load_security_policy() / load_certificates()
-            in windows/service.rs:
-              HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config
-          -->
+          <!-- Security policy defaults + certificate paths -->
           <Component Id='comp_registry' Guid='BFC665F7-039E-4513-902E-5C436657252C' Win64='yes'>
             <RegistryKey
               Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'>
-
-              <!-- Security policy (0 = strict / false) -->
-              <RegistryValue Type='integer' Name='DisableUnsignedUsb'        Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization'  Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserFileRead'          Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserFileWrite'         Value='0'/>
-
-              <!-- CA certificate paths — adjust after depositing the .pem files -->
-              <RegistryValue Type='string' Name='StCaClCert'
+              <RegistryValue Type='integer' Name='DisableUnsignedUsb'       Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization' Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileRead'         Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileWrite'        Value='0'/>
+              <RegistryValue Type='string'  Name='StCaClCert'
                 Value='C:\ProgramData\Keysas\Firewall\st-ca-cl.pem'/>
-              <RegistryValue Type='string' Name='StCaPqCert'
+              <RegistryValue Type='string'  Name='StCaPqCert'
                 Value='C:\ProgramData\Keysas\Firewall\st-ca-pq.pem'/>
-              <RegistryValue Type='string' Name='UsbCaClCert'
+              <RegistryValue Type='string'  Name='UsbCaClCert'
                 Value='C:\ProgramData\Keysas\Firewall\usb-ca-cl.pem'/>
-              <RegistryValue Type='string' Name='UsbCaPqCert'
+              <RegistryValue Type='string'  Name='UsbCaPqCert'
                 Value='C:\ProgramData\Keysas\Firewall\usb-ca-pq.pem'/>
             </RegistryKey>
           </Component>
 
+          <!--
+            Minifilter instance registry keys.
+            These replicate the [MiniFilter.AddRegistry] section of the INF:
+            altitude, flags, SupportedFeatures, DebugFlags.
+            They are placed here (under APPLICATIONFOLDER) because WiX
+            requires every Component to live inside a Directory element.
+          -->
+          <Component Id='comp_minifilter_reg' Guid='E2B4F076-A1C3-4E8D-B5F9-2C7D3E8F1A06' Win64='yes'>
+            <RegistryKey Root='HKLM' Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter'>
+              <RegistryValue Type='integer' Name='DebugFlags'        Value='0'/>
+              <RegistryValue Type='integer' Name='SupportedFeatures' Value='3'
+                KeyPath='yes'/>
+            </RegistryKey>
+            <RegistryKey Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter\Instances'>
+              <RegistryValue Type='string' Name='DefaultInstance' Value='Keysas Instance'/>
+            </RegistryKey>
+            <RegistryKey Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter\Instances\Keysas Instance'>
+              <RegistryValue Type='string'  Name='Altitude' Value='370033'/>
+              <RegistryValue Type='integer' Name='Flags'    Value='0'/>
+            </RegistryKey>
+          </Component>
+
+        </Directory>
+      </Directory>
+
+      <!--
+        ── Minifilter driver binary: %SystemRoot%\System32\drivers\ ──
+        System64Folder always resolves to %SystemRoot%\System32 on x64.
+        ServiceInstall here registers KeysasMinifilter as a file-system
+        driver (Type='systemDriver' = SERVICE_FILE_SYSTEM_DRIVER = 0x2),
+        replicating what the INF's [MiniFilter.Service] section does.
+      -->
+      <Directory Id='System64Folder'>
+        <Directory Id='DriversDirSys' Name='drivers'>
+          <Component Id='comp_minifilter_sys' Guid='F3A7E891-B2C4-4D1E-9A3F-7B8C2D5E6F90' Win64='yes'>
+            <File
+              Id='file_minifilter_sys'
+              Name='KeysasMinifilter.sys'
+              DiskId='1'
+              Source='$(var.MinifilterDir)/KeysasMinifilter.sys'
+              KeyPath='yes'/>
+
+            <!--
+              Catalog file for driver signature verification.
+              Required for Windows 11 (PnpLockdown=1 in the INF).
+            -->
+            <File
+              Id='file_minifilter_cat'
+              Name='KeysasMinifilter.cat'
+              DiskId='1'
+              Source='$(var.MinifilterDir)/KeysasMinifilter.cat'/>
+
+            <ServiceInstall
+              Id='svc_minifilter_install'
+              Type='systemDriver'
+              Name='KeysasMinifilter'
+              DisplayName='Keysas Mini-Filter Driver'
+              Description='Keysas Mini-Filter Driver'
+              Start='demand'
+              Account='LocalSystem'
+              LoadOrderGroup='FSFilter Activity Monitor'
+              ErrorControl='normal'>
+              <ServiceDependency Id='FltMgr'/>
+            </ServiceInstall>
+
+            <ServiceControl
+              Id='svc_minifilter_control'
+              Name='KeysasMinifilter'
+              Start='install'
+              Stop='both'
+              Remove='uninstall'
+              Wait='yes'/>
+          </Component>
         </Directory>
       </Directory>
 
@@ -126,7 +189,6 @@
           <Directory Id='CERTFOLDER' Name='Firewall'>
             <Component Id='comp_certdir' Guid='7287E597-B0DC-41B4-A3FF-44117C03CCCD' Win64='yes'>
               <CreateFolder/>
-              <!-- Remove the directory on uninstall only if empty -->
               <RemoveFolder Id='rm_certdir' On='uninstall'/>
               <RegistryValue
                 Root='HKLM'
@@ -141,25 +203,22 @@
       </Directory>
 
     </Directory>
-    <!-- ─────────────────────────────────────────────────────── features -->
+    <!-- ──────────────────────────────────────────────────── features -->
 
     <Feature Id='Complete' Title='Keysas USB Firewall' Level='1'>
       <ComponentRef Id='comp_binary'/>
       <ComponentRef Id='comp_registry'/>
       <ComponentRef Id='comp_certdir'/>
+      <ComponentRef Id='comp_minifilter_sys'/>
+      <ComponentRef Id='comp_minifilter_reg'/>
     </Feature>
 
-    <!-- ─────────────────────────────────────────────────────── UI -->
-
+    <!-- ──────────────────────────────────────────────────── UI -->
     <Property Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]'/>
 
     <!--
-      UI is intentionally omitted: the MSI is designed for silent/unattended
-      installation (msiexec /i keysas-firewall.msi /quiet).
-      This also makes the .wxs compatible with wixl (Linux MSI builder) which
-      does not implement the WixUI extension.
-
-      To add a UI for interactive installs on a Windows build host:
+      Silent/unattended install: msiexec /i keysas-firewall.msi /quiet
+      To add an interactive UI on a Windows build host:
         <UIRef Id='WixUI_Minimal'/>
         <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
     -->
