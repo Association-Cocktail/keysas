@@ -268,7 +268,7 @@ jobs:
         working-directory: keysas-firewall/minifilter
         run: |
           $wdkRoot = "C:\Program Files (x86)\Windows Kits\10\"
-          msbuild KeysasMinifilter.vcxproj `
+          msbuild KeysasMinifilter.vcxproj /pp:out.xml `
             /p:Configuration=Release /p:Platform=x64 `
             /p:WDKContentRoot="$wdkRoot" `
             /v:minimal
