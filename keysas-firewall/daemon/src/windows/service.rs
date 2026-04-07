@@ -16,14 +16,19 @@ use crate::Config;
 
 define_windows_service!(ffi_keysas_service, keysas_service_main);
 
-fn run_service() {    
+fn run_service() {
     let config = Config::default();
-    let _ = thread::spawn(move ||  -> Result<(), anyhow::Error> {
-        // Initialize and start the service
+    let result = thread::spawn(move || -> Result<(), anyhow::Error> {
+        info!("run_service: loading security policy...");
+        info!("run_service: loading certificates...");
+        info!("run_service: initializing ServiceController...");
+
         if let Err(e) = ServiceController::init(&config) {
-            println!("Failed to start the service: {e}");
-            return Err(anyhow!("Failed to start the service: {e}"));
+            error!("ServiceController::init failed: {e:#}");
+            return Err(anyhow!("ServiceController::init failed: {e:#}"));
         }
+
+        info!("run_service: ServiceController started, entering main loop");
 
         // Put the service in sleep until it receives request from the driver or the HMI
         loop {
@@ -31,7 +36,12 @@ fn run_service() {
         }
     })
     .join();
-    info!("End of Keysas service");
+
+    match result {
+        Ok(Ok(())) => info!("run_service: thread exited normally"),
+        Ok(Err(e)) => error!("run_service: thread exited with error: {e:#}"),
+        Err(_)     => error!("run_service: thread panicked"),
+    }
 }
 
 fn keysas_service_main(_args: Vec<OsString>) {
