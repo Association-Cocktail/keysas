@@ -253,40 +253,26 @@ jobs:
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2249371" `
             -OutFile "$env:TEMP\wdksetup.exe" -UseBasicParsing
           Start-Process -Wait "$env:TEMP\wdksetup.exe" "/quiet /norestart"
-          Write-Host "WDK installed."
-
-      - name: Install WDK Visual Studio extension
-        shell: pwsh
-        run: |
-          # The WindowsKernelModeDriver10.0 MSBuild toolset is provided by the
-          # WDK VS extension (WDK.vsix), not the WDK installer alone.
-          $vsix = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Vsix" `
-            -Recurse -Filter "WDK.vsix" -ErrorAction SilentlyContinue |
-            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
-          if (-not $vsix) { throw "WDK.vsix not found under Windows Kits\10\Vsix" }
-          Write-Host "Found VSIX: $vsix"
-
-          $vsixInstaller = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
-            -Recurse -Filter "VSIXInstaller.exe" -ErrorAction SilentlyContinue |
+          # Vérifie que fltKernel.h est bien présent
+          $km = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" `
+            -Recurse -Filter "fltKernel.h" -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
-          if (-not $vsixInstaller) { throw "VSIXInstaller.exe not found" }
-          Write-Host "Using installer: $vsixInstaller"
-
-          $proc = Start-Process -Wait -PassThru $vsixInstaller `
-            "/quiet /admin `"$vsix`""
-          # Exit code 1001 = already installed, which is fine
-          if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1001) {
-            throw "VSIXInstaller failed with exit code $($proc.ExitCode)"
-          }
-          Write-Host "WDK VS extension installed (exit code $($proc.ExitCode))."
+          if (-not $km) { throw "fltKernel.h introuvable après installation WDK" }
+          Write-Host "fltKernel.h found: $km"
+          $wdkVer = ($km -split "\\Include\\")[1].Split("\")[0]
+          "WDK_VERSION=$wdkVer" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
         shell: pwsh
         working-directory: keysas-firewall/minifilter
         run: |
+          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10\"
           msbuild KeysasMinifilter.vcxproj `
-            /p:Configuration=Release /p:Platform=x64 /v:minimal
+            /p:Configuration=Release /p:Platform=x64 `
+            /p:WDKContentRoot="$wdkRoot" `
+            /p:WindowsTargetPlatformVersion="$env:WDK_VERSION" `
+            /v:minimal
 
       - name: Generate catalog file (inf2cat)
         shell: pwsh
