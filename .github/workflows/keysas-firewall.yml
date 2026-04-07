@@ -3,12 +3,12 @@ name: keysas-firewall CI
 # Triggered on PRs and pushes to main/develop when firewall sources change.
 on:
   pull_request:
-    branches: ["main", "develop", "cert-agent"]
+    branches: ["main", "develop"]
     paths:
       - "keysas-firewall/**"
       - ".github/workflows/keysas-firewall.yml"
   push:
-    branches: ["main", "develop", "cert-agent"]
+    branches: ["main", "develop"]
     paths:
       - "keysas-firewall/**"
       - ".github/workflows/keysas-firewall.yml"
@@ -254,6 +254,31 @@ jobs:
             -OutFile "$env:TEMP\wdksetup.exe" -UseBasicParsing
           Start-Process -Wait "$env:TEMP\wdksetup.exe" "/quiet /norestart"
           Write-Host "WDK installed."
+
+      - name: Install WDK Visual Studio extension
+        shell: pwsh
+        run: |
+          # The WindowsKernelModeDriver10.0 MSBuild toolset is provided by the
+          # WDK VS extension (WDK.vsix), not the WDK installer alone.
+          $vsix = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Vsix" `
+            -Recurse -Filter "WDK.vsix" -ErrorAction SilentlyContinue |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $vsix) { throw "WDK.vsix not found under Windows Kits\10\Vsix" }
+          Write-Host "Found VSIX: $vsix"
+
+          $vsixInstaller = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
+            -Recurse -Filter "VSIXInstaller.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $vsixInstaller) { throw "VSIXInstaller.exe not found" }
+          Write-Host "Using installer: $vsixInstaller"
+
+          $proc = Start-Process -Wait -PassThru $vsixInstaller `
+            "/quiet /admin `"$vsix`""
+          # Exit code 1001 = already installed, which is fine
+          if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1001) {
+            throw "VSIXInstaller failed with exit code $($proc.ExitCode)"
+          }
+          Write-Host "WDK VS extension installed (exit code $($proc.ExitCode))."
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
