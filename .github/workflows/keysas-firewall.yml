@@ -271,8 +271,6 @@ jobs:
           msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
             /p:WDKContentRoot="$wdkRoot" `
-            /p:WindowsTargetPlatformVersion="$env:WDK_VERSION" `
-            /p:TargetPlatformVersion="$env:WDK_VERSION" `
             /v:minimal
 
       - name: Generate catalog file (inf2cat)
