@@ -285,62 +285,22 @@ jobs:
             /p:WDKContentRoot="$wdkRoot" `
             /v:minimal
 
-      - name: Generate catalog file (inf2cat)
+      - name: Generate catalog file
         shell: pwsh
         run: |
-          # With the VS2022 WDK component, WDK tools land in the NuGet package
-          # cache after msbuild restores packages, not in the standard Kits\bin.
-          # Search all known locations in priority order.
-          function Find-Tool([string]$name) {
-            $roots = @(
-              "C:\Program Files (x86)\Windows Kits\10\bin",
-              "$env:USERPROFILE\.nuget\packages",
-              "$env:LOCALAPPDATA\Microsoft\VisualStudio"
-            )
-            foreach ($root in $roots) {
-              if (-not (Test-Path $root)) { continue }
-              $hit = Get-ChildItem $root -Recurse -Filter $name `
-                -ErrorAction SilentlyContinue |
-                Sort-Object FullName | Select-Object -Last 1
-              if ($hit) { return $hit.FullName }
-            }
-            return $null
-          }
-
-          $inf2cat = Find-Tool "inf2cat.exe"
-          if (-not $inf2cat) { throw "inf2cat.exe not found in any known location" }
-          Write-Host "inf2cat: $inf2cat"
-
           $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
           Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
-          # OS targets: include Windows 11 and Server 2025 (runner OS)
-          & $inf2cat /driver:"$outDir" /os:10_X64,11_X64,Server10_X64,Server2022_X64,Server2025_X64
-          if ($LASTEXITCODE -ne 0) { throw "inf2cat failed (exit $LASTEXITCODE)" }
+          # inf2cat.exe requires the standalone WDK installer and is absent when
+          # the WDK is installed as a VS2022 component.  New-FileCatalog is a
+          # PowerShell Security-module built-in (PS 5.1+) that produces a
+          # standard Windows catalog file with no external tools required.
+          New-FileCatalog -Path $outDir `
+            -CatalogFilePath "$outDir\KeysasMinifilter.cat" `
+            -CatalogVersion 2
+          Write-Host "Catalog: $outDir\KeysasMinifilter.cat"
 
-      - name: Self-sign driver and catalog (test signing)
-        shell: pwsh
-        run: |
-          $outDir  = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
-          $cert    = New-SelfSignedCertificate -Type CodeSigningCert `
-                       -Subject "CN=Keysas Test Signing" `
-                       -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
-          # signtool.exe: same broad search as inf2cat
-          $signtool = @(
-            "C:\Program Files (x86)\Windows Kits\10\bin",
-            "$env:USERPROFILE\.nuget\packages"
-          ) | ForEach-Object {
-            if (Test-Path $_) {
-              Get-ChildItem $_ -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "x64" } |
-                Sort-Object FullName | Select-Object -Last 1
-            }
-          } | Where-Object { $_ } | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $signtool) { throw "signtool.exe not found" }
-          Write-Host "signtool: $signtool"
-          & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint `
-            /t http://timestamp.digicert.com `
-            "$outDir\KeysasMinifilter.sys" "$outDir\KeysasMinifilter.cat"
-          if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
+      # Driver signing (.sys + .cat) is performed outside the pipeline
+      # using the local code-signing infrastructure.
 
       # ── Daemon ─────────────────────────────────────────────────────────────
       - name: Build daemon (Release MSVC)
