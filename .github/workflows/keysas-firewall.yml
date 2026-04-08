@@ -247,65 +247,26 @@ jobs:
           restore-keys: win-msi-
 
       # ── Windows Driver Kit ─────────────────────────────────────────────────
-      - name: Install Windows Driver Kit
+      # WDK is pre-installed on windows-2025 as a VS2022 component
+      # (Component.Microsoft.Windows.DriverKit 10.0.26100.16).
+      # No download or VSIX install required — just verify and export version.
+      - name: Verify Windows Driver Kit
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2249371" `
-            -OutFile "$env:TEMP\wdksetup.exe" -UseBasicParsing
-          Start-Process -Wait "$env:TEMP\wdksetup.exe" "/quiet /norestart"
-          # Vérifie que fltKernel.h est bien présent
           $km = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" `
             -Recurse -Filter "fltKernel.h" -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
-          if (-not $km) { throw "fltKernel.h introuvable après installation WDK" }
-          Write-Host "fltKernel.h found: $km"
+          if (-not $km) { throw "fltKernel.h not found — WDK may not be installed" }
+          Write-Host "fltKernel.h: $km"
           $wdkVer = ($km -split "\\Include\\")[1].Split("\")[0]
           "WDK_VERSION=$wdkVer" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "WDK version: $wdkVer"
 
-      # ── WDK integration fix (CRITIQUE) ───────────────────────────────────────
-      # wdksetup.exe /quiet installs headers+libs but does NOT run the VSIX
-      # installer (which would require an interactive VS session).
-      # The VSIX is however copied to Vsix\ by the setup.  A VSIX is a ZIP, so
-      # we extract WindowsDriverKit.props/.targets from it directly and copy
-      # them into VS's BuildCustomizations directory (found via vswhere.exe).
-      - name: Fix WDK MSBuild integration
-        shell: pwsh
-        run: |
-          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
-
-          # Locate the WDK VSIX placed by the silent installer.
-          $vsix = Get-ChildItem "$wdkRoot\Vsix" -Recurse -Filter "*.vsix" `
-            -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $vsix) { throw "WDK VSIX not found under $wdkRoot\Vsix" }
-          Write-Host "Found VSIX: $($vsix.FullName)"
-
-          # Extract the VSIX (it is a ZIP archive).
-          $extractDir = Join-Path $env:TEMP "wdk_vsix_extract"
-          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
-          Expand-Archive -LiteralPath $vsix.FullName -DestinationPath $extractDir -Force
-
-          $props   = Get-ChildItem $extractDir -Recurse -Filter "WindowsDriverKit.props"   | Select-Object -First 1
-          $targets = Get-ChildItem $extractDir -Recurse -Filter "WindowsDriverKit.targets" | Select-Object -First 1
-          if (-not $props -or -not $targets) {
-            throw "WindowsDriverKit.props/.targets not found inside VSIX"
-          }
-          Write-Host "Found props:   $($props.FullName)"
-          Write-Host "Found targets: $($targets.FullName)"
-
-          # Resolve VS install path via vswhere.exe (pre-installed on windows-latest).
-          # VCTargetsPath is an MSBuild-internal property, NOT an env variable.
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere" }
-          $vsInstallDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          if (-not $vsInstallDir) { throw "Visual Studio not found via vswhere.exe" }
-          Write-Host "VS install dir: $vsInstallDir"
-
-          $dest = Join-Path $vsInstallDir "MSBuild\Microsoft\VC\v170\BuildCustomizations"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-          Copy-Item $props.FullName   "$dest\WindowsDriverKit.props"   -Force
-          Copy-Item $targets.FullName "$dest\WindowsDriverKit.targets" -Force
-          Write-Host "WDK integration installed into $dest"
+          $vsDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          $props = Join-Path $vsDir "MSBuild\Microsoft\VC\v170\BuildCustomizations\WindowsDriverKit.props"
+          if (-not (Test-Path $props)) { throw "WindowsDriverKit.props not found: $props" }
+          Write-Host "WDK MSBuild integration OK: $props"
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
