@@ -247,23 +247,21 @@ jobs:
           restore-keys: win-msi-
 
       # ── Windows Driver Kit ─────────────────────────────────────────────────
-      # WDK is pre-installed on windows-2025 as a VS2022 component
-      # (Component.Microsoft.Windows.DriverKit 10.0.26100.16).
-      # No download or VSIX install required — just verify and export version.
-      - name: Verify Windows Driver Kit
+      # WDK is pre-installed on windows-2025 as VS2022 component
+      # Component.Microsoft.Windows.DriverKit 10.0.26100.16.
+      # That component installs the MSBuild integration (props/targets) but
+      # kernel headers (fltKernel.h …) may live at a VS-relative path that
+      # is invisible to a filesystem scan — msbuild resolves them itself.
+      # We only verify that WindowsDriverKit.props is in place; if kernel
+      # headers are missing the "Build minifilter" step will say so exactly.
+      - name: Verify WDK MSBuild integration
         shell: pwsh
         run: |
-          $km = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" `
-            -Recurse -Filter "fltKernel.h" -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $km) { throw "fltKernel.h not found — WDK may not be installed" }
-          Write-Host "fltKernel.h: $km"
-          $wdkVer = ($km -split "\\Include\\")[1].Split("\")[0]
-          "WDK_VERSION=$wdkVer" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "WDK version: $wdkVer"
-
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
           $vsDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vsDir) { throw "Visual Studio with MSBuild not found" }
+          Write-Host "VS install dir: $vsDir"
           $props = Join-Path $vsDir "MSBuild\Microsoft\VC\v170\BuildCustomizations\WindowsDriverKit.props"
           if (-not (Test-Path $props)) { throw "WindowsDriverKit.props not found: $props" }
           Write-Host "WDK MSBuild integration OK: $props"
