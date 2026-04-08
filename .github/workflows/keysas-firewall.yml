@@ -280,23 +280,33 @@ jobs:
         working-directory: keysas-firewall/minifilter
         run: |
           $wdkRoot = "C:\Program Files (x86)\Windows Kits\10\"
-          msbuild KeysasMinifilter.vcxproj /pp:out.xml `
+          msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
             /p:WDKContentRoot="$wdkRoot" `
-            /v:minimal
+            /v:normal
 
       - name: List minifilter build output
         shell: pwsh
         run: |
-          Write-Host "=== minifilter build output ==="
-          Get-ChildItem -Recurse keysas-firewall\minifilter\x64 -ErrorAction SilentlyContinue |
+          Write-Host "=== keysas-firewall\minifilter full tree ==="
+          Get-ChildItem -Recurse keysas-firewall\minifilter -ErrorAction SilentlyContinue |
+            Where-Object { -not $_.PSIsContainer } |
+            Select-Object -ExpandProperty FullName
+          Write-Host "=== Search KeysasMinifilter.sys under D:\a ==="
+          Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty FullName
 
       - name: Generate catalog file
         shell: pwsh
         run: |
-          $buildOut = "keysas-firewall\minifilter\x64\Release"
-          $outDir   = "$buildOut\KeysasMinifilter"
+          # Locate the .sys produced by MSBuild (path varies with WDK install mode)
+          $sys = Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" `
+                   -ErrorAction SilentlyContinue |
+                   Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sys) { throw "KeysasMinifilter.sys not found anywhere under D:\a" }
+          Write-Host "Driver binary: $sys"
+          $buildOut = Split-Path $sys -Parent
+          $outDir   = Join-Path $buildOut "KeysasMinifilter"
           # With the WDK installed as a VS2022 component, inf2cat is absent and
           # MSBuild does not create the package subdirectory automatically.
           # We stage the driver binary and INF manually so that New-FileCatalog
@@ -305,14 +315,14 @@ jobs:
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
             Write-Host "Created package dir (inf2cat absent — manual staging)"
           }
-          $sys = "$buildOut\KeysasMinifilter.sys"
-          if (-not (Test-Path $sys)) { throw "KeysasMinifilter.sys not found in $buildOut" }
           Copy-Item $sys $outDir -Force
           Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
           New-FileCatalog -Path $outDir `
             -CatalogFilePath "$outDir\KeysasMinifilter.cat" `
             -CatalogVersion 2
           Write-Host "Catalog: $outDir\KeysasMinifilter.cat"
+          # Export the package dir path for the sign step
+          "MINIFILTER_PKG_DIR=$outDir" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # Test-sign the driver and catalog with a throwaway self-signed cert.
       # Target machines must have test-signing enabled:
@@ -320,7 +330,8 @@ jobs:
       - name: Test-sign driver and catalog
         shell: pwsh
         run: |
-          $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
+          $outDir = $env:MINIFILTER_PKG_DIR
+          if (-not $outDir) { throw "MINIFILTER_PKG_DIR not set — catalog step failed?" }
           $cert = New-SelfSignedCertificate -Type CodeSigningCert `
             -Subject "CN=Keysas Test Signing" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
@@ -363,9 +374,11 @@ jobs:
         shell: pwsh
         working-directory: keysas-firewall/daemon
         run: |
+          $minifilterDir = $env:MINIFILTER_PKG_DIR
+          if (-not $minifilterDir) { throw "MINIFILTER_PKG_DIR not set — catalog step failed?" }
           cargo wix `
             --define BinDir=target\x86_64-pc-windows-msvc\release `
-            --define MinifilterDir=..\minifilter\x64\Release\KeysasMinifilter `
+            --define MinifilterDir="$minifilterDir" `
             --define TrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release `
             --nocapture
 
