@@ -267,25 +267,35 @@ jobs:
         shell: pwsh
         run: |
           $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
-      
+
           Write-Host "Searching for WindowsDriverKit.props..."
           $props = Get-ChildItem $wdkRoot -Recurse -Filter WindowsDriverKit.props -ErrorAction SilentlyContinue | Select-Object -First 1
           $targets = Get-ChildItem $wdkRoot -Recurse -Filter WindowsDriverKit.targets -ErrorAction SilentlyContinue | Select-Object -First 1
-      
+
           if (-not $props -or -not $targets) {
             throw "WDK props/targets not found"
           }
-      
+
           Write-Host "Found props: $($props.FullName)"
           Write-Host "Found targets: $($targets.FullName)"
-      
-          $dest = "$env:VCTargetsPath\BuildCustomizations"
+
+          # VCTargetsPath is an MSBuild-internal property, NOT a Windows environment
+          # variable — $env:VCTargetsPath is always empty on GitHub runners.
+          # Resolve it via vswhere.exe (pre-installed on windows-latest).
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at $vswhere" }
+          $vsInstallDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vsInstallDir) { throw "Visual Studio installation not found via vswhere.exe" }
+          Write-Host "VS install dir: $vsInstallDir"
+
+          $VCTargetsPath = Join-Path $vsInstallDir "MSBuild\Microsoft\VC\v170\"
+          $dest = Join-Path $VCTargetsPath "BuildCustomizations"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-      
+
           Copy-Item $props.FullName "$dest\WindowsDriverKit.props" -Force
           Copy-Item $targets.FullName "$dest\WindowsDriverKit.targets" -Force
-      
-          Write-Host "WDK integration installed into MSBuild"
+
+          Write-Host "WDK integration installed into $dest"
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
@@ -331,7 +341,23 @@ jobs:
       # ── Daemon ─────────────────────────────────────────────────────────────
       - name: Build daemon (Release MSVC)
         working-directory: keysas-firewall/daemon
-        run: cargo build --release
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # ── Tray-app ───────────────────────────────────────────────────────────
+      - name: Set up Node.js (tray-app frontend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: keysas-firewall/tray-app/package-lock.json
+
+      - name: Build tray-app frontend
+        working-directory: keysas-firewall/tray-app
+        run: npm ci && npm run build
+
+      - name: Build tray-app binary (Release MSVC)
+        working-directory: keysas-firewall/tray-app/src-tauri
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
       - name: Install cargo-wix
@@ -342,8 +368,9 @@ jobs:
         working-directory: keysas-firewall/daemon
         run: |
           cargo wix `
-            --define BinDir=target\release `
+            --define BinDir=target\x86_64-pc-windows-msvc\release `
             --define MinifilterDir=..\minifilter\x64\Release\KeysasMinifilter `
+            --define TrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release `
             --nocapture
 
       - name: Upload MSI artifact

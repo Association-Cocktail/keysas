@@ -2,7 +2,7 @@
 <!--
   Keysas Firewall — WiX v3 installer source
   Build (Linux/Docker via wixl):
-    wixl -D Version=x.y.z -D BinDir=... -D MinifilterDir=... -a x64 wix/main.wxs
+    wixl -D Version=x.y.z -D BinDir=... -D MinifilterDir=... -D TrayAppBinDir=... -a x64 wix/main.wxs
 
   $(var.MinifilterDir) must contain:
     KeysasMinifilter.sys   — compiled with WDK on Windows
@@ -50,6 +50,30 @@
       <!-- ── Daemon binary: C:\Program Files\Keysas Firewall\ ── -->
       <Directory Id='ProgramFiles64Folder'>
         <Directory Id='APPLICATIONFOLDER' Name='Keysas Firewall'>
+
+          <!--
+            Tray application: launched at user login via HKCU Run key.
+            Must be installed before starting the daemon so the mailslot
+            server (SERVICE_PIPE) is available.
+          -->
+          <Component Id='comp_trayapp' Guid='C8D5E392-F4A1-4B7E-A263-8F2B9D0E4C15' Win64='yes'>
+            <File
+              Id='exe_trayapp'
+              Name='keysas-usbfilter-trayapp.exe'
+              DiskId='1'
+              Source='$(var.TrayAppBinDir)/keysas-usbfilter-trayapp.exe'
+              KeyPath='yes'/>
+            <!--
+              Register the tray-app to start automatically when any user logs in.
+              HKCU\...\Run is per-user; change to HKLM for all-users startup.
+            -->
+            <RegistryValue
+              Root='HKCU'
+              Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+              Name='KeysasFirewallTray'
+              Type='string'
+              Value='"[APPLICATIONFOLDER]keysas-usbfilter-trayapp.exe"'/>
+          </Component>
 
           <!--
             Daemon executable + Windows Service registration.
@@ -206,6 +230,7 @@
     <!-- ──────────────────────────────────────────────────── features -->
 
     <Feature Id='Complete' Title='Keysas USB Firewall' Level='1'>
+      <ComponentRef Id='comp_trayapp'/>
       <ComponentRef Id='comp_binary'/>
       <ComponentRef Id='comp_registry'/>
       <ComponentRef Id='comp_certdir'/>
