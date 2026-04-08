@@ -262,9 +262,17 @@ jobs:
           $vsDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
           if (-not $vsDir) { throw "Visual Studio with MSBuild not found" }
           Write-Host "VS install dir: $vsDir"
+          # WindowsDriverKit.props is placed here by the old-model standalone WDK
+          # installer.  With the modern VS2022 WDK component (Component.Microsoft.
+          # Windows.DriverKit) the toolset WindowsKernelModeDriver10.0 is used
+          # directly and this file may be absent — the import in the vcxproj is
+          # conditional, so this is not a build error.
           $props = Join-Path $vsDir "MSBuild\Microsoft\VC\v170\BuildCustomizations\WindowsDriverKit.props"
-          if (-not (Test-Path $props)) { throw "WindowsDriverKit.props not found: $props" }
-          Write-Host "WDK MSBuild integration OK: $props"
+          if (Test-Path $props) {
+            Write-Host "WDK MSBuild integration (classic): $props"
+          } else {
+            Write-Host "WindowsDriverKit.props absent — WDK component uses WindowsKernelModeDriver10.0 toolset (OK)"
+          }
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       - name: Build minifilter (Release x64)
