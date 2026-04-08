@@ -299,8 +299,25 @@ jobs:
             -CatalogVersion 2
           Write-Host "Catalog: $outDir\KeysasMinifilter.cat"
 
-      # Driver signing (.sys + .cat) is performed outside the pipeline
-      # using the local code-signing infrastructure.
+      # Test-sign the driver and catalog with a throwaway self-signed cert.
+      # Target machines must have test-signing enabled:
+      #   bcdedit /set testsigning on  (then reboot)
+      - name: Test-sign driver and catalog
+        shell: pwsh
+        run: |
+          $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject "CN=Keysas Test Signing" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -HashAlgorithm SHA256
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint `
+            "$outDir\KeysasMinifilter.sys" "$outDir\KeysasMinifilter.cat"
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
 
       # ── Daemon ─────────────────────────────────────────────────────────────
       - name: Build daemon (Release MSVC)
