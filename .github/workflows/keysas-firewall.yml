@@ -288,15 +288,34 @@ jobs:
       - name: Generate catalog file (inf2cat)
         shell: pwsh
         run: |
-          $inf2cat = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
-            -Recurse -Filter inf2cat.exe -ErrorAction SilentlyContinue |
-            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
-          if (-not $inf2cat) { throw "inf2cat.exe not found" }
+          # With the VS2022 WDK component, WDK tools land in the NuGet package
+          # cache after msbuild restores packages, not in the standard Kits\bin.
+          # Search all known locations in priority order.
+          function Find-Tool([string]$name) {
+            $roots = @(
+              "C:\Program Files (x86)\Windows Kits\10\bin",
+              "$env:USERPROFILE\.nuget\packages",
+              "$env:LOCALAPPDATA\Microsoft\VisualStudio"
+            )
+            foreach ($root in $roots) {
+              if (-not (Test-Path $root)) { continue }
+              $hit = Get-ChildItem $root -Recurse -Filter $name `
+                -ErrorAction SilentlyContinue |
+                Sort-Object FullName | Select-Object -Last 1
+              if ($hit) { return $hit.FullName }
+            }
+            return $null
+          }
+
+          $inf2cat = Find-Tool "inf2cat.exe"
+          if (-not $inf2cat) { throw "inf2cat.exe not found in any known location" }
+          Write-Host "inf2cat: $inf2cat"
 
           $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
           Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
-          & $inf2cat /driver:"$outDir" /os:10_X64,Server10_X64
-          if ($LASTEXITCODE -ne 0) { throw "inf2cat failed" }
+          # OS targets: include Windows 11 and Server 2025 (runner OS)
+          & $inf2cat /driver:"$outDir" /os:10_X64,11_X64,Server10_X64,Server2022_X64,Server2025_X64
+          if ($LASTEXITCODE -ne 0) { throw "inf2cat failed (exit $LASTEXITCODE)" }
 
       - name: Self-sign driver and catalog (test signing)
         shell: pwsh
@@ -305,15 +324,23 @@ jobs:
           $cert    = New-SelfSignedCertificate -Type CodeSigningCert `
                        -Subject "CN=Keysas Test Signing" `
                        -CertStoreLocation "Cert:\CurrentUser\My" -HashAlgorithm SHA256
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
-                        -Recurse -Filter signtool.exe |
-                        Where-Object { $_.FullName -match "x64" } |
-                        Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          # signtool.exe: same broad search as inf2cat
+          $signtool = @(
+            "C:\Program Files (x86)\Windows Kits\10\bin",
+            "$env:USERPROFILE\.nuget\packages"
+          ) | ForEach-Object {
+            if (Test-Path $_) {
+              Get-ChildItem $_ -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "x64" } |
+                Sort-Object FullName | Select-Object -Last 1
+            }
+          } | Where-Object { $_ } | Select-Object -First 1 -ExpandProperty FullName
           if (-not $signtool) { throw "signtool.exe not found" }
+          Write-Host "signtool: $signtool"
           & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint `
             /t http://timestamp.digicert.com `
             "$outDir\KeysasMinifilter.sys" "$outDir\KeysasMinifilter.cat"
-          if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
 
       # ── Daemon ─────────────────────────────────────────────────────────────
       - name: Build daemon (Release MSVC)
