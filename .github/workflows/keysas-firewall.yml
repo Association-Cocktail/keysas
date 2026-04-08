@@ -285,15 +285,30 @@ jobs:
             /p:WDKContentRoot="$wdkRoot" `
             /v:minimal
 
+      - name: List minifilter build output
+        shell: pwsh
+        run: |
+          Write-Host "=== minifilter build output ==="
+          Get-ChildItem -Recurse keysas-firewall\minifilter\x64 -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
+
       - name: Generate catalog file
         shell: pwsh
         run: |
-          $outDir = "keysas-firewall\minifilter\x64\Release\KeysasMinifilter"
+          $buildOut = "keysas-firewall\minifilter\x64\Release"
+          $outDir   = "$buildOut\KeysasMinifilter"
+          # With the WDK installed as a VS2022 component, inf2cat is absent and
+          # MSBuild does not create the package subdirectory automatically.
+          # We stage the driver binary and INF manually so that New-FileCatalog
+          # can hash every file in the directory.
+          if (-not (Test-Path $outDir)) {
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            Write-Host "Created package dir (inf2cat absent — manual staging)"
+          }
+          $sys = "$buildOut\KeysasMinifilter.sys"
+          if (-not (Test-Path $sys)) { throw "KeysasMinifilter.sys not found in $buildOut" }
+          Copy-Item $sys $outDir -Force
           Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
-          # inf2cat.exe requires the standalone WDK installer and is absent when
-          # the WDK is installed as a VS2022 component.  New-FileCatalog is a
-          # PowerShell Security-module built-in (PS 5.1+) that produces a
-          # standard Windows catalog file with no external tools required.
           New-FileCatalog -Path $outDir `
             -CatalogFilePath "$outDir\KeysasMinifilter.cat" `
             -CatalogVersion 2
