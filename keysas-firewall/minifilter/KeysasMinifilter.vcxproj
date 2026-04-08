@@ -83,6 +83,20 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
   </PropertyGroup>
+  <!--
+    WDKKmInclude / WDKSharedInclude / DDK_LIB_PATH are injected by the CI
+    workflow when the WDK is installed as a VS2022 component (not standalone):
+    the WindowsKernelModeDriver10.0 toolset is present but does not wire up
+    include/lib paths automatically in that install mode.
+    Passing these as /p: on the msbuild command line overrides these properties.
+    The Condition guards local developer builds where the toolset handles paths.
+  -->
+  <ItemDefinitionGroup Condition="'$(WDKKmInclude)' != ''">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(WDKKmInclude);$(WDKSharedInclude);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>

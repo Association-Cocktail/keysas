@@ -279,11 +279,36 @@ jobs:
         shell: pwsh
         working-directory: keysas-firewall/minifilter
         run: |
-          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10\"
+          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+
+          # Locate fltKernel.h to find the km include directory.
+          # The WindowsKernelModeDriver10.0 toolset does not wire up WDK include
+          # paths when the WDK is installed as a VS2022 component; we pass them
+          # explicitly via WDKKmInclude / WDKSharedInclude.
+          $fltKernel = Get-ChildItem "$wdkRoot\Include" -Recurse -Filter "fltKernel.h" `
+                         -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $fltKernel) { throw "fltKernel.h not found under $wdkRoot\Include" }
+          $kmInclude     = $fltKernel.DirectoryName
+          $sharedInclude = Join-Path (Split-Path $kmInclude -Parent) "shared"
+          Write-Host "WDK km include:     $kmInclude"
+          Write-Host "WDK shared include: $sharedInclude"
+
+          # Locate fltMgr.lib to derive the km lib path (DDK_LIB_PATH).
+          $fltMgr = Get-ChildItem "$wdkRoot\Lib" -Recurse -Filter "fltMgr.lib" `
+                      -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match "\\km\\x64\\" } |
+                      Select-Object -First 1
+          if (-not $fltMgr) { throw "fltMgr.lib (km\x64) not found under $wdkRoot\Lib" }
+          $kmLib = $fltMgr.DirectoryName + "\"
+          Write-Host "WDK km lib:         $kmLib"
+
           msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
-            /p:WDKContentRoot="$wdkRoot" `
-            /v:normal
+            /p:WDKContentRoot="$wdkRoot\" `
+            /p:WDKKmInclude="$kmInclude" `
+            /p:WDKSharedInclude="$sharedInclude" `
+            /p:DDK_LIB_PATH="$kmLib" `
+            /v:minimal
 
       - name: List minifilter build output
         shell: pwsh
