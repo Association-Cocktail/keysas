@@ -347,17 +347,50 @@ jobs:
               Write-Host "Copied WindowsDriverKit.props → $dest"
             }
           } else {
-            Write-Host "WARNING: WindowsDriverKit.targets not found — Link step will be skipped by MSBuild"
+            Write-Host "WindowsDriverKit.targets not found — will set WDKContentRoot to NuGet pkg"
+          }
+
+          # The toolset conditions the Link step on WDKContentRoot pointing to a
+          # valid WDK tree (one that has Include\<ver>\km\).  Export the NuGet
+          # package's 'c\' subdirectory as WDKContentRoot so the toolset finds
+          # the headers at the expected relative path.
+          $wdkContentRoot = "$pkgDir\Microsoft.Windows.WDK.x64\c\"
+          Write-Host "WDK content root:   $wdkContentRoot"
+          "WDK_CONTENT_ROOT=$wdkContentRoot" | Out-File $env:GITHUB_ENV -Append
+
+          # Extract the version number from the include path (e.g. 10.0.26100.0)
+          $wdkVersion = (Split-Path $kmInclude -Parent | Split-Path -Leaf)
+          Write-Host "WDK version:        $wdkVersion"
+          "WDK_VERSION=$wdkVersion" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Dump WDK toolset targets (diagnostic)
+        shell: pwsh
+        run: |
+          # Display the WindowsKernelModeDriver10.0 Toolset.targets so we can
+          # see exactly which conditions gate the Link target.
+          $tsTargets = "$env:VCTargetsPath\Platforms\x64\PlatformToolsets\WindowsKernelModeDriver10.0\Toolset.targets"
+          if (Test-Path $tsTargets) {
+            Write-Host "=== $tsTargets ==="
+            Get-Content $tsTargets
+          } else {
+            Write-Host "Toolset.targets not found at $tsTargets"
+            # Try to find it anywhere under VCTargetsPath
+            Get-ChildItem $env:VCTargetsPath -Recurse -Filter "Toolset.targets" -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match "WindowsKernelModeDriver" } |
+              ForEach-Object {
+                Write-Host "=== $($_.FullName) ==="
+                Get-Content $_.FullName
+              }
           }
 
       - name: Build minifilter (Release x64)
         shell: pwsh
         working-directory: keysas-firewall/minifilter
         run: |
-          $wdkRoot = "C:\Program Files (x86)\Windows Kits\10"
           msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
-            /p:WDKContentRoot="$wdkRoot\" `
+            /p:WDKContentRoot="$env:WDK_CONTENT_ROOT" `
+            /p:WindowsTargetPlatformVersion="$env:WDK_VERSION" `
             /p:WDKKmInclude="$env:WDK_KM_INCLUDE" `
             /p:WDKSharedInclude="$env:WDK_SHARED_INCLUDE" `
             /p:DDK_LIB_PATH="$env:DDK_LIB_PATH" `
