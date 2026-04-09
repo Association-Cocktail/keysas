@@ -387,9 +387,17 @@ jobs:
         shell: pwsh
         working-directory: keysas-firewall/minifilter
         run: |
-          # /v:detailed (not diagnostic) shows property evaluation and which
-          # targets run — critical to confirm that the Link step executes and
-          # produces a .sys rather than silently stopping after compile.
+          # Pre-stage the INF into x64\Release\ before MSBuild runs.
+          # StampInf (overridden in the vcxproj) copies it too, but doing it
+          # here as well guarantees DriverPackageTarget finds it regardless of
+          # how $(OutDir) is resolved inside the override target.
+          $outDir = "x64\Release"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item "KeysasMinifilter.inf" "$outDir\KeysasMinifilter.inf" -Force
+          Write-Host "Pre-staged INF → $outDir\KeysasMinifilter.inf"
+
+          # /v:detailed shows which targets ran and their property values —
+          # critical to confirm Link executes and produces a .sys.
           msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
             /p:WDKContentRoot="$env:WDK_CONTENT_ROOT" `

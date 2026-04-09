@@ -181,9 +181,14 @@
          deliver the INF to $(OutDir) or DriverPackageTarget fails with MSB3030.
          Copy the source INF as-is; version fields will be unset (acceptable for
          CI test-signed builds). -->
-    <Message Text="StampInf skipped — copying source INF to $(OutDir) (stampinf.exe absent)" Importance="High" />
-    <MakeDir Directories="$(OutDir)" />
-    <Copy SourceFiles="@(Inf)" DestinationFolder="$(OutDir)" />
+    <Message Text="StampInf — KitsBinPath='$(KitsBinPath)' OutDir='$(OutDir)' ProjectDir='$(MSBuildProjectDirectory)'" Importance="High" />
+    <MakeDir Directories="$(OutDir)" Condition="'$(OutDir)' != '' and !Exists('$(OutDir)')" />
+    <!-- Use explicit absolute paths to avoid any ambiguity in relative-path
+         resolution between the target's CWD and the project directory. -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\KeysasMinifilter.inf"
+          DestinationFiles="$(MSBuildProjectDirectory)\$(OutDir)KeysasMinifilter.inf"
+          SkipUnchangedFiles="false" />
+    <Message Text="StampInf — copied INF → $(MSBuildProjectDirectory)\$(OutDir)KeysasMinifilter.inf" Importance="High" />
   </Target>
 
   <Target Name="InfVerif"
