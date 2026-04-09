@@ -262,7 +262,7 @@ Return value
 
 		// Enumerate all filter instances to find the one matching this volume
 		ULONG instanceCount = 0;
-		NTSTATUS status = FltEnumerateInstances(KeysasData.Filter, NULL, NULL, NULL, 0, &instanceCount);
+		NTSTATUS status = FltEnumerateInstances(NULL, KeysasData.Filter, NULL, 0, &instanceCount);
 
 		if (instanceCount == 0) {
 			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasPortNotify: No instances attached\n"));
@@ -278,7 +278,7 @@ Return value
 			return STATUS_INSUFFICIENT_RESOURCES;
 		}
 
-		status = FltEnumerateInstances(KeysasData.Filter, NULL, NULL, instances, instanceCount, &instanceCount);
+		status = FltEnumerateInstances(NULL, KeysasData.Filter, instances, instanceCount, &instanceCount);
 		if (!NT_SUCCESS(status)) {
 			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
 				"Keysas!KeysasPortNotify: FltEnumerateInstances failed 0x%08x\n", status));
