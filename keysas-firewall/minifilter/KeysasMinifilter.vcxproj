@@ -112,7 +112,13 @@
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
     <Link>
-      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- ntoskrnl.lib / hal.lib are normally injected by the toolset's default
+           AdditionalDependencies.  List them explicitly here so that NuGet-only
+           CI builds (where the toolset default lib path may not be wired up)
+           still resolve Ex*/Ke*/Io*/Rtl* and HAL symbols.
+           When DDK_LIB_PATH is empty (local full-WDK build) these expand to bare
+           lib names which the toolset resolves via its own lib search path. -->
+      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -120,7 +126,7 @@
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
     <Link>
-      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
@@ -175,6 +181,13 @@
   <Target Name="InfVerif"
           Condition="!Exists('$(KitsBinPath)x86\infverif.exe')">
     <Message Text="InfVerif skipped — infverif.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
+  <!-- inf2cat.exe is absent in NuGet-only builds; the catalog is generated
+       manually in the CI "Generate catalog file" step via New-FileCatalog. -->
+  <Target Name="Inf2Cat"
+          Condition="!Exists('$(KitsBinPath)x86\inf2cat.exe')">
+    <Message Text="Inf2Cat skipped — inf2cat.exe absent (WDK NuGet-only build)" Importance="High" />
   </Target>
 
 </Project>

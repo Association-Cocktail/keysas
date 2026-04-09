@@ -387,6 +387,9 @@ jobs:
         shell: pwsh
         working-directory: keysas-firewall/minifilter
         run: |
+          # /v:detailed (not diagnostic) shows property evaluation and which
+          # targets run — critical to confirm that the Link step executes and
+          # produces a .sys rather than silently stopping after compile.
           msbuild KeysasMinifilter.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
             /p:WDKContentRoot="$env:WDK_CONTENT_ROOT" `
@@ -394,7 +397,7 @@ jobs:
             /p:WDKKmInclude="$env:WDK_KM_INCLUDE" `
             /p:WDKSharedInclude="$env:WDK_SHARED_INCLUDE" `
             /p:DDK_LIB_PATH="$env:DDK_LIB_PATH" `
-            /v:normal
+            /v:detailed
 
       - name: List minifilter build output
         shell: pwsh
