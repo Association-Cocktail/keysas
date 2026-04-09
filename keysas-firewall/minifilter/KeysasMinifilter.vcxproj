@@ -175,7 +175,15 @@
   -->
   <Target Name="StampInf"
           Condition="!Exists('$(KitsBinPath)x86\stampinf.exe')">
-    <Message Text="StampInf skipped — stampinf.exe absent (WDK NuGet-only build)" Importance="High" />
+    <!-- stampinf.exe normally stamps version/date into the INF and copies it to
+         $(OutDir).  DriverPackageTarget then packages the copy from $(OutDir).
+         Without stampinf we cannot inject version fields, but we must still
+         deliver the INF to $(OutDir) or DriverPackageTarget fails with MSB3030.
+         Copy the source INF as-is; version fields will be unset (acceptable for
+         CI test-signed builds). -->
+    <Message Text="StampInf skipped — copying source INF to $(OutDir) (stampinf.exe absent)" Importance="High" />
+    <MakeDir Directories="$(OutDir)" />
+    <Copy SourceFiles="@(Inf)" DestinationFolder="$(OutDir)" />
   </Target>
 
   <Target Name="InfVerif"

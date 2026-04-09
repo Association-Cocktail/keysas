@@ -413,22 +413,27 @@ jobs:
       - name: Generate catalog file
         shell: pwsh
         run: |
-          # Locate the .sys produced by MSBuild (path varies with WDK install mode)
+          # DriverPackageTarget creates x64\Release\KeysasMinifilter\ (package dir)
+          # and copies the .sys there. x64\Release\KeysasMinifilter.sys (output dir)
+          # also exists. We want the OUTPUT dir copy so that $buildOut is the flat
+          # x64\Release dir and $outDir resolves to the package dir correctly.
+          # Exclude any path whose leaf directory already IS "KeysasMinifilter"
+          # (that is the packaged copy) to avoid a double-nested path.
           $sys = Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" `
                    -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DirectoryName -notmatch '\\KeysasMinifilter$' } |
                    Select-Object -First 1 -ExpandProperty FullName
           if (-not $sys) { throw "KeysasMinifilter.sys not found anywhere under D:\a" }
           Write-Host "Driver binary: $sys"
           $buildOut = Split-Path $sys -Parent
           $outDir   = Join-Path $buildOut "KeysasMinifilter"
-          # With the WDK installed as a VS2022 component, inf2cat is absent and
-          # MSBuild does not create the package subdirectory automatically.
-          # We stage the driver binary and INF manually so that New-FileCatalog
-          # can hash every file in the directory.
+          # DriverPackageTarget may have already created this dir and copied
+          # the .sys + .inf into it; if not, stage them manually.
           if (-not (Test-Path $outDir)) {
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-            Write-Host "Created package dir (inf2cat absent — manual staging)"
+            Write-Host "Created package dir (manual staging)"
           }
+          # Always (re)copy to ensure catalog hashes match what is in the dir.
           Copy-Item $sys $outDir -Force
           Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
           New-FileCatalog -Path $outDir `
