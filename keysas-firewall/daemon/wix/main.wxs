@@ -185,7 +185,7 @@
 
             <ServiceInstall
               Id='svc_minifilter_install'
-              Type='systemDriver'
+              Type='filesystemDriver'
               Name='KeysasMinifilter'
               DisplayName='Keysas Mini-Filter Driver'
               Description='Keysas Mini-Filter Driver'
@@ -239,8 +239,6 @@
     </Feature>
 
     <!-- ──────────────────────────────────────────────────── UI -->
-    <Property Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]'/>
-
     <!--
       Silent/unattended install: msiexec /i keysas-firewall.msi /quiet
       To add an interactive UI on a Windows build host:
