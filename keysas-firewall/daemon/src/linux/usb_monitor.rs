@@ -370,13 +370,15 @@ impl UsbMonitor for LinuxUsbMonitor {
                 let is_partition =
                     devtype.as_deref() == Some(OsStr::new("partition"));
 
-                // ── Remove event: clean up sentinel if present ───────────────
+                // ── Remove event: clean up sentinel and notify controller ────
                 if action == Some(OsStr::new("remove")) && is_partition {
                     let dev_name = event
                         .device()
                         .sysname()
                         .to_string_lossy()
                         .into_owned();
+
+                    // Remove the certification sentinel (if present)
                     let sentinel = format!("/run/keysas/certified/{}", dev_name);
                     if std::path::Path::new(&sentinel).exists() {
                         let _ = std::fs::remove_file(&sentinel);
@@ -385,6 +387,16 @@ impl UsbMonitor for LinuxUsbMonitor {
                             dev_name
                         );
                     }
+
+                    // Notify the controller so it can remove the fanotify mark
+                    // and clean up its tracking tables.
+                    let device_id = event
+                        .device()
+                        .devnode()
+                        .map(|p| p.as_os_str().to_os_string())
+                        .unwrap_or_else(|| OsString::from(format!("/dev/{}", dev_name)));
+                    ctrl_hdl.lock().unwrap().remove_usb(&device_id);
+
                     continue;
                 }
 

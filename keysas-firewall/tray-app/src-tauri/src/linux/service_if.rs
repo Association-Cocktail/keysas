@@ -82,7 +82,10 @@ impl LinuxServiceInterface {
 
 impl ServiceInterface for LinuxServiceInterface {
     /// Spawn a background thread that polls `get_usb_list` every 5 seconds
-    /// and feeds each update into the `AppController`.
+    /// and reconciles the tray-app store with the daemon's current state.
+    ///
+    /// `set_usb_list` replaces the store wholesale so that devices unplugged
+    /// since the last poll are automatically removed.
     fn start_server(&self, ctrl: &Arc<AppController>) -> Result<(), anyhow::Error> {
         let ctrl_hdl = ctrl.clone();
 
@@ -91,26 +94,28 @@ impl ServiceInterface for LinuxServiceInterface {
                 Ok(conn) => match Firewall1ProxyBlocking::new(&conn) {
                     Ok(proxy) => match proxy.get_usb_list() {
                         Ok(json) => {
-                            if let Ok(entries) =
-                                serde_json::from_str::<Vec<(String, String, String, u8)>>(&json)
-                            {
-                                for (device, path, name, auth_u8) in entries {
-                                    let authorization = match auth_u8 {
-                                        0 => UsbAuthorization::Pending,
-                                        1 => UsbAuthorization::Block,
-                                        2 => UsbAuthorization::AllowRead,
-                                        3 => UsbAuthorization::AllowRW,
-                                        _ => UsbAuthorization::AllowAll,
-                                    };
-                                    ctrl_hdl.notify_usb_change(&UsbUpdateMessage {
-                                        device,
-                                        path,
-                                        name,
-                                        authorization,
-                                    });
+                            match serde_json::from_str::<Vec<(String, String, String, u8)>>(&json) {
+                                Ok(entries) => {
+                                    let updates: Vec<UsbUpdateMessage> = entries
+                                        .into_iter()
+                                        .map(|(device, path, name, auth_u8)| UsbUpdateMessage {
+                                            device,
+                                            path,
+                                            name,
+                                            authorization: match auth_u8 {
+                                                0 => UsbAuthorization::Pending,
+                                                1 => UsbAuthorization::Block,
+                                                2 => UsbAuthorization::AllowRead,
+                                                3 => UsbAuthorization::AllowRW,
+                                                _ => UsbAuthorization::AllowAll,
+                                            },
+                                        })
+                                        .collect();
+                                    ctrl_hdl.set_usb_list(updates);
                                 }
-                            } else {
-                                log::warn!("start_server: failed to parse USB list JSON");
+                                Err(e) => {
+                                    log::warn!("start_server: failed to parse USB list JSON: {e}")
+                                }
                             }
                         }
                         Err(e) => log::warn!("get_usb_list failed: {e}"),

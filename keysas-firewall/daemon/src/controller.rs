@@ -417,7 +417,20 @@ impl ServiceController {
         let dev_policy = self.unmounted_usb.get_mut(&device.device_id).unwrap();
         dev_policy.auth = auth;
 
-        // TODO - Update HMI
+        // Notify GUI immediately for blocked devices.
+        // Authorised devices are notified in update_usb() once the mount point is known.
+        if matches!(auth, UsbAuthorization::Block) {
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: device.device_id.to_string_lossy().into_owned(),
+                path: String::default(),
+                name: device.get_name(),
+                authorization: auth,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("authorize_usb: GUI notification failed: {e}");
+            }
+        }
 
         // Return authorization decision as boolean
         match auth {
@@ -454,7 +467,50 @@ impl ServiceController {
             }
         }
 
+        // Notify GUI that the device is now mounted and accessible.
+        if let Some(p) = self.mounted_usb.get(&device.device_id) {
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: device.device_id.to_string_lossy().into_owned(),
+                path: p.device.mnt_point.as_ref()
+                    .map(|m| m.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                name: p.device.get_name(),
+                authorization: p.auth,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("update_usb: GUI notification failed: {e}");
+            }
+        }
+
         Ok(())
+    }
+
+    /// Remove a USB device from the controller tracking tables and clean up
+    /// associated resources (fanotify mark).
+    ///
+    /// Called by the USB monitor when a `remove` udev event is received.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Device node path (e.g. `/dev/sdb1`)
+    pub fn remove_usb(&mut self, device_id: &OsString) {
+        if let Some(policy) = self.mounted_usb.remove(device_id) {
+            // Remove the fanotify mount mark so the now-unmounted filesystem
+            // is no longer intercepted.
+            let block_policy = UsbDevicePolicy {
+                device: policy.device.clone(),
+                auth: UsbAuthorization::Block,
+            };
+            if let Err(e) = self.file_filter.update_usb_auth(&block_policy) {
+                warn!("remove_usb: failed to remove fanotify mark for {:?}: {e}", device_id);
+            }
+            info!("USB device {:?} removed (was mounted at {:?})",
+                device_id,
+                policy.device.mnt_point);
+        } else if self.unmounted_usb.remove(device_id).is_some() {
+            info!("USB device {:?} removed (was blocked)", device_id);
+        }
     }
 
     /// Decide to authorize a file
