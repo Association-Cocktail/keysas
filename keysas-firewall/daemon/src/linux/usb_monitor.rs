@@ -25,7 +25,7 @@ use anyhow::anyhow;
 use libc::{c_int, c_short, c_ulong, c_void};
 use std::{
     ffi::{OsStr, OsString},
-    fs::{read_to_string, File},
+    fs::File,
     io::{self, Read, Seek, SeekFrom},
     os::fd::AsRawFd,
     ptr,
@@ -34,7 +34,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use udev::{Event, MonitorBuilder};
 
@@ -81,49 +81,43 @@ impl LinuxUsbMonitor {
     }
 }
 
-/// Get the mount point of a device node by scanning /proc/mounts.
-///
-/// # Argument
-///
-/// `devnode` - Device node path, e.g "/dev/sda1"
-fn get_mount_point(devnode: &OsStr) -> Result<OsString, anyhow::Error> {
-    let mnt_points = read_to_string("/proc/mounts")?;
-
-    for line in mnt_points.lines() {
-        let mut tokens = line.split_ascii_whitespace();
-        if let Some(node) = tokens.next() {
-            if node.eq(devnode) {
-                let mnt = tokens
-                    .next()
-                    .ok_or(anyhow!("failed to parse mounts file"))?;
-                return Ok(OsString::from(mnt));
+/// Return the username of the first non-root logged-in user found in
+/// `/run/user/*/bus`, or `None` if no session is active (headless system).
+fn get_logged_in_username() -> Option<String> {
+    let entries = std::fs::read_dir("/run/user").ok()?;
+    for entry in entries.flatten() {
+        let uid_str = entry.file_name().to_string_lossy().to_string();
+        if uid_str == "0" {
+            continue; // skip root
+        }
+        if !entry.path().join("bus").exists() {
+            continue; // no active session bus
+        }
+        let out = std::process::Command::new("id")
+            .args(["-un", &uid_str])
+            .output()
+            .ok()?;
+        if out.status.success() {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
             }
         }
     }
-
-    Err(anyhow!("Mount point not found"))
+    None
 }
 
-/// Poll /proc/mounts until the device is mounted or the timeout expires.
+/// Parse the mount point from `udisksctl mount` stdout.
 ///
-/// # Arguments
-///
-/// `devnode`      - Device node path (e.g. "/dev/sda1")
-/// `timeout_secs` - Maximum number of seconds to wait
-///
-/// # Return value
-///
-/// The mount point as `OsString` if found within the timeout, `None` otherwise.
-fn wait_for_mount(devnode: &OsStr, timeout_secs: u64) -> Option<OsString> {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if let Ok(mnt) = get_mount_point(devnode) {
-            return Some(mnt);
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        thread::sleep(Duration::from_millis(500));
+/// Expected line format: `Mounted /dev/sdX at /path/to/mountpoint.\n`
+fn parse_udisksctl_output(stdout: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(stdout).ok()?;
+    let idx = s.find(" at ")?;
+    let rest = s[idx + 4..].trim().trim_end_matches('.');
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
     }
 }
 
@@ -208,6 +202,108 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
     Ok((usb_device, signature))
 }
 
+/// Mount a certified USB partition via udisks2 so it appears at the standard
+/// desktop path (`/media/<user>/<label>` or `/run/media/<user>/<label>`) with
+/// file-manager visibility and graphical-eject support.
+///
+/// Steps:
+///  1. Write sentinel `/run/keysas/certified/<devname>`.
+///  2. Fire `udevadm trigger --action=change` so the udev rule can flip
+///     `UDISKS_IGNORE` to 0 for udisks2.
+///  3. Wait for udevd to flush its queue (`udevadm settle`).
+///  4. Call `udisksctl mount` as the logged-in user via `runuser`.
+///
+/// Returns the mount point string on success.
+fn mount_certified_via_udisks(
+    devnode: &OsStr,
+    dev_name: &str,
+) -> Result<String, anyhow::Error> {
+    // ── Phase 1: write sentinel and signal udev ──────────────────────────────
+    let certified_dir = "/run/keysas/certified";
+    let sentinel = format!("{}/{}", certified_dir, dev_name);
+
+    std::fs::create_dir_all(certified_dir)
+        .map_err(|e| anyhow!("Cannot create {}: {e}", certified_dir))?;
+    std::fs::write(&sentinel, b"")
+        .map_err(|e| anyhow!("Cannot write sentinel {}: {e}", sentinel))?;
+
+    let sysfs_path = format!("/sys/class/block/{}", dev_name);
+    let _ = std::process::Command::new("udevadm")
+        .args(["trigger", "--action=change", &sysfs_path])
+        .status();
+    // Flush the udevd queue so udisks2 processes the change before we mount
+    let _ = std::process::Command::new("udevadm")
+        .args(["settle", "--timeout=3"])
+        .status();
+
+    // ── Phase 2: mount as logged-in user ─────────────────────────────────────
+    let username = get_logged_in_username()
+        .ok_or_else(|| anyhow!("No active user session found"))?;
+
+    log::info!(
+        "Mounting certified USB {:?} via udisks2 as user '{}'",
+        devnode, username
+    );
+
+    let out = std::process::Command::new("runuser")
+        .args([
+            "-u",
+            &username,
+            "--",
+            "udisksctl",
+            "mount",
+            "-b",
+            &devnode.to_string_lossy(),
+            "--no-user-interaction",
+            "--options",
+            "noexec,nosuid,nodev",
+        ])
+        .output()
+        .map_err(|e| anyhow!("runuser/udisksctl exec failed: {e}"))?;
+
+    if !out.status.success() {
+        return Err(anyhow!(
+            "udisksctl mount failed (exit {:?}): {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+
+    parse_udisksctl_output(&out.stdout)
+        .ok_or_else(|| anyhow!("Cannot parse mount point from udisksctl output"))
+}
+
+/// Fallback: mount directly at `/run/keysas/media/<devname>` for headless
+/// systems where no user session is available.
+fn mount_certified_headless(
+    devnode: &OsStr,
+    dev_name: &str,
+) -> Result<String, anyhow::Error> {
+    let mnt_point = format!("/run/keysas/media/{}", dev_name);
+    std::fs::create_dir_all(&mnt_point)
+        .map_err(|e| anyhow!("Cannot create {}: {e}", mnt_point))?;
+
+    let status = std::process::Command::new("mount")
+        .args([
+            "-o",
+            "noexec,nosuid,nodev",
+            &devnode.to_string_lossy(),
+            &mnt_point,
+        ])
+        .status()
+        .map_err(|e| anyhow!("mount exec failed: {e}"))?;
+
+    if !status.success() {
+        return Err(anyhow!(
+            "mount failed for {:?} (exit {:?})",
+            devnode,
+            status.code()
+        ));
+    }
+
+    Ok(mnt_point)
+}
+
 impl UsbMonitor for LinuxUsbMonitor {
     fn start(&self, ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error> {
         let ctrl_hdl = ctrl.clone();
@@ -265,112 +361,145 @@ impl UsbMonitor for LinuxUsbMonitor {
                     }
                 };
 
-                // Only process partition add events
-                if event.action() == Some(OsStr::new("add"))
-                    && event.device().property_value(OsStr::new("DEVTYPE"))
-                        == Some(OsStr::new("partition"))
+                let action = event.action();
+                let devtype = event
+                    .device()
+                    .property_value(OsStr::new("DEVTYPE"))
+                    .map(|v| v.to_os_string());
+
+                let is_partition =
+                    devtype.as_deref() == Some(OsStr::new("partition"));
+
+                // ── Remove event: clean up sentinel if present ───────────────
+                if action == Some(OsStr::new("remove")) && is_partition {
+                    let dev_name = event
+                        .device()
+                        .sysname()
+                        .to_string_lossy()
+                        .into_owned();
+                    let sentinel = format!("/run/keysas/certified/{}", dev_name);
+                    if std::path::Path::new(&sentinel).exists() {
+                        let _ = std::fs::remove_file(&sentinel);
+                        log::info!(
+                            "Removed certification sentinel for {}",
+                            dev_name
+                        );
+                    }
+                    continue;
+                }
+
+                // ── Add event: process new USB partition ─────────────────────
+                if action != Some(OsStr::new("add")) || !is_partition {
+                    continue;
+                }
+
+                let (mut device, signature) = match extract_usb_info(event) {
+                    Ok((d, s)) => (d, s),
+                    Err(e) => {
+                        log::warn!("Error while parsing udev event: {e}");
+                        continue;
+                    }
+                };
+
+                log::info!("USB partition detected: {:?}", device.device_id);
+
+                // Authorize the device (signature check + policy)
+                let authorized = match ctrl_hdl
+                    .lock()
+                    .unwrap()
+                    .authorize_usb(&device, signature.as_deref())
                 {
-                    let (mut device, signature) = match extract_usb_info(event) {
-                        Ok((d, s)) => (d, s),
-                        Err(e) => {
-                            log::warn!("Error while parsing udev event: {e}");
-                            continue;
+                    Ok(auth) => auth,
+                    Err(e) => {
+                        // Authorization error (e.g. malformed signature): treat as blocked
+                        // and deauthorize the device to prevent any kernel-level access.
+                        log::warn!("Failed to authorize USB device: {e} — deauthorizing");
+                        if let Some(ref syspath) = device.usb_syspath {
+                            let auth_path =
+                                std::path::Path::new(syspath).join("authorized");
+                            let _ = std::fs::write(&auth_path, b"0\n");
                         }
-                    };
+                        continue;
+                    }
+                };
 
-                    log::info!("USB partition detected: {:?}", device.device_id);
+                log::info!(
+                    "USB device {:?}: {}",
+                    device.device_id,
+                    if authorized { "authorized" } else { "blocked" }
+                );
 
-                    // Authorize the device (signature check + policy)
-                    let authorized = match ctrl_hdl
-                        .lock()
-                        .unwrap()
-                        .authorize_usb(&device, signature.as_deref())
-                    {
-                        Ok(auth) => auth,
-                        Err(e) => {
-                            // Authorization error (e.g. malformed signature): treat as blocked
-                            // and deauthorize the device to prevent any kernel-level access.
-                            log::warn!("Failed to authorize USB device: {e} — deauthorizing");
-                            if let Some(ref syspath) = device.usb_syspath {
-                                let auth_path = std::path::Path::new(syspath).join("authorized");
-                                let _ = std::fs::write(&auth_path, b"0\n");
-                            }
-                            continue;
-                        }
-                    };
-
-                    log::info!(
-                        "USB device {:?}: {}",
-                        device.device_id,
-                        if authorized { "authorized" } else { "blocked" }
-                    );
-
-                    if !authorized {
-                        // Deauthorize the USB device at the kernel level.
-                        // Writing 0 to the parent USB device's `authorized` sysfs attribute
-                        // causes the kernel to disconnect it entirely — no /dev node remains.
-                        // The udev rule (60-keysas-firewall.rules) has already set
-                        // UDISKS_IGNORE=1, so no automount can race this write.
-                        match &device.usb_syspath {
-                            Some(syspath) => {
-                                let auth_path = std::path::Path::new(syspath).join("authorized");
-                                match std::fs::write(&auth_path, b"0\n") {
-                                    Ok(_) => log::info!(
-                                        "USB device {:?} deauthorized via {:?}",
-                                        device.device_id, auth_path
-                                    ),
-                                    Err(e) => log::warn!(
-                                        "Failed to deauthorize {:?} via {:?}: {e}",
-                                        device.device_id, auth_path
-                                    ),
-                                }
-                            }
-                            None => log::warn!(
-                                "Cannot deauthorize {:?}: USB parent sysfs path not found",
-                                device.device_id
-                            ),
-                        }
-                    } else {
-                        // Certified device: mount explicitly to /run/keysas/media/<devname>/.
-                        // This is necessary because the udev rule sets UDISKS_IGNORE=1 for
-                        // all USB block devices, preventing udisks2 automounting.
-                        let dev_name = std::path::Path::new(&device.device_id)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "usb".to_string());
-                        let mnt_point = format!("/run/keysas/media/{}", dev_name);
-
-                        if let Err(e) = std::fs::create_dir_all(&mnt_point) {
-                            log::warn!("Failed to create mount point {}: {e}", mnt_point);
-                        } else {
-                            let status = std::process::Command::new("mount")
-                                .args([
-                                    "-o", "noexec,nosuid,nodev",
-                                    &device.device_id.to_string_lossy().as_ref(),
-                                    &mnt_point,
-                                ])
-                                .status();
-                            match status {
-                                Ok(s) if s.success() => {
-                                    device.mnt_point = Some(OsString::from(&mnt_point));
-                                    log::info!(
-                                        "Certified USB {:?} mounted at {}",
-                                        device.device_id, mnt_point
-                                    );
-                                    if let Err(e) = ctrl_hdl.lock().unwrap().update_usb(&device) {
-                                        log::warn!("Failed to update USB mount state: {e}");
-                                    }
-                                }
-                                Ok(s) => log::warn!(
-                                    "mount failed for {:?} (exit {:?})",
-                                    device.device_id, s.code()
+                if !authorized {
+                    // Deauthorize the USB device at the kernel level.
+                    // Writing 0 to the parent USB device's `authorized` sysfs attribute
+                    // causes the kernel to disconnect it entirely — no /dev node remains.
+                    // The udev rule (60-keysas-firewall.rules) has already set
+                    // UDISKS_IGNORE=1, so no automount can race this write.
+                    match &device.usb_syspath {
+                        Some(syspath) => {
+                            let auth_path =
+                                std::path::Path::new(syspath).join("authorized");
+                            match std::fs::write(&auth_path, b"0\n") {
+                                Ok(_) => log::info!(
+                                    "USB device {:?} deauthorized via {:?}",
+                                    device.device_id, auth_path
                                 ),
                                 Err(e) => log::warn!(
-                                    "mount command error for {:?}: {e}",
-                                    device.device_id
+                                    "Failed to deauthorize {:?} via {:?}: {e}",
+                                    device.device_id, auth_path
                                 ),
                             }
                         }
+                        None => log::warn!(
+                            "Cannot deauthorize {:?}: USB parent sysfs path not found",
+                            device.device_id
+                        ),
+                    }
+                } else {
+                    // Certified device: mount so the desktop can see it.
+                    //
+                    // Primary path  — user session present: mount via udisks2
+                    //   so the device appears at the standard desktop path
+                    //   (/media/<user>/<label>) with file-manager and
+                    //   graphical-eject support.
+                    //
+                    // Fallback path — headless system: mount directly at
+                    //   /run/keysas/media/<devname> (original behaviour).
+                    let dev_name = std::path::Path::new(&device.device_id)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "usb".to_string());
+
+                    let mnt_result =
+                        match mount_certified_via_udisks(&device.device_id, &dev_name) {
+                            Ok(mnt) => Ok(mnt),
+                            Err(e) => {
+                                log::warn!(
+                                    "udisks2 mount failed for {:?}: {e} \
+                                     — falling back to direct mount",
+                                    device.device_id
+                                );
+                                mount_certified_headless(&device.device_id, &dev_name)
+                            }
+                        };
+
+                    match mnt_result {
+                        Ok(mnt_point) => {
+                            device.mnt_point = Some(OsString::from(&mnt_point));
+                            log::info!(
+                                "Certified USB {:?} mounted at {}",
+                                device.device_id, mnt_point
+                            );
+                            if let Err(e) =
+                                ctrl_hdl.lock().unwrap().update_usb(&device)
+                            {
+                                log::warn!("Failed to update USB mount state: {e}");
+                            }
+                        }
+                        Err(e) => log::warn!(
+                            "All mount attempts failed for {:?}: {e}",
+                            device.device_id
+                        ),
                     }
                 }
             }

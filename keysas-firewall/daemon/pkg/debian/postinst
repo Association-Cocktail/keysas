@@ -8,8 +8,9 @@ case "$1" in
         # Créer le répertoire des certificats avec les bons droits
         install -d -m 750 "$CONF_DIR"
 
-        # Créer le point de montage pour les clés certifiées
-        install -d -m 755 /run/keysas/media || true
+        # Créer les répertoires de montage et de certification
+        install -d -m 755 /run/keysas/media    || true
+        install -d -m 755 /run/keysas/certified || true
 
         # Recharger les règles udev
         if command -v udevadm >/dev/null 2>&1; then

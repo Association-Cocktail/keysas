@@ -13,8 +13,13 @@
 #   via its netlink socket, reads the Keysas signature from sector 1 of the
 #   raw block device (no mount required), and verifies it against the USB CA.
 #
-#     - Certified key   → daemon mounts the partition read-only under
-#                         /run/keysas/media/<devname>/ and notifies the GUI.
+#     - Certified key   → daemon writes a sentinel file under
+#                         /run/keysas/certified/<devname>, fires a udev
+#                         "change" event (picked up by the second rule below),
+#                         then calls udisksctl mount as the logged-in user so
+#                         the device appears at the standard desktop path
+#                         (/media/<user>/<label> or /run/media/<user>/<label>)
+#                         with full file-manager and graphical-eject support.
 #     - Uncertified key → daemon writes 0 to
 #                         /sys/…/<usb_parent>/authorized, which causes the
 #                         kernel to disconnect the USB device entirely.
@@ -26,4 +31,12 @@
 # reliable than ENV{ID_BUS}=="usb" which is not always propagated to
 # partition events (sdb1) by all udev versions.
 
+# Rule 1 — block automount for every new USB block partition
 SUBSYSTEM=="block", ACTION=="add", SUBSYSTEMS=="usb", ENV{UDISKS_IGNORE}="1"
+
+# Rule 2 — once the daemon certifies a partition (sentinel file present),
+# let udisks2 see it but keep auto-mount off so the daemon controls the mount.
+# The daemon then calls "udisksctl mount" as the logged-in user.
+SUBSYSTEM=="block", ACTION=="change", SUBSYSTEMS=="usb", \
+    PROGRAM=="/bin/test -f /run/keysas/certified/%k", \
+    ENV{UDISKS_IGNORE}="0", ENV{UDISKS_AUTO}="0"

@@ -48,12 +48,14 @@ license-file    = ["../../LICENSE", "0"]
 extended-description = """\
 Keysas USB Firewall daemon for Linux.
 Controls USB device access via udev rules and kernel USB deauthorization.
-Only USB keys signed by the Keysas admin CA are mounted (read-only under
-/run/keysas/media/); all others are disconnected at the USB level."""
+Certified USB keys (signed by the Keysas admin CA) are mounted via udisks2
+at the standard desktop path (/media/<user>/<label>) so they appear in the
+file manager with graphical-eject support.
+Uncertified USB keys are disconnected at the USB level."""
 section         = "security"
 priority        = "optional"
 # $auto → détection automatique des .so via ldd (libc6, libudev1, …)
-depends         = "$auto, systemd, udev"
+depends         = "$auto, systemd, udev, udisks2, util-linux"
 recommends      = "bpftool"
 conf-files      = ["/etc/keysas/firewall/keysas-firewall-conf.toml"]
 
@@ -68,8 +70,10 @@ assets = [
     ["pkg/keysas-usbfilter-daemon.8.gz", "usr/share/man/man8/keysas-usbfilter-daemon.8.gz", "644"],
     # Politique D-Bus (system bus)
     ["pkg/fr.asso-cocktail.keysas.Firewall1.conf", "etc/dbus-1/system.d/fr.asso-cocktail.keysas.Firewall1.conf", "644"],
-    # Règle udev : bloque l'automount UDP et déclenche la vérification de certificat
+    # Règle udev : bloque l'automount et débloque udisks2 après certification
     ["pkg/60-keysas-firewall.rules", "lib/udev/rules.d/60-keysas-firewall.rules", "644"],
+    # Règle polkit : permet à udisksctl de monter sans agent interactif
+    ["pkg/60-keysas-udisks2.rules", "usr/share/polkit-1/rules.d/60-keysas-udisks2.rules", "644"],
 ]
 
 maintainer-scripts = "pkg/debian/"
