@@ -190,4 +190,17 @@
     <Message Text="Inf2Cat skipped — inf2cat.exe absent (WDK NuGet-only build)" Importance="High" />
   </Target>
 
+  <!-- signtool.exe is absent from the WDK NuGet package (it is in the Windows
+       SDK, not the headers-only WDK package).  WindowsDriver.common.targets
+       calls signtool from $(KitsBinPath)x86\signtool.exe which resolves to the
+       NuGet package tree and fails.  Skip MSBuild test-signing here: the CI
+       "Test-sign driver and catalog" step signs the .sys and .cat using the
+       real signtool.exe from the Windows SDK.
+       Local builds with a full WDK + Windows SDK install have signtool.exe at
+       the expected path and are unaffected by this override. -->
+  <Target Name="TestSign"
+          Condition="!Exists('$(KitsBinPath)x86\signtool.exe')">
+    <Message Text="TestSign skipped — signtool.exe absent from NuGet WDK path (signing handled by CI step)" Importance="High" />
+  </Target>
+
 </Project>
