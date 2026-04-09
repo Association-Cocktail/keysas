@@ -319,7 +319,7 @@ jobs:
             /p:WDKKmInclude="$env:WDK_KM_INCLUDE" `
             /p:WDKSharedInclude="$env:WDK_SHARED_INCLUDE" `
             /p:DDK_LIB_PATH="$env:DDK_LIB_PATH" `
-            /v:minimal
+            /v:normal
 
       - name: List minifilter build output
         shell: pwsh

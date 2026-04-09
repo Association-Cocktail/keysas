@@ -99,6 +99,12 @@
       <PreprocessorDefinitions Condition="'$(Platform)' == 'x64'">_AMD64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PreprocessorDefinitions Condition="'$(Platform)' == 'ARM64'">_ARM64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <Link>
+      <!-- Point the linker at the NuGet WDK lib directory so it can resolve
+           ntoskrnl.lib, hal.lib, wmilib.lib and the other kernel imports that
+           the toolset normally provides via its built-in lib path. -->
+      <AdditionalLibraryDirectories>$(DDK_LIB_PATH);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
