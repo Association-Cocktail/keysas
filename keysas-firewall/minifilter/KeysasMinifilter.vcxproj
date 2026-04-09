@@ -94,6 +94,10 @@
   <ItemDefinitionGroup Condition="'$(WDKKmInclude)' != ''">
     <ClCompile>
       <AdditionalIncludeDirectories>$(WDKKmInclude);$(WDKSharedInclude);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Architecture macros required by ntdef.h / wdm.h — not injected by the
+           WindowsKernelModeDriver10.0 toolset in VS2022 component install mode. -->
+      <PreprocessorDefinitions Condition="'$(Platform)' == 'x64'">_AMD64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)' == 'ARM64'">_ARM64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
 
