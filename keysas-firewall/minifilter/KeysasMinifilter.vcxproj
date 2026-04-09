@@ -203,4 +203,13 @@
     <Message Text="TestSign skipped — signtool.exe absent from NuGet WDK path (signing handled by CI step)" Importance="High" />
   </Target>
 
+  <!-- ApiValidator.exe validates Universal DDI compliance but is only present
+       in the full standalone WDK install, not in the NuGet headers package.
+       DriverTargetPlatform=Universal is already declared in the project; skip
+       the runtime check in NuGet-only builds. -->
+  <Target Name="ApiValidator"
+          Condition="!Exists('$(KitsBinPath)x86\ApiValidator.exe')">
+    <Message Text="ApiValidator skipped — ApiValidator.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
 </Project>
