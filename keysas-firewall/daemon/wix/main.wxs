@@ -56,6 +56,7 @@
             Must be installed before starting the daemon so the mailslot
             server (SERVICE_PIPE) is available.
           -->
+          <!-- Per-machine component: tray-app executable in Program Files -->
           <Component Id='comp_trayapp' Guid='C8D5E392-F4A1-4B7E-A263-8F2B9D0E4C15' Win64='yes'>
             <File
               Id='exe_trayapp'
@@ -63,16 +64,21 @@
               DiskId='1'
               Source='$(var.TrayAppBinDir)/keysas-usbfilter-trayapp.exe'
               KeyPath='yes'/>
-            <!--
-              Register the tray-app to start automatically when any user logs in.
-              HKCU\...\Run is per-user; change to HKLM for all-users startup.
-            -->
+          </Component>
+
+          <!--
+            Per-user component: HKCU Run key so the tray-app launches at login.
+            ICE57 forbids mixing a per-machine KeyPath (File) with per-user data
+            (HKCU registry) in the same component — hence the split.
+          -->
+          <Component Id='comp_trayapp_run' Guid='A1D3F582-C6E4-4B9A-8D2E-3F7A1C0B5D92' Win64='yes'>
             <RegistryValue
               Root='HKCU'
               Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
               Name='KeysasFirewallTray'
               Type='string'
-              Value='"[APPLICATIONFOLDER]keysas-usbfilter-trayapp.exe"'/>
+              Value='"[APPLICATIONFOLDER]keysas-usbfilter-trayapp.exe"'
+              KeyPath='yes'/>
           </Component>
 
           <!--
@@ -239,6 +245,7 @@
 
     <Feature Id='Complete' Title='Keysas USB Firewall' Level='1'>
       <ComponentRef Id='comp_trayapp'/>
+      <ComponentRef Id='comp_trayapp_run'/>
       <ComponentRef Id='comp_binary'/>
       <ComponentRef Id='comp_registry'/>
       <ComponentRef Id='comp_certdir'/>
