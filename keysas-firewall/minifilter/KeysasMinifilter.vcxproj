@@ -158,4 +158,23 @@
     <Import Project="$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.targets"
             Condition="Exists('$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.targets')" />
   </ImportGroup>
+
+  <!--
+    CI-only fallbacks: skip WDK build tools that are absent when the WDK is
+    installed as a VS2022 component (NuGet-based, no standalone installer).
+    Each target is overridden only when the expected executable is missing,
+    so local builds with the full standalone WDK are unaffected.
+    This block MUST appear after the ExtensionTargets ImportGroup so that
+    MSBuild picks these definitions last (last definition wins).
+  -->
+  <Target Name="StampInf"
+          Condition="!Exists('$(KitsBinPath)x86\stampinf.exe')">
+    <Message Text="StampInf skipped — stampinf.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
+  <Target Name="InfVerif"
+          Condition="!Exists('$(KitsBinPath)x86\infverif.exe')">
+    <Message Text="InfVerif skipped — infverif.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
 </Project>
