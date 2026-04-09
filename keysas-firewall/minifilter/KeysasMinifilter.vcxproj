@@ -63,6 +63,8 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.props"
+            Condition="Exists('$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.props')" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -81,12 +83,42 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
   </PropertyGroup>
+  <!--
+    WDKKmInclude / WDKSharedInclude / DDK_LIB_PATH are injected by the CI
+    workflow when the WDK is installed as a VS2022 component (not standalone):
+    the WindowsKernelModeDriver10.0 toolset is present but does not wire up
+    include/lib paths automatically in that install mode.
+    Passing these as /p: on the msbuild command line overrides these properties.
+    The Condition guards local developer builds where the toolset handles paths.
+  -->
+  <ItemDefinitionGroup Condition="'$(WDKKmInclude)' != ''">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(WDKKmInclude);$(WDKSharedInclude);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Architecture macros required by ntdef.h / wdm.h — not injected by the
+           WindowsKernelModeDriver10.0 toolset in VS2022 component install mode. -->
+      <PreprocessorDefinitions Condition="'$(Platform)' == 'x64'">_AMD64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Platform)' == 'ARM64'">_ARM64_;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <!-- Point the linker at the NuGet WDK lib directory so it can resolve
+           ntoskrnl.lib, hal.lib, wmilib.lib and the other kernel imports that
+           the toolset normally provides via its built-in lib path. -->
+      <AdditionalLibraryDirectories>$(DDK_LIB_PATH);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
     <Link>
-      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- ntoskrnl.lib / hal.lib are normally injected by the toolset's default
+           AdditionalDependencies.  List them explicitly here so that NuGet-only
+           CI builds (where the toolset default lib path may not be wired up)
+           still resolve Ex*/Ke*/Io*/Rtl* and HAL symbols.
+           When DDK_LIB_PATH is empty (local full-WDK build) these expand to bare
+           lib names which the toolset resolves via its own lib search path. -->
+      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -94,7 +126,7 @@
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
     <Link>
-      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(DDK_LIB_PATH)fltMgr.lib;$(DDK_LIB_PATH)ksecdd.lib;$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
@@ -129,5 +161,68 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.targets"
+            Condition="Exists('$(VCTargetsPath)\BuildCustomizations\WindowsDriverKit.targets')" />
   </ImportGroup>
+
+  <!--
+    CI-only fallbacks: skip WDK build tools that are absent when the WDK is
+    installed as a VS2022 component (NuGet-based, no standalone installer).
+    Each target is overridden only when the expected executable is missing,
+    so local builds with the full standalone WDK are unaffected.
+    This block MUST appear after the ExtensionTargets ImportGroup so that
+    MSBuild picks these definitions last (last definition wins).
+  -->
+  <Target Name="StampInf"
+          Condition="!Exists('$(KitsBinPath)x86\stampinf.exe')">
+    <!-- stampinf.exe normally stamps version/date into the INF and copies it to
+         $(OutDir).  DriverPackageTarget then packages the copy from $(OutDir).
+         Without stampinf we cannot inject version fields, but we must still
+         deliver the INF to $(OutDir) or DriverPackageTarget fails with MSB3030.
+         Copy the source INF as-is; version fields will be unset (acceptable for
+         CI test-signed builds). -->
+    <Message Text="StampInf — KitsBinPath='$(KitsBinPath)' OutDir='$(OutDir)' ProjectDir='$(MSBuildProjectDirectory)'" Importance="High" />
+    <MakeDir Directories="$(OutDir)" Condition="'$(OutDir)' != '' and !Exists('$(OutDir)')" />
+    <!-- Use explicit absolute paths to avoid any ambiguity in relative-path
+         resolution between the target's CWD and the project directory. -->
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\KeysasMinifilter.inf"
+          DestinationFiles="$(MSBuildProjectDirectory)\$(OutDir)KeysasMinifilter.inf"
+          SkipUnchangedFiles="false" />
+    <Message Text="StampInf — copied INF → $(MSBuildProjectDirectory)\$(OutDir)KeysasMinifilter.inf" Importance="High" />
+  </Target>
+
+  <Target Name="InfVerif"
+          Condition="!Exists('$(KitsBinPath)x86\infverif.exe')">
+    <Message Text="InfVerif skipped — infverif.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
+  <!-- inf2cat.exe is absent in NuGet-only builds; the catalog is generated
+       manually in the CI "Generate catalog file" step via New-FileCatalog. -->
+  <Target Name="Inf2Cat"
+          Condition="!Exists('$(KitsBinPath)x86\inf2cat.exe')">
+    <Message Text="Inf2Cat skipped — inf2cat.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
+  <!-- signtool.exe is absent from the WDK NuGet package (it is in the Windows
+       SDK, not the headers-only WDK package).  WindowsDriver.common.targets
+       calls signtool from $(KitsBinPath)x86\signtool.exe which resolves to the
+       NuGet package tree and fails.  Skip MSBuild test-signing here: the CI
+       "Test-sign driver and catalog" step signs the .sys and .cat using the
+       real signtool.exe from the Windows SDK.
+       Local builds with a full WDK + Windows SDK install have signtool.exe at
+       the expected path and are unaffected by this override. -->
+  <Target Name="TestSign"
+          Condition="!Exists('$(KitsBinPath)x86\signtool.exe')">
+    <Message Text="TestSign skipped — signtool.exe absent from NuGet WDK path (signing handled by CI step)" Importance="High" />
+  </Target>
+
+  <!-- ApiValidator.exe validates Universal DDI compliance but is only present
+       in the full standalone WDK install, not in the NuGet headers package.
+       DriverTargetPlatform=Universal is already declared in the project; skip
+       the runtime check in NuGet-only builds. -->
+  <Target Name="ApiValidator"
+          Condition="!Exists('$(KitsBinPath)x86\ApiValidator.exe')">
+    <Message Text="ApiValidator skipped — ApiValidator.exe absent (WDK NuGet-only build)" Importance="High" />
+  </Target>
+
 </Project>

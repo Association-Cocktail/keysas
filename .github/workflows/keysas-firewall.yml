@@ -1,0 +1,450 @@
+name: keysas-firewall CI
+
+# Triggered on PRs and pushes to main/develop when firewall sources change.
+on:
+  pull_request:
+    branches: ["main", "develop"]
+    paths:
+      - "keysas-firewall/**"
+      - ".github/workflows/keysas-firewall.yml"
+  push:
+    branches: ["main", "develop"]
+    paths:
+      - "keysas-firewall/**"
+      - ".github/workflows/keysas-firewall.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 1. Build the eBPF kernel program (nightly, bpf-linker, bpf target)
+  #    The compiled binary is uploaded so the daemon job can embed it.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-ebpf:
+    name: Build eBPF program
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust nightly + rust-src
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          components: rust-src
+          rustflags: ""  # vmlinux.rs is auto-generated — don't treat warnings as errors
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ebpf-${{ runner.os }}-${{ hashFiles('keysas-firewall/ebpfilter/lsm-file-ebpf/Cargo.lock') }}
+          restore-keys: ebpf-${{ runner.os }}-
+
+      - name: Install bpf-linker
+        run: cargo install bpf-linker
+
+      - name: Build eBPF (debug)
+        working-directory: keysas-firewall/ebpfilter/lsm-file-ebpf
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: cargo build --target bpfel-unknown-none -Z build-std=core
+
+      - name: Upload eBPF binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsm-file-ebpf-debug
+          path: keysas-firewall/ebpfilter/target/bpfel-unknown-none/debug/lsm-file
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 2. Check the daemon (Linux only)
+  #    Requires the eBPF binary embedded via include_bytes_aligned!
+  # ─────────────────────────────────────────────────────────────────────────────
+  check-daemon:
+    name: cargo check — daemon (Linux)
+    runs-on: ubuntu-latest
+    needs: build-ebpf
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          rustflags: ""  # Don't treat warnings as errors on the daemon check
+
+      - name: Download eBPF binary
+        uses: actions/download-artifact@v4
+        with:
+          name: lsm-file-ebpf-debug
+          path: keysas-firewall/ebpfilter/target/bpfel-unknown-none/debug/
+
+      - name: Install system dependencies (daemon)
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -y \
+            libudev-dev \
+            clang \
+            llvm \
+            pkg-config
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: daemon-${{ runner.os }}-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: daemon-${{ runner.os }}-
+
+      - name: cargo check
+        working-directory: keysas-firewall/daemon
+        run: cargo check
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 3. Check the tray-app (Linux)
+  #    Independent of the daemon — no eBPF binary required.
+  # ─────────────────────────────────────────────────────────────────────────────
+  check-tray-app:
+    name: cargo check — tray-app (Linux)
+    # Tauri 1.x uses wry ~0.24 which requires webkit2gtk-4.0 (dropped in Ubuntu 24.04)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+          rustflags: ""  # Don't treat warnings as errors on the tray-app check
+
+      - name: Install system dependencies (tray-app / Tauri)
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -y \
+            libsoup2.4-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libjavascriptcoregtk-4.0-dev \
+            libayatana-appindicator3-dev \
+            pkg-config
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: trayapp-${{ runner.os }}-${{ hashFiles('keysas-firewall/tray-app/src-tauri/Cargo.lock') }}
+          restore-keys: trayapp-${{ runner.os }}-
+
+      - name: Create stub frontend dist (required by generate_context!)
+        run: mkdir -p keysas-firewall/tray-app/dist
+
+      - name: cargo check
+        working-directory: keysas-firewall/tray-app/src-tauri
+        run: cargo check
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4. Build the tray-app MSI (Windows)
+  #    Uses Tauri v1 + WiX v3 (downloaded automatically by Tauri).
+  #    Produces a .msi installer for the tray-app only (no kernel drivers).
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-tray-app-msi:
+    name: Build tray-app MSI (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+          rustflags: ""  # Don't treat warnings as errors on MSI build
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: keysas-firewall/tray-app/package-lock.json
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: msi-${{ runner.os }}-${{ hashFiles('keysas-firewall/tray-app/src-tauri/Cargo.lock') }}
+          restore-keys: msi-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        working-directory: keysas-firewall/tray-app
+        run: npm ci
+
+      - name: Build MSI (tauri build)
+        working-directory: keysas-firewall/tray-app
+        run: npm run tauri build -- --bundles msi
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keysas-firewall-msi
+          path: keysas-firewall/tray-app/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 5. Build the full MSI : minifilter (WDK) + daemon (MSVC) + packaging (WiX v3)
+  #    Everything on one Windows runner — no cross-compilation, no Docker.
+  #
+  #    Driver signing: self-signed (test) by default.
+  #    For production, set repository secrets EV_CERT_PFX + EV_CERT_PASSWORD
+  #    and replace the "Self-sign" step with a signtool /f cert.pfx call.
+  #
+  #    Target machine requirement (test-signed driver):
+  #      bcdedit /set testsigning on  (+ reboot) before installing the MSI.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-windows-msi:
+    name: Build MSI daemon+minifilter (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      # ── Toolchain setup ────────────────────────────────────────────────────
+      - name: Set up Rust stable (MSVC)
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+          rustflags: ""
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: win-msi-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: win-msi-
+
+      # ── Windows Driver Kit ─────────────────────────────────────────────────
+      # WDK is pre-installed on windows-2025 as VS2022 component
+      # Component.Microsoft.Windows.DriverKit 10.0.26100.16.
+      # That component installs the MSBuild integration (props/targets) but
+      # kernel headers (fltKernel.h …) may live at a VS-relative path that
+      # is invisible to a filesystem scan — msbuild resolves them itself.
+      # We only verify that WindowsDriverKit.props is in place; if kernel
+      # headers are missing the "Build minifilter" step will say so exactly.
+      - name: Verify WDK MSBuild integration
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
+          $vsDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $vsDir) { throw "Visual Studio with MSBuild not found" }
+          Write-Host "VS install dir: $vsDir"
+          # WindowsDriverKit.props is placed here by the old-model standalone WDK
+          # installer.  With the modern VS2022 WDK component (Component.Microsoft.
+          # Windows.DriverKit) the toolset WindowsKernelModeDriver10.0 is used
+          # directly and this file may be absent — the import in the vcxproj is
+          # conditional, so this is not a build error.
+          $props = Join-Path $vsDir "MSBuild\Microsoft\VC\v170\BuildCustomizations\WindowsDriverKit.props"
+          if (Test-Path $props) {
+            Write-Host "WDK MSBuild integration (classic): $props"
+          } else {
+            Write-Host "WindowsDriverKit.props absent — WDK component uses WindowsKernelModeDriver10.0 toolset (OK)"
+          }
+
+      # ── Minifilter ─────────────────────────────────────────────────────────
+      # When the WDK is installed as a VS2022 component (Component.Microsoft.
+      # Windows.DriverKit), the WindowsKernelModeDriver10.0 toolset is present
+      # but the kernel headers (km\fltKernel.h …) and libs are NOT installed
+      # to C:\Program Files (x86)\Windows Kits\10.  The documented approach for
+      # this install model is to obtain the headers via NuGet:
+      #   Microsoft.Windows.WDK.x64  — km\ headers + km\x64 libs
+      # We install the package, locate the key files, and export the paths so
+      # the MSBuild step can pass them as /p: overrides.
+      - name: Install WDK kernel headers (NuGet)
+        shell: pwsh
+        run: |
+          $pkgDir = "$env:GITHUB_WORKSPACE\wdk-packages"
+          Write-Host "Installing Microsoft.Windows.WDK.x64 …"
+          nuget install Microsoft.Windows.WDK.x64 `
+            -OutputDirectory $pkgDir -NonInteractive -ExcludeVersion
+          $fltKernel = Get-ChildItem $pkgDir -Recurse -Filter "fltKernel.h" `
+                         -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $fltKernel) { throw "fltKernel.h not found in WDK NuGet package" }
+          $kmInclude     = $fltKernel.DirectoryName
+          $sharedInclude = Join-Path (Split-Path $kmInclude -Parent) "shared"
+          $fltMgr = Get-ChildItem $pkgDir -Recurse -Filter "fltMgr.lib" `
+                      -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match "\\km\\x64\\" } |
+                      Select-Object -First 1
+          if (-not $fltMgr) { throw "fltMgr.lib (km\x64) not found in WDK NuGet package" }
+          $kmLib = $fltMgr.DirectoryName + "\"
+          Write-Host "WDK km include:     $kmInclude"
+          Write-Host "WDK shared include: $sharedInclude"
+          Write-Host "WDK km lib:         $kmLib"
+          "WDK_KM_INCLUDE=$kmInclude"         | Out-File $env:GITHUB_ENV -Append
+          "WDK_SHARED_INCLUDE=$sharedInclude" | Out-File $env:GITHUB_ENV -Append
+          "DDK_LIB_PATH=$kmLib"               | Out-File $env:GITHUB_ENV -Append
+
+          # The toolset conditions the Link step on WDKContentRoot pointing to a
+          # valid WDK tree (one that has Include\<ver>\km\).  Export the NuGet
+          # package's 'c\' subdirectory as WDKContentRoot so the toolset finds
+          # the headers at the expected relative path.
+          $wdkContentRoot = "$pkgDir\Microsoft.Windows.WDK.x64\c\"
+          Write-Host "WDK content root:   $wdkContentRoot"
+          "WDK_CONTENT_ROOT=$wdkContentRoot" | Out-File $env:GITHUB_ENV -Append
+
+          # Extract the version number from the include path (e.g. 10.0.26100.0)
+          $wdkVersion = (Split-Path $kmInclude -Parent | Split-Path -Leaf)
+          Write-Host "WDK version:        $wdkVersion"
+          "WDK_VERSION=$wdkVersion" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Build minifilter (Release x64)
+        shell: pwsh
+        working-directory: keysas-firewall/minifilter
+        run: |
+          # Pre-stage the INF into x64\Release\ before MSBuild runs.
+          # StampInf (overridden in the vcxproj) copies it too, but doing it
+          # here as well guarantees DriverPackageTarget finds it regardless of
+          # how $(OutDir) is resolved inside the override target.
+          $outDir = "x64\Release"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Copy-Item "KeysasMinifilter.inf" "$outDir\KeysasMinifilter.inf" -Force
+          Write-Host "Pre-staged INF → $outDir\KeysasMinifilter.inf"
+
+          msbuild KeysasMinifilter.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 `
+            /p:WDKContentRoot="$env:WDK_CONTENT_ROOT" `
+            /p:WindowsTargetPlatformVersion="$env:WDK_VERSION" `
+            /p:WDKKmInclude="$env:WDK_KM_INCLUDE" `
+            /p:WDKSharedInclude="$env:WDK_SHARED_INCLUDE" `
+            /p:DDK_LIB_PATH="$env:DDK_LIB_PATH" `
+            /v:normal
+
+      - name: List minifilter build output
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName
+
+      - name: Generate catalog file
+        shell: pwsh
+        run: |
+          # DriverPackageTarget creates x64\Release\KeysasMinifilter\ (package dir)
+          # and copies the .sys there. x64\Release\KeysasMinifilter.sys (output dir)
+          # also exists. We want the OUTPUT dir copy so that $buildOut is the flat
+          # x64\Release dir and $outDir resolves to the package dir correctly.
+          # Exclude any path whose leaf directory already IS "KeysasMinifilter"
+          # (that is the packaged copy) to avoid a double-nested path.
+          $sys = Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" `
+                   -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DirectoryName -notmatch '\\KeysasMinifilter$' } |
+                   Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sys) { throw "KeysasMinifilter.sys not found anywhere under D:\a" }
+          Write-Host "Driver binary: $sys"
+          $buildOut = Split-Path $sys -Parent
+          $outDir   = Join-Path $buildOut "KeysasMinifilter"
+          # DriverPackageTarget may have already created this dir and copied
+          # the .sys + .inf into it; if not, stage them manually.
+          if (-not (Test-Path $outDir)) {
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            Write-Host "Created package dir (manual staging)"
+          }
+          # Always (re)copy to ensure catalog hashes match what is in the dir.
+          Copy-Item $sys $outDir -Force
+          Copy-Item "keysas-firewall\minifilter\KeysasMinifilter.inf" $outDir -Force
+          New-FileCatalog -Path $outDir `
+            -CatalogFilePath "$outDir\KeysasMinifilter.cat" `
+            -CatalogVersion 2
+          Write-Host "Catalog: $outDir\KeysasMinifilter.cat"
+          # Export the package dir path for the sign step
+          "MINIFILTER_PKG_DIR=$outDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Test-sign the driver and catalog with a throwaway self-signed cert.
+      # Target machines must have test-signing enabled:
+      #   bcdedit /set testsigning on  (then reboot)
+      - name: Test-sign driver and catalog
+        shell: pwsh
+        run: |
+          $outDir = $env:MINIFILTER_PKG_DIR
+          if (-not $outDir) { throw "MINIFILTER_PKG_DIR not set — catalog step failed?" }
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject "CN=Keysas Test Signing" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -HashAlgorithm SHA256
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" `
+            -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "x64" } |
+            Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint `
+            "$outDir\KeysasMinifilter.sys" "$outDir\KeysasMinifilter.cat"
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
+
+      # ── Daemon ─────────────────────────────────────────────────────────────
+      - name: Build daemon (Release MSVC)
+        working-directory: keysas-firewall/daemon
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # ── Tray-app ───────────────────────────────────────────────────────────
+      - name: Set up Node.js (tray-app frontend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: keysas-firewall/tray-app/package-lock.json
+
+      - name: Build tray-app frontend
+        working-directory: keysas-firewall/tray-app
+        run: npm ci && npm run build
+
+      - name: Build tray-app binary (Release MSVC)
+        working-directory: keysas-firewall/tray-app/src-tauri
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
+      - name: Install cargo-wix
+        run: cargo install --locked cargo-wix
+
+      - name: Package MSI (cargo wix)
+        shell: pwsh
+        working-directory: keysas-firewall/daemon
+        run: |
+          $minifilterDir = $env:MINIFILTER_PKG_DIR
+          if (-not $minifilterDir) { throw "MINIFILTER_PKG_DIR not set — catalog step failed?" }
+          # cargo wix passes WiX preprocessor variables to candle.exe via -C "-dNAME=VALUE".
+          # $(var.Version) is injected automatically from Cargo.toml.
+          cargo wix `
+            -C "-dBinDir=target\x86_64-pc-windows-msvc\release" `
+            -C "-dMinifilterDir=$minifilterDir" `
+            -C "-dTrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release" `
+            --nocapture
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keysas-firewall-full-msi
+          path: keysas-firewall/daemon/target/wix/*.msi
+          retention-days: 7

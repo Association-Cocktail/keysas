@@ -1,0 +1,42 @@
+#!/bin/sh
+set -e
+
+CONF_DIR=/etc/keysas/firewall
+
+case "$1" in
+    configure)
+        # Créer le répertoire des certificats avec les bons droits
+        install -d -m 750 "$CONF_DIR"
+
+        # Créer les répertoires de montage et de certification
+        install -d -m 755 /run/keysas/media    || true
+        install -d -m 755 /run/keysas/certified || true
+
+        # Recharger les règles udev
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules || true
+        fi
+
+        # Recharger systemd
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+
+        echo ""
+        echo "┌─────────────────────────────────────────────────────────┐"
+        echo "│  keysas-firewall installé                               │"
+        echo "│                                                         │"
+        echo "│  Avant de démarrer le service, déposez les certificats  │"
+        echo "│  CA dans /etc/keysas/firewall/ :                        │"
+        echo "│    st-ca-cl.pem   st-ca-pq.pem                         │"
+        echo "│    usb-ca-cl.pem  usb-ca-pq.pem                        │"
+        echo "│                                                         │"
+        echo "│  Puis activez le service :                              │"
+        echo "│    systemctl enable --now keysas-firewall               │"
+        echo "└─────────────────────────────────────────────────────────┘"
+        echo ""
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

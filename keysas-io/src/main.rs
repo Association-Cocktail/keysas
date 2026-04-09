@@ -330,7 +330,7 @@ fn is_signed(
         "{}/{}/{}/{}/{}",
         id_vendor_id, id_model_id, id_revision, id_serial, "out"
     );
-    match KeysasHybridPubKeys::verify_key_signatures(data.as_bytes(), signatures, pubkeys) {
+    match KeysasHybridPubKeys::verify_key_signatures(data.as_bytes(), &signatures, &pubkeys) {
         Ok(()) => {
             info!("USB device is signed");
             true

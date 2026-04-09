@@ -1,0 +1,32 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Keysas Firewall — polkit rules for udisks2 USB mount/unmount
+ *
+ * Context:
+ *   The keysas-firewall daemon (running as root) verifies the USB certificate
+ *   and then calls `udisksctl mount` via `runuser -u <user>`.  Because runuser
+ *   opens only a PAM session (not an active logind session), polkit does not
+ *   recognise the caller as an "active local user" and denies the operation.
+ *
+ * Fix:
+ *   Grant unconditional YES for mount and unmount-others to any caller that is
+ *   a member of the `plugdev` group.  On Debian/Ubuntu this group is the
+ *   standard group for removable-media access, and the desktop user is a
+ *   member of it by default.
+ *
+ *   Unmount-others is needed so the user's file manager can eject a device
+ *   that was mounted by the daemon on their behalf.
+ */
+polkit.addRule(function(action, subject) {
+    var mountActions = [
+        "org.freedesktop.udisks2.filesystem-mount",
+        "org.freedesktop.udisks2.filesystem-mount-other-seat",
+        "org.freedesktop.udisks2.filesystem-mount-system",
+        "org.freedesktop.udisks2.filesystem-unmount-others"
+    ];
+
+    if (mountActions.indexOf(action.id) >= 0 &&
+            subject.isInGroup("plugdev")) {
+        return polkit.Result.YES;
+    }
+});

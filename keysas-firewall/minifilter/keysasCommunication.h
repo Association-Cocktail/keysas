@@ -30,6 +30,10 @@ Environment:
 
 #define KEYSAS_REQUEST_BUFFER_SIZE 1024
 
+// Message types for daemon → minifilter notifications (FilterSendMessage direction)
+#define KEYSAS_MSG_FILE_AUTH 0x01  // File authorization update: [0x01 | file_id_32 | auth_u8]
+#define KEYSAS_MSG_USB_AUTH  0x02  // USB volume authorization update: [0x02 | auth_u8 | nt_vol_name_utf16_null]
+
 // Operation code for the request to userland
 typedef enum _KEYSAS_FILTER_OPERATION {
 	SCAN_FILE = 0,				// Validate the signature of the file and the report

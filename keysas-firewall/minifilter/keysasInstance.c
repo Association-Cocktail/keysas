@@ -219,7 +219,7 @@ Return Value:
 		KeysasData.Filter,
 		&KeysasData.ClientPort,
 		request,
-		sizeof(request->Content),
+		sizeof(request->Operation) + InstanceName->Length + sizeof(WCHAR),
 		request,
 		&replyLength,
 		NULL
@@ -229,7 +229,6 @@ Return Value:
 		*Authorization = ((PKEYSAS_REPLY)request)->Result;
 		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Received result %x\n",
 			*Authorization));
-		*Authorization = AUTH_ALLOW_WARNING;
 	}
 	else {
 		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Failed to send request to userspace\n"));

@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Supprimer la configuration (pas les certificats par sécurité)
+        rm -f /etc/keysas/firewall/keysas-firewall-conf.toml
+        # Dépingler les maps eBPF résiduelles
+        rm -rf /sys/fs/bpf/keysas 2>/dev/null || true
+        ;;
+    remove)
+        # Dépingler les maps eBPF
+        rm -rf /sys/fs/bpf/keysas 2>/dev/null || true
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+exit 0

@@ -850,7 +850,6 @@ Return Value:
 		goto end;
 	}
 	request->Operation = Operation;
-	request->Operation = SCAN_FILE;
 
 	replyLength = sizeof(*request);
 

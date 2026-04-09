@@ -1,0 +1,265 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Keysas Firewall — WiX v3 installer source
+  Build (Linux/Docker via wixl):
+    wixl -D Version=x.y.z -D BinDir=... -D MinifilterDir=... -D TrayAppBinDir=... -a x64 wix/main.wxs
+
+  $(var.MinifilterDir) must contain:
+    KeysasMinifilter.sys   — compiled with WDK on Windows
+    KeysasMinifilter.cat   — catalog file (test-signed or production-signed)
+  The .inf is read directly from the source tree (no WDK needed).
+
+  NOTE: loading a kernel driver on Windows 11 requires either:
+    - a production EV code-signing certificate, or
+    - test-signing mode: bcdedit /set testsigning on  (+ reboot)
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+  <Product
+    Id='*'
+    Name='Keysas USB Firewall'
+    UpgradeCode='37C429B0-B7F9-47C6-B840-D55BD5024EE8'
+    Manufacturer='Association Cocktail'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
+
+    <Package
+      Id='*'
+      Keywords='Installer'
+      Description='Keysas USB Firewall — minifilter driver + daemon service'
+      Manufacturer='Association Cocktail'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      SummaryCodepage='1252'
+      />
+
+    <!-- Refuse downgrades; silently upgrade same-or-older installations -->
+    <MajorUpgrade
+      DowngradeErrorMessage='A newer version of [ProductName] is already installed.'/>
+
+    <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+    <Property Id='DiskPrompt' Value='Keysas USB Firewall Installation'/>
+
+    <Property Id='MSIUSEREALADMINDETECTION' Value='1'/>
+
+    <!-- ───────────────────────────────────────────────── directory tree -->
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+
+      <!-- ── Daemon binary: C:\Program Files\Keysas Firewall\ ── -->
+      <Directory Id='ProgramFiles64Folder'>
+        <Directory Id='APPLICATIONFOLDER' Name='Keysas Firewall'>
+
+          <!--
+            Tray application: launched at user login via HKCU Run key.
+            Must be installed before starting the daemon so the mailslot
+            server (SERVICE_PIPE) is available.
+          -->
+          <!-- Per-machine component: tray-app executable in Program Files -->
+          <Component Id='comp_trayapp' Guid='C8D5E392-F4A1-4B7E-A263-8F2B9D0E4C15' Win64='yes'>
+            <File
+              Id='exe_trayapp'
+              Name='keysas-usbfilter-trayapp.exe'
+              DiskId='1'
+              Source='$(var.TrayAppBinDir)/keysas-usbfilter-trayapp.exe'
+              KeyPath='yes'/>
+          </Component>
+
+          <!--
+            Per-user component: HKCU Run key so the tray-app launches at login.
+            ICE57 forbids mixing a per-machine KeyPath (File) with per-user data
+            (HKCU registry) in the same component — hence the split.
+          -->
+          <Component Id='comp_trayapp_run' Guid='A1D3F582-C6E4-4B9A-8D2E-3F7A1C0B5D92' Win64='yes'>
+            <RegistryValue
+              Root='HKCU'
+              Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+              Name='KeysasFirewallTray'
+              Type='string'
+              Value='"[APPLICATIONFOLDER]keysas-usbfilter-trayapp.exe"'
+              KeyPath='yes'/>
+          </Component>
+
+          <!--
+            Daemon executable + Windows Service registration.
+            The service depends on KeysasMinifilter: SCM will start the
+            driver automatically before starting the daemon.
+          -->
+          <Component Id='comp_binary' Guid='02B83024-9E87-4AFA-B324-11BB64B3D686' Win64='yes'>
+            <File
+              Id='exe_daemon'
+              Name='keysas-usbfilter-daemon.exe'
+              DiskId='1'
+              Source='$(var.BinDir)/keysas-usbfilter-daemon.exe'
+              KeyPath='yes'/>
+
+            <ServiceInstall
+              Id='svc_install'
+              Type='ownProcess'
+              Name='Keysas Service'
+              DisplayName='Keysas USB Firewall'
+              Description='Verifies USB key certificates and blocks uncertified devices.'
+              Start='demand'
+              Account='LocalSystem'
+              ErrorControl='normal'>
+              <!-- Daemon must not start before the minifilter is running -->
+              <ServiceDependency Id='KeysasMinifilter'/>
+            </ServiceInstall>
+
+            <ServiceControl
+              Id='svc_control'
+              Name='Keysas Service'
+              Stop='both'
+              Remove='uninstall'
+              Wait='yes'/>
+          </Component>
+
+          <!-- Security policy defaults + certificate paths -->
+          <Component Id='comp_registry' Guid='BFC665F7-039E-4513-902E-5C436657252C' Win64='yes'>
+            <RegistryKey
+              Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'>
+              <RegistryValue Type='integer' Name='DisableUnsignedUsb'       Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization' Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileRead'         Value='0'/>
+              <RegistryValue Type='integer' Name='AllowUserFileWrite'        Value='0'/>
+              <RegistryValue Type='string'  Name='StCaClCert'
+                Value='C:\ProgramData\Keysas\Firewall\st-ca-cl.pem'/>
+              <RegistryValue Type='string'  Name='StCaPqCert'
+                Value='C:\ProgramData\Keysas\Firewall\st-ca-pq.pem'/>
+              <RegistryValue Type='string'  Name='UsbCaClCert'
+                Value='C:\ProgramData\Keysas\Firewall\usb-ca-cl.pem'/>
+              <RegistryValue Type='string'  Name='UsbCaPqCert'
+                Value='C:\ProgramData\Keysas\Firewall\usb-ca-pq.pem'/>
+            </RegistryKey>
+          </Component>
+
+          <!--
+            Minifilter instance registry keys.
+            These replicate the [MiniFilter.AddRegistry] section of the INF:
+            altitude, flags, SupportedFeatures, DebugFlags.
+            They are placed here (under APPLICATIONFOLDER) because WiX
+            requires every Component to live inside a Directory element.
+          -->
+          <Component Id='comp_minifilter_reg' Guid='E2B4F076-A1C3-4E8D-B5F9-2C7D3E8F1A06' Win64='yes'>
+            <!--
+              WiX 3.x ServiceInstall only supports ownProcess / shareProcess —
+              file-system driver type (0x2) cannot be expressed via that element.
+              We write the service registration directly into the registry instead.
+              ServiceControl (in comp_minifilter_sys) still handles stop / remove
+              via the MSI ServiceControl table, which works independently of how
+              the service was created.
+            -->
+            <RegistryKey Root='HKLM' Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter'>
+              <!-- Service registration -->
+              <RegistryValue Type='expandable' Name='ImagePath'
+                Value='%SystemRoot%\System32\drivers\KeysasMinifilter.sys'/>
+              <RegistryValue Type='string'  Name='DisplayName'   Value='Keysas Mini-Filter Driver'/>
+              <RegistryValue Type='string'  Name='Description'   Value='Keysas Mini-Filter Driver'/>
+              <RegistryValue Type='integer' Name='Type'          Value='2'/>  <!-- SERVICE_FILE_SYSTEM_DRIVER -->
+              <RegistryValue Type='integer' Name='Start'         Value='3'/>  <!-- SERVICE_DEMAND_START -->
+              <RegistryValue Type='integer' Name='ErrorControl'  Value='1'/>  <!-- SERVICE_ERROR_NORMAL -->
+              <RegistryValue Type='string'  Name='Group'         Value='FSFilter Activity Monitor'/>
+              <RegistryValue Type='multiString' Name='DependOnService' Value='FltMgr[~]'/>
+              <!-- Filter-manager-specific values -->
+              <RegistryValue Type='integer' Name='DebugFlags'        Value='0'/>
+              <RegistryValue Type='integer' Name='SupportedFeatures' Value='3'
+                KeyPath='yes'/>
+            </RegistryKey>
+            <RegistryKey Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter\Instances'>
+              <RegistryValue Type='string' Name='DefaultInstance' Value='Keysas Instance'/>
+            </RegistryKey>
+            <RegistryKey Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter\Instances\Keysas Instance'>
+              <RegistryValue Type='string'  Name='Altitude' Value='370033'/>
+              <RegistryValue Type='integer' Name='Flags'    Value='0'/>
+            </RegistryKey>
+          </Component>
+
+        </Directory>
+      </Directory>
+
+      <!--
+        ── Minifilter driver binary: %SystemRoot%\System32\drivers\ ──
+        System64Folder always resolves to %SystemRoot%\System32 on x64.
+        Service registration is done via registry in comp_minifilter_reg
+        (WiX 3.x ServiceInstall only supports ownProcess/shareProcess, not
+        SERVICE_FILE_SYSTEM_DRIVER = 0x2).  ServiceControl below handles
+        stop/start/remove via the MSI ServiceControl table, which works
+        independently of how the service was created.
+      -->
+      <Directory Id='System64Folder'>
+        <Directory Id='DriversDirSys' Name='drivers'>
+          <Component Id='comp_minifilter_sys' Guid='F3A7E891-B2C4-4D1E-9A3F-7B8C2D5E6F90' Win64='yes'>
+            <File
+              Id='file_minifilter_sys'
+              Name='KeysasMinifilter.sys'
+              DiskId='1'
+              Source='$(var.MinifilterDir)/KeysasMinifilter.sys'
+              KeyPath='yes'/>
+
+            <!--
+              Catalog file for driver signature verification.
+              Required for Windows 11 (PnpLockdown=1 in the INF).
+            -->
+            <File
+              Id='file_minifilter_cat'
+              Name='KeysasMinifilter.cat'
+              DiskId='1'
+              Source='$(var.MinifilterDir)/KeysasMinifilter.cat'/>
+
+            <ServiceControl
+              Id='svc_minifilter_control'
+              Name='KeysasMinifilter'
+              Start='install'
+              Stop='both'
+              Remove='uninstall'
+              Wait='yes'/>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- Certificate directory: C:\ProgramData\Keysas\Firewall\ -->
+      <Directory Id='CommonAppDataFolder'>
+        <Directory Id='KEYSASDATADIR' Name='Keysas'>
+          <Directory Id='CERTFOLDER' Name='Firewall'>
+            <Component Id='comp_certdir' Guid='7287E597-B0DC-41B4-A3FF-44117C03CCCD' Win64='yes'>
+              <CreateFolder/>
+              <RemoveFolder Id='rm_certdir' On='uninstall'/>
+              <RegistryValue
+                Root='HKLM'
+                Key='SOFTWARE\Keysas\Firewall'
+                Name='CertDir'
+                Type='string'
+                Value='[CERTFOLDER]'
+                KeyPath='yes'/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+
+    </Directory>
+    <!-- ──────────────────────────────────────────────────── features -->
+
+    <Feature Id='Complete' Title='Keysas USB Firewall' Level='1'>
+      <ComponentRef Id='comp_trayapp'/>
+      <ComponentRef Id='comp_trayapp_run'/>
+      <ComponentRef Id='comp_binary'/>
+      <ComponentRef Id='comp_registry'/>
+      <ComponentRef Id='comp_certdir'/>
+      <ComponentRef Id='comp_minifilter_sys'/>
+      <ComponentRef Id='comp_minifilter_reg'/>
+    </Feature>
+
+    <!-- ──────────────────────────────────────────────────── UI -->
+    <!--
+      Silent/unattended install: msiexec /i keysas-firewall.msi /quiet
+      To add an interactive UI on a Windows build host:
+        <UIRef Id='WixUI_Minimal'/>
+        <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
+    -->
+
+  </Product>
+</Wix>
