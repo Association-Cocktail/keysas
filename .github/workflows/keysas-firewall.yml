@@ -308,6 +308,48 @@ jobs:
           "WDK_SHARED_INCLUDE=$sharedInclude" | Out-File $env:GITHUB_ENV -Append
           "DDK_LIB_PATH=$kmLib"               | Out-File $env:GITHUB_ENV -Append
 
+          # ── Wire up WindowsDriverKit.targets ──────────────────────────────
+          # ConfigurationType=Driver requires WindowsDriverKit.targets in
+          # $(VCTargetsPath)\BuildCustomizations\ to define the Link target that
+          # produces the .sys file.  Without it MSBuild only compiles (.obj) and
+          # exits 0 without ever linking.
+          # Search order: NuGet package build dir → VS2022 install tree.
+          $dest = "$env:VCTargetsPath\BuildCustomizations"
+          Write-Host "=== NuGet package build directory ==="
+          $pkgBuild = "$pkgDir\Microsoft.Windows.WDK.x64\build"
+          if (Test-Path $pkgBuild) {
+            Get-ChildItem $pkgBuild -Recurse | Select-Object -ExpandProperty FullName
+          } else {
+            Write-Host "(not found: $pkgBuild)"
+          }
+
+          $wdkTargets = $null
+          # 1. NuGet package
+          $wdkTargets = Get-ChildItem $pkgDir -Recurse -Filter "WindowsDriverKit.targets" `
+                          -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($wdkTargets) { Write-Host "Found in NuGet: $wdkTargets" }
+
+          # 2. VS2022 Enterprise install tree (WDK component may place it here)
+          if (-not $wdkTargets) {
+            $wdkTargets = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" `
+                            -Recurse -Filter "WindowsDriverKit.targets" -ErrorAction SilentlyContinue |
+                            Select-Object -First 1 -ExpandProperty FullName
+            if ($wdkTargets) { Write-Host "Found in VS install: $wdkTargets" }
+          }
+
+          if ($wdkTargets) {
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Copy-Item $wdkTargets "$dest\WindowsDriverKit.targets" -Force
+            Write-Host "Copied WindowsDriverKit.targets → $dest"
+            $wdkProps = $wdkTargets -replace '\.targets$', '.props'
+            if (Test-Path $wdkProps) {
+              Copy-Item $wdkProps "$dest\WindowsDriverKit.props" -Force
+              Write-Host "Copied WindowsDriverKit.props → $dest"
+            }
+          } else {
+            Write-Host "WARNING: WindowsDriverKit.targets not found — Link step will be skipped by MSBuild"
+          }
+
       - name: Build minifilter (Release x64)
         shell: pwsh
         working-directory: keysas-firewall/minifilter
