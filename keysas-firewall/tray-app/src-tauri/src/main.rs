@@ -64,17 +64,25 @@ fn main() -> Result<(), anyhow::Error> {
 fn init_tauri() -> Result<(), anyhow::Error> {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(AppController::init(app.handle().clone())?);
-
-            // On Linux: register the tray icon via the StatusNotifier protocol
-            // (pure zbus, no libappindicator dependency).
-            // On Windows: use the native Tauri tray icon builder.
+            // On Linux, start_sni MUST run before AppController::init so the
+            // SniHandle exists when ServiceInterfaceBuilder::build() is called.
             #[cfg(target_os = "linux")]
             {
-                if let Err(e) = linux::sni::start_sni(app.handle().clone()) {
-                    log::error!("Failed to start StatusNotifierItem: {e}");
+                use crate::linux::sni::start_sni;
+                match start_sni(app.handle().clone()) {
+                    Ok(h) => {
+                        app.manage(std::sync::Arc::new(h));
+                    }
+                    Err(e) => {
+                        log::error!("Failed to start StatusNotifierItem: {e}");
+                        return Err(e.into());
+                    }
                 }
             }
+
+            app.manage(AppController::init(app.handle().clone())?);
+
+            // On Windows: use the native Tauri tray icon builder.
 
             #[cfg(target_os = "windows")]
             {

@@ -47,8 +47,8 @@ impl AppController {
         // Create the application controller
         let ctrl = Arc::new(AppController {
             store: RwLock::new(FilterStore::init_store()),
-            view: app_handle,
-            comm: ServiceInterfaceBuilder::build()?,
+            view: app_handle.clone(),
+            comm: ServiceInterfaceBuilder::build(&app_handle)?,
         });
 
         // Start the server thread

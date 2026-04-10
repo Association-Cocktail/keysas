@@ -11,7 +11,8 @@
 //! **system bus** (registered by the root daemon) to:
 //!
 //! - **`start_server`** — spawns a polling thread that calls `get_usb_list`
-//!   every 5 seconds and feeds updates into the `AppController`.
+//!   every 5 seconds, feeds updates into the `AppController`, then calls
+//!   `sni::notify_sni` so GNOME Shell refreshes the tray icon immediately.
 //!
 //! - **`send_usb_update`** — calls `update_usb_authorization` on the daemon
 //!   when the user changes a device's authorization via the UI.
@@ -40,6 +41,7 @@ use anyhow::anyhow;
 use std::sync::Arc;
 
 use crate::app_controller::AppController;
+use crate::linux::sni::{notify_sni, SniHandle};
 use crate::service_if::{FileUpdateMessage, ServiceInterface, UsbAuthorization, UsbUpdateMessage};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,22 +74,44 @@ trait Firewall1 {
 
 /// Handle to the D-Bus service interface.
 #[derive(Debug)]
-pub struct LinuxServiceInterface {}
+pub struct LinuxServiceInterface {
+    /// Handle to the SNI tray icon — used to push NewIcon/NewStatus signals
+    /// after each polling cycle.
+    sni: Arc<SniHandle>,
+}
 
 impl LinuxServiceInterface {
-    pub fn init() -> Result<LinuxServiceInterface, anyhow::Error> {
-        Ok(LinuxServiceInterface {})
+    pub fn init(sni: SniHandle) -> Result<LinuxServiceInterface, anyhow::Error> {
+        Ok(LinuxServiceInterface {
+            sni: Arc::new(sni),
+        })
     }
 }
 
+/// Derive the SNI status string from the current device list.
+///
+/// - No devices        → "Passive"   (dim icon: nothing connected)
+/// - Any Pending       → "NeedsAttention" (animated/highlighted icon)
+/// - Otherwise         → "Active"    (normal icon)
+fn status_from_updates(updates: &[UsbUpdateMessage]) -> &'static str {
+    if updates.is_empty() {
+        return "Passive";
+    }
+    if updates
+        .iter()
+        .any(|u| u.authorization == UsbAuthorization::Pending)
+    {
+        return "NeedsAttention";
+    }
+    "Active"
+}
+
 impl ServiceInterface for LinuxServiceInterface {
-    /// Spawn a background thread that polls `get_usb_list` every 5 seconds
-    /// and reconciles the tray-app store with the daemon's current state.
-    ///
-    /// `set_usb_list` replaces the store wholesale so that devices unplugged
-    /// since the last poll are automatically removed.
+    /// Spawn a background thread that polls `get_usb_list` every 5 seconds,
+    /// reconciles the tray-app store, and notifies GNOME Shell via SNI signals.
     fn start_server(&self, ctrl: &Arc<AppController>) -> Result<(), anyhow::Error> {
         let ctrl_hdl = ctrl.clone();
+        let sni_hdl  = self.sni.clone();
 
         std::thread::spawn(move || loop {
             match zbus::blocking::Connection::system() {
@@ -111,7 +135,17 @@ impl ServiceInterface for LinuxServiceInterface {
                                             },
                                         })
                                         .collect();
+
+                                    // Compute SNI status before moving updates.
+                                    let new_status = status_from_updates(&updates);
+
+                                    // Update the application store and emit usb_update
+                                    // to the Tauri frontend.
                                     ctrl_hdl.set_usb_list(updates);
+
+                                    // Notify GNOME Shell so it refreshes the tray
+                                    // icon without waiting for its next property poll.
+                                    notify_sni(&sni_hdl, new_status);
                                 }
                                 Err(e) => {
                                     log::warn!("start_server: failed to parse USB list JSON: {e}")

@@ -139,10 +139,19 @@ pub struct UsbUpdateMessage {
 pub struct ServiceInterfaceBuilder {}
 
 impl ServiceInterfaceBuilder {
-    pub fn build() -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
+    pub fn build(app: &tauri::AppHandle) -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
         cfg_if! {
             if #[cfg(target_os = "linux")] {
-                let iface: Box<dyn ServiceInterface + Send + Sync> = Box::new(LinuxServiceInterface::init()?);
+                use crate::linux::sni::SniHandle;
+                use anyhow::anyhow;
+                use tauri::Manager;
+                let sni = app
+                    .try_state::<std::sync::Arc<SniHandle>>()
+                    .ok_or_else(|| anyhow!("SniHandle not in managed state — start_sni must run first"))?
+                    .inner()
+                    .clone();
+                let iface: Box<dyn ServiceInterface + Send + Sync> =
+                    Box::new(LinuxServiceInterface::init((*sni).clone())?);
                 return Ok(iface)
             } else if #[cfg(target_os = "windows")] {
                 let iface: Box<dyn ServiceInterface + Send + Sync> = Box::new(WindowsServiceInterface::init()?);
