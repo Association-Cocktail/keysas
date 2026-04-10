@@ -448,3 +448,107 @@ jobs:
           name: keysas-firewall-full-msi
           path: keysas-firewall/daemon/target/wix/*.msi
           retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 6. Build daemon release binary (Linux)
+  #    Compiles the daemon in release mode and uploads the binary so the
+  #    packaging job can create the .deb without a second compile step.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-daemon:
+    name: Build daemon release (Linux)
+    runs-on: ubuntu-latest
+    needs: build-ebpf
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: nightly
+          rustflags: ""
+
+      - name: Download eBPF binary
+        uses: actions/download-artifact@v4
+        with:
+          name: lsm-file-ebpf-debug
+          path: keysas-firewall/ebpfilter/target/bpfel-unknown-none/debug/
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -y \
+            libudev-dev \
+            clang \
+            llvm \
+            pkg-config
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: daemon-release-${{ runner.os }}-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: daemon-release-${{ runner.os }}-
+
+      - name: cargo build --release
+        working-directory: keysas-firewall/daemon
+        run: cargo build --release
+
+      - name: Upload daemon release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-linux-release
+          path: keysas-firewall/daemon/target/release/keysas-usbfilter-daemon
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 7. Package .deb (Linux)
+  #    Uses the pre-built release binary from build-daemon (--no-build skips
+  #    recompilation entirely — only packaging metadata and pkg/ assets are read).
+  #    Output: keysas-firewall_<version>_amd64.deb
+  # ─────────────────────────────────────────────────────────────────────────────
+  package-deb:
+    name: Package .deb (Linux)
+    runs-on: ubuntu-latest
+    needs: build-daemon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Set up Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: stable
+          rustflags: ""
+
+      - name: Download daemon release binary
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-linux-release
+          path: keysas-firewall/daemon/target/release/
+
+      - name: Make binary executable
+        run: chmod +x keysas-firewall/daemon/target/release/keysas-usbfilter-daemon
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -yq
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Package .deb
+        working-directory: keysas-firewall/daemon
+        run: cargo deb --no-build
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keysas-firewall-deb
+          path: keysas-firewall/daemon/target/debian/*.deb
+          retention-days: 7
