@@ -11,11 +11,11 @@ members = [
     "keysas-sign/",
     "keysas-fido/",
     "keysas_lib/",
+    "keysas-firewall"
 ]
 
 exclude = [
     "keysas-admin/src-tauri",
-    "keysas-firewall"
 ]
 
 [profile.release]
