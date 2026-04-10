@@ -31,8 +31,8 @@ mod service_if;
 use anyhow::anyhow;
 use std::sync::Arc;
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, State, SystemTray,
-    SystemTrayEvent, Window,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow,
 };
 
 use crate::app_controller::AppController;
@@ -65,17 +65,33 @@ fn main() -> Result<(), anyhow::Error> {
 fn init_tauri() -> Result<(), anyhow::Error> {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(AppController::init(app.handle())?);
+            app.manage(AppController::init(app.handle().clone())?);
+
+            // Build the system tray icon
+            // Use include_image! so the 32×32 PNG is decoded at compile time and
+            // passed to AppIndicator as a proper raster image (ICO from
+            // default_window_icon() is not understood by the AppIndicator protocol).
+            let _tray = TrayIconBuilder::new()
+                .icon(tauri::include_image!("icons/logo-keysas-short-32.png"))
+                .tooltip("Keysas USB Firewall")
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        position,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle().clone();
+                        if let Err(e) = open_usb_view(&app, &position) {
+                            log::error!("Failed to open main view: {e}");
+                            app.exit(1);
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
-        })
-        .system_tray(SystemTray::new())
-        .on_system_tray_event(|app, event| {
-            if let SystemTrayEvent::LeftClick { position, .. } = event {
-                if let Err(e) = open_usb_view(app, &position) {
-                    log::error!("Failed to open main view: {e}");
-                    app.exit(1);
-                }
-            }
         })
         .invoke_handler(tauri::generate_handler![get_file_list, toggle_file_auth])
         .build(tauri::generate_context!())?;
@@ -95,7 +111,10 @@ fn init_tauri() -> Result<(), anyhow::Error> {
 ///
 /// * 'w' - Reference to the window
 /// * 'click' - Position of the click event, it corresponds to the top of the icon in the tray
-fn set_window_over_tray(w: &Window, click: &PhysicalPosition<f64>) -> Result<(), anyhow::Error> {
+fn set_window_over_tray(
+    w: &WebviewWindow,
+    click: &PhysicalPosition<f64>,
+) -> Result<(), anyhow::Error> {
     let screen = w
         .current_monitor()?
         .ok_or_else(|| anyhow!("Not screen detected"))?;
@@ -132,7 +151,7 @@ fn set_window_over_tray(w: &Window, click: &PhysicalPosition<f64>) -> Result<(),
 /// * 'app' - The tauri application
 fn open_usb_view(app: &AppHandle, click: &PhysicalPosition<f64>) -> Result<(), anyhow::Error> {
     // Get the window
-    match app.get_window("main") {
+    match app.get_webview_window("main") {
         Some(w) => {
             // If the window exists, toggle its visibility
             match w.is_visible()? {
@@ -148,11 +167,14 @@ fn open_usb_view(app: &AppHandle, click: &PhysicalPosition<f64>) -> Result<(), a
         }
         None => {
             // If the window does not exists, create a new one
-            let w =
-                tauri::WindowBuilder::new(app, "main", tauri::WindowUrl::App("index.html".into()))
-                    .decorations(false)
-                    .focused(true)
-                    .build()?;
+            let w = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .decorations(false)
+            .focused(true)
+            .build()?;
             set_window_over_tray(&w, click)?;
         }
     };

@@ -28,7 +28,7 @@ use crate::service_if::{FileUpdateMessage, FileAuthorization, ServiceInterface,
 
 use anyhow::anyhow;
 use std::sync::{Arc, RwLock};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter};
 
 /// Application controller object, it contains handle to the application main services
 pub struct AppController {
@@ -99,7 +99,7 @@ impl AppController {
         // Notify the GUI to update the view
         if let Err(e) = self
             .view
-            .emit_all("file_update", String::from(&update.device))
+            .emit("file_update", String::from(&update.device))
         {
             println!("Failed to notify view of file changed: {e}");
         }
@@ -126,7 +126,7 @@ impl AppController {
         }
 
         // Notify the UI to refresh the device list
-        if let Err(e) = self.view.emit_all("usb_update", ()) {
+        if let Err(e) = self.view.emit("usb_update", ()) {
             log::error!("set_usb_list: failed to emit usb_update event: {e}");
         }
     }
@@ -154,7 +154,7 @@ impl AppController {
             Err(e) => log::error!("notify_usb_change: failed to acquire store lock: {e}"),
         }
 
-        if let Err(e) = self.view.emit_all("usb_update", &update.device) {
+        if let Err(e) = self.view.emit("usb_update", &update.device) {
             log::error!("notify_usb_change: failed to emit usb_update event: {e}");
         }
     }

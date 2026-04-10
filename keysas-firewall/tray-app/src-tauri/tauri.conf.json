@@ -1,57 +1,16 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "keysas-tray-app",
+  "version": "0.1.0",
+  "identifier": "com.keysas.usbfirewall",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist",
-    "withGlobalTauri": false
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "keysas-tray-app",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "notification": {
-        "all": true
-      },
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "dialog": {
-        "message": true
-      }
-    },
-    "bundle": {
-      "active": true,
-      "icon": [
-        "icons/logo-keysas-short.ico",
-        "icons/logo-keysas-short-16.png",
-        "icons/logo-keysas-short-32.png",
-        "icons/logo-keysas-short-48.png",
-        "icons/logo-keysas-short-256.png"
-      ],
-      "identifier": "com.keysas.usbfirewall",
-      "targets": "all",
-      "category": "Utility",
-      "windows": {
-        "wix": {
-          "language": ["fr-FR", "en-US"]
-        }
-      }
-    },
-    "security": {
-      "csp": null
-    },
-    "updater": {
-      "active": false
-    },
-    "systemTray": {
-        "iconPath": "./icons/logo-keysas-short.ico",
-        "iconAsTemplate": true
-    },
+  "app": {
+    "withGlobalTauri": false,
     "windows": [
       {
         "label": "main",
@@ -60,6 +19,33 @@
         "visible": false,
         "decorations": false
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/logo-keysas-short.ico",
+      "icons/logo-keysas-short-16.png",
+      "icons/logo-keysas-short-32.png",
+      "icons/logo-keysas-short-48.png",
+      "icons/logo-keysas-short-256.png"
+    ],
+    "category": "Utility",
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1", "libwebkit2gtk-4.1-0"],
+        "files": {
+          "/etc/xdg/autostart/keysas-tray-app.desktop": "keysas-tray-app-autostart.desktop"
+        }
+      }
+    },
+    "windows": {
+      "wix": {
+        "language": ["fr-FR", "en-US"]
+      }
+    }
   }
 }

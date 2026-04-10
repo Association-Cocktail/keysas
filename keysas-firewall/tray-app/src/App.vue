@@ -51,7 +51,7 @@ import {listen} from '@tauri-apps/api/event'
 </template>
 
 <script lang="ts">
-import {invoke} from "@tauri-apps/api"
+import {invoke} from "@tauri-apps/api/core"
 
 enum AuthorizationMode {
   Blocked = 0,
