@@ -31,7 +31,6 @@ mod service_if;
 use anyhow::anyhow;
 use std::sync::Arc;
 use tauri::{
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow,
 };
 
@@ -67,33 +66,44 @@ fn init_tauri() -> Result<(), anyhow::Error> {
         .setup(|app| {
             app.manage(AppController::init(app.handle().clone())?);
 
-            // Build the system tray icon
-            // Use include_image! so the 32×32 PNG is decoded at compile time and
-            // passed to AppIndicator as a proper raster image (ICO from
-            // default_window_icon() is not understood by the AppIndicator protocol).
-            let _tray = TrayIconBuilder::new()
-                .icon(tauri::include_image!("icons/logo-keysas-short-32.png"))
-                .tooltip("Keysas USB Firewall")
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        position,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle().clone();
-                        if let Err(e) = open_usb_view(&app, &position) {
-                            log::error!("Failed to open main view: {e}");
-                            app.exit(1);
+            // On Linux: register the tray icon via the StatusNotifier protocol
+            // (pure zbus, no libappindicator dependency).
+            // On Windows: use the native Tauri tray icon builder.
+            #[cfg(target_os = "linux")]
+            {
+                if let Err(e) = linux::sni::start_sni(app.handle().clone()) {
+                    log::error!("Failed to start StatusNotifierItem: {e}");
+                }
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+                let tray = TrayIconBuilder::new()
+                    .icon(tauri::include_image!("icons/logo-keysas-short-32.png"))
+                    .tooltip("Keysas USB Firewall")
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            position,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle().clone();
+                            if let Err(e) = open_usb_view(&app, &position) {
+                                log::error!("Failed to open main view: {e}");
+                                app.exit(1);
+                            }
                         }
-                    }
-                })
-                .build(app)?;
+                    })
+                    .build(app)?;
+                app.manage(tray);
+            }
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_file_list, toggle_file_auth])
+        .invoke_handler(tauri::generate_handler![get_file_list, get_usb_list, toggle_file_auth])
         .build(tauri::generate_context!())?;
 
     app.run(|_app_handle, event| {
@@ -105,12 +115,7 @@ fn init_tauri() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Set the application on the bottom right corner over the desktop tray
-///
-/// # Arguments
-///
-/// * 'w' - Reference to the window
-/// * 'click' - Position of the click event, it corresponds to the top of the icon in the tray
+/// Set the application window just above the tray click position.
 fn set_window_over_tray(
     w: &WebviewWindow,
     click: &PhysicalPosition<f64>,
@@ -120,19 +125,13 @@ fn set_window_over_tray(
         .ok_or_else(|| anyhow!("Not screen detected"))?;
     let scale_factor = screen.scale_factor();
 
-    // Click position corresponds to the top left corner of the icon
-    // Convert the click physical position to logical
     let click_log = click.to_logical::<f64>(scale_factor);
-
     let screen_pos_log = screen.position().to_logical::<f64>(scale_factor);
     let screen_size_log = screen.size().to_logical::<f64>(scale_factor);
 
-    // Set arbitrary size for the window
-    // TODO: adapt it to the monitor scale factor
     let window_size = LogicalSize::<f64>::new(400.0, 300.0);
     w.set_size(window_size)?;
 
-    // Set the position of the window just above the click position and the farthest to the right
     let x_log = if click_log.x + window_size.width <= screen_pos_log.x + screen_size_log.width {
         click_log.x
     } else {
@@ -144,29 +143,23 @@ fn set_window_over_tray(
     Ok(())
 }
 
-/// Toggle the USB view when the tray icon is clicked
-///
-/// # Arguments
-///
-/// * 'app' - The tauri application
-fn open_usb_view(app: &AppHandle, click: &PhysicalPosition<f64>) -> Result<(), anyhow::Error> {
-    // Get the window
+/// Open or toggle the main USB firewall window.
+pub(crate) fn open_usb_view(
+    app: &AppHandle,
+    click: &PhysicalPosition<f64>,
+) -> Result<(), anyhow::Error> {
     match app.get_webview_window("main") {
-        Some(w) => {
-            // If the window exists, toggle its visibility
-            match w.is_visible()? {
-                false => {
-                    set_window_over_tray(&w, click)?;
-                    w.set_focus()?;
-                    w.show()?;
-                }
-                true => {
-                    w.hide()?;
-                }
+        Some(w) => match w.is_visible()? {
+            false => {
+                set_window_over_tray(&w, click)?;
+                w.set_focus()?;
+                w.show()?;
             }
-        }
+            true => {
+                w.hide()?;
+            }
+        },
         None => {
-            // If the window does not exists, create a new one
             let w = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -182,18 +175,19 @@ fn open_usb_view(app: &AppHandle, click: &PhysicalPosition<f64>) -> Result<(), a
     Ok(())
 }
 
-/// Command to retrieve list of all the files in a USB device
-/// The list is returned as a json array of File object as follows
-/// [{
-///     device: string,
-///     path: string
-///     authorization: boolean
-/// }, ..]
-///
-/// # Arguments
-///
-/// * 'device_path' - Name of the path of the volume, e.g 'D:'
-/// * 'app_ctrl' - Handle to the application controler, it is supplied by tauri
+/// Command to retrieve the current USB device list from the store.
+#[tauri::command]
+async fn get_usb_list(
+    app_ctrl: State<'_, Arc<AppController>>,
+) -> Result<String, String> {
+    match app_ctrl.store.read() {
+        Ok(store) => serde_json::to_string(store.get_devices())
+            .map_err(|e| format!("Serialization error: {e}")),
+        Err(e) => Err(format!("Store lock error: {e}")),
+    }
+}
+
+/// Command to retrieve list of all the files in a USB device.
 #[tauri::command]
 async fn get_file_list(
     device_path: String,
@@ -214,13 +208,7 @@ async fn get_file_list(
     }
 }
 
-/// Request to toggle the authorization for a file in a give device
-///
-/// # Arguments
-///
-/// * 'device' - Name of the USB device volume, e.g. 'D:'
-/// * 'path' - Full path to the file on the device
-/// * 'current_auth' - Current authorization status for the file
+/// Request to toggle the authorization for a file in a given device.
 #[tauri::command]
 async fn toggle_file_auth(
     device: String,
@@ -231,7 +219,7 @@ async fn toggle_file_auth(
 ) -> Result<(), String> {
     let auth = FileAuthorization::from_u8(new_auth);
     if let Err(e) = app_ctrl.request_file_auth_toggle(&device, &id, &path, auth) {
-        println!("toggle_file_auth: File toggle failed: {e}");
+        log::error!("toggle_file_auth: {e}");
         return Err(e.to_string());
     }
     Ok(())

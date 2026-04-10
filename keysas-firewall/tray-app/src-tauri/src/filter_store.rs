@@ -33,7 +33,7 @@ pub struct FileAuth {
     pub authorization: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UsbDevice {
     /// Unique device identifier (device node path, e.g. `/dev/sdb1`).
     pub id: String,

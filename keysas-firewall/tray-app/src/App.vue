@@ -18,13 +18,13 @@ import {listen} from '@tauri-apps/api/event'
         <td class="usb_device">
           <button @click="showUsbDevice(usb)">{{ usb.name }} - {{ usb.path }}</button>
         </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.Allowed_RW">
+        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.AllowRW || usb.authorization == AuthorizationMode.AllowAll">
           <button class="bi-folder-check"></button>
         </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.Allowed_Read">
+        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.AllowRead">
           <button class="bi-folder-plus"></button>
         </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.Blocked">
+        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.Block || usb.authorization == AuthorizationMode.Pending">
           <button class="bi-folder-x"></button>
         </td>
       </tr>
@@ -41,9 +41,9 @@ import {listen} from '@tauri-apps/api/event'
       <tbody>
         <tr v-for="file in file_list">
           <td>{{ file.path }}</td>
-          <td v-if="file.authorization == AuthorizationMode.Allowed_Read"><button class="bi-file-earmark-check" @click="toggleFileAuth(file, AuthorizationMode.Allowed_RW)"></button></td>
-          <td v-if="file.authorization == AuthorizationMode.Allowed_RW"><button class="bi-file-earmark-plus" @click="toggleFileAuth(file, AuthorizationMode.Blocked)"></button></td>
-          <td v-if="file.authorization == AuthorizationMode.Blocked"><button class="bi-file-earmark-x" @click="toggleFileAuth(file, AuthorizationMode.Allowed_Read)"></button></td>
+          <td v-if="file.authorization == AuthorizationMode.AllowRead"><button class="bi-file-earmark-check" @click="toggleFileAuth(file, AuthorizationMode.AllowRW)"></button></td>
+          <td v-if="file.authorization == AuthorizationMode.AllowRW"><button class="bi-file-earmark-plus" @click="toggleFileAuth(file, AuthorizationMode.Block)"></button></td>
+          <td v-if="file.authorization == AuthorizationMode.Block"><button class="bi-file-earmark-x" @click="toggleFileAuth(file, AuthorizationMode.AllowRead)"></button></td>
         </tr>
       </tbody>
     </table>
@@ -53,13 +53,17 @@ import {listen} from '@tauri-apps/api/event'
 <script lang="ts">
 import {invoke} from "@tauri-apps/api/core"
 
+// Must match UsbAuthorization in service_if.rs
 enum AuthorizationMode {
-  Blocked = 0,
-  Allowed_Read,
-  Allowed_RW
+  Pending   = 0,
+  Block     = 1,
+  AllowRead = 2,
+  AllowRW   = 3,
+  AllowAll  = 4,
 }
 
 declare interface UsbDevice {
+  id: string,
   name: string,
   path: string,
   authorization: AuthorizationMode
@@ -86,17 +90,23 @@ export default {
     }
   },
   async mounted() {
-    this.usb_list.push({
-      name: "Kingston USB",
-      path: "D:",
-      authorization: AuthorizationMode.Allowed_RW
+    // Populate USB list immediately and on every daemon update
+    await this.refreshUsbList();
+    await listen('usb_update', async () => {
+      await this.refreshUsbList();
     });
-    
     await listen('file_update', (event) => {
       this.refreshFileList(event.payload as string);
     });
   },
   methods: {
+    async refreshUsbList() {
+      invoke('get_usb_list')
+        .then((result) => {
+          this.usb_list = JSON.parse(result as string) as UsbDevice[];
+        })
+        .catch((error) => console.error('get_usb_list:', error));
+    },
     async refreshFileList(device_path: string) {
       if (device_path === this.usb_device.path) {
         invoke('get_file_list', {devicePath: device_path})
@@ -124,9 +134,9 @@ export default {
     },
     async toggleFileAuth(file: File, new_mode: AuthorizationMode) {
       let auth = 0; // Blocked
-      if (new_mode == AuthorizationMode.Allowed_Read) {
+      if (new_mode == AuthorizationMode.AllowRead) {
         auth = 1;
-      } else if (new_mode == AuthorizationMode.Allowed_RW) {
+      } else if (new_mode == AuthorizationMode.AllowRW) {
         auth = 2;
       }
       console.log("New authorization");
