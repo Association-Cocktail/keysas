@@ -263,6 +263,26 @@ pub struct FilePolicy {
     pub auth: FileAuthorization,
 }
 
+/// Look up the current mount point of `device` by parsing `/proc/mounts`.
+///
+/// Returns `None` if the device is not listed as mounted.
+#[cfg(target_os = "linux")]
+fn find_mount_point(device: &OsString) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open("/proc/mounts").ok()?;
+    let dev_str = device.to_string_lossy();
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        // /proc/mounts columns: <device> <mountpoint> <fstype> <options> <dump> <pass>
+        let mut cols = line.splitn(3, ' ');
+        let dev = match cols.next() { Some(d) => d, None => continue };
+        let mnt = match cols.next() { Some(m) => m, None => continue };
+        if dev == dev_str.as_ref() {
+            return Some(mnt.to_string());
+        }
+    }
+    None
+}
+
 impl ServiceController {
     /// Initialize the service controller
     pub fn init(config: &Config) -> Result<Arc<Mutex<ServiceController>>, anyhow::Error> {
@@ -310,6 +330,9 @@ impl ServiceController {
             ctrl_hdl.gui.start(&ctrl)?;
             ctrl_hdl.usb_monitor.start(&ctrl)?;
             ctrl_hdl.file_filter.start(&ctrl)?;
+            // Recover devices that were mounted before this daemon instance started
+            #[cfg(target_os = "linux")]
+            ctrl_hdl.recover_mounted_devices();
         }
 
         Ok(ctrl)
@@ -831,13 +854,102 @@ impl ServiceController {
         result
     }
 
+    /// Re-register USB devices that were certified and mounted before this daemon
+    /// instance started (hot-restart recovery).
+    ///
+    /// For each sentinel in `/run/keysas/certified/`:
+    ///   1. If the device node no longer exists, remove the stale sentinel.
+    ///   2. If the device is not currently mounted, skip it.
+    ///   3. Otherwise, insert it directly into `mounted_usb` with auth derived
+    ///      from the current policy (sentinel presence attests prior certification).
+    ///   4. Re-apply the fanotify mount mark so file access is filtered immediately.
+    ///
+    /// Desktop notifications are intentionally skipped; the tray-app will pick
+    /// up the restored devices on its next 5-second polling cycle.
+    #[cfg(target_os = "linux")]
+    fn recover_mounted_devices(&mut self) {
+        let certified_dir = std::path::Path::new("/run/keysas/certified");
+        if !certified_dir.exists() {
+            return;
+        }
+
+        let entries = match std::fs::read_dir(certified_dir) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("recover_mounted_devices: cannot read sentinel dir: {e}");
+                return;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let dev_name = entry.file_name().to_string_lossy().into_owned();
+            let device_id = OsString::from(format!("/dev/{}", dev_name));
+
+            // Device unplugged while the daemon was stopped — remove stale sentinel.
+            if !std::path::Path::new(&device_id).exists() {
+                let _ = std::fs::remove_file(entry.path());
+                info!(
+                    "recover_mounted_devices: /dev/{} gone, removed sentinel",
+                    dev_name
+                );
+                continue;
+            }
+
+            // Device present but not currently mounted — nothing to re-register.
+            let mnt_point = match find_mount_point(&device_id) {
+                Some(m) => m,
+                None => {
+                    info!(
+                        "recover_mounted_devices: /dev/{} not mounted, skipping",
+                        dev_name
+                    );
+                    continue;
+                }
+            };
+
+            // Re-derive auth from the current policy.
+            // The sentinel already attests that the device passed certification.
+            let auth = if self.policy.allow_user_file_write {
+                UsbAuthorization::AllowRW
+            } else {
+                UsbAuthorization::AllowRead
+            };
+
+            let device = UsbDevice {
+                device_id: device_id.clone(),
+                mnt_point: Some(OsString::from(&mnt_point)),
+                vendor: OsString::new(),
+                model: OsString::new(),
+                revision: OsString::new(),
+                serial: OsString::new(),
+                usb_syspath: None,
+            };
+            let policy = UsbDevicePolicy { device, auth };
+
+            // Re-apply the fanotify mount mark.
+            if let Err(e) = self.file_filter.update_usb_auth(&policy) {
+                warn!(
+                    "recover_mounted_devices: fanotify mark failed for \
+                     /dev/{dev_name}: {e}"
+                );
+            } else {
+                info!(
+                    "recover_mounted_devices: restored /dev/{} at {} (auth={:?})",
+                    dev_name, mnt_point, auth
+                );
+            }
+
+            self.mounted_usb.insert(device_id, policy);
+        }
+    }
+
     /// Send the list of Usb devices and files currently registered in the firewall
-    /// 
+    ///
     /// For now, send the list of USB devices registered
     /// Files are not currently stored in the controller: TO BE FIXED
-    /// 
+    ///
     /// # Return value
-    /// 
+    ///
     /// * error if needed
     pub fn send_usb_file_list(&self) -> Result<(), anyhow::Error> {
         for (_, usb) in self.unmounted_usb.iter() {
