@@ -55,9 +55,9 @@ use anyhow::anyhow;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetDriveTypeW, GetLogicalDrives, ReadFile, SetFilePointerEx,
-    FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING,
+    CreateFileW, GetDriveTypeW, GetLogicalDrives, ReadFile, SetFileAttributesW,
+    SetFilePointerEx, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
@@ -80,6 +80,55 @@ use crate::usb_monitor::UsbMonitor;
 // uses for dwDesiredAccess across versions.
 const GENERIC_READ_ACCESS: u32 = 0x8000_0000;
 const GENERIC_WRITE_ACCESS: u32 = 0x4000_0000;
+
+/// Walk `root` recursively and apply `FILE_ATTRIBUTE_HIDDEN` to every file
+/// whose name matches `^\..+\.krp$` (hidden Keysas report files).
+///
+/// Called once after a USB device is certified so that report files are
+/// invisible in Windows Explorer — consistent with the dot-prefix convention
+/// used on Linux.
+fn hide_krp_files(root: &str) {
+    fn walk(dir: &std::path::Path) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("hide_krp_files: cannot read {:?}: {e}", dir);
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path);
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_owned(),
+                None => continue,
+            };
+            // Match ".<something>.krp" — at least one char between '.' and '.krp'
+            if name.starts_with('.') && name.ends_with(".krp") && name.len() > 5 {
+                let wide: Vec<u16> = path
+                    .to_string_lossy()
+                    .encode_utf16()
+                    .chain(std::iter::once(0u16))
+                    .collect();
+                unsafe {
+                    if let Err(e) = SetFileAttributesW(
+                        windows::core::PCWSTR(wide.as_ptr()),
+                        FILE_ATTRIBUTE_HIDDEN,
+                    ) {
+                        log::warn!("hide_krp_files: SetFileAttributesW({:?}) failed: {e}", path);
+                    } else {
+                        log::debug!("hide_krp_files: hid {:?}", path);
+                    }
+                }
+            }
+        }
+    }
+
+    walk(std::path::Path::new(root));
+}
 
 #[derive(Debug)]
 pub struct WindowsUsbMonitor {
@@ -400,6 +449,10 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
         if let Err(e) = ctrl.lock().unwrap().update_usb(&device) {
             log::warn!("Failed to update USB mount state: {e}");
         } else {
+            // Hide all .krp report files on the certified volume so they are
+            // invisible in Windows Explorer (FILE_ATTRIBUTE_HIDDEN), consistent
+            // with the dot-prefix convention used on Linux.
+            hide_krp_files(&format!("{drive_letter}:\\"));
             log::info!(
                 "Certified USB PhysicalDrive{disk_number} accessible at {drive_letter}:\\"
             );

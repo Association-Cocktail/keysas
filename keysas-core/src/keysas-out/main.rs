@@ -267,7 +267,7 @@ fn output_files(
         if conf.krp_mode.should_write(report_meta.is_valid) {
             let mut path = PathBuf::new();
             path.push(conf.sas_out.clone());
-            path.push(&f.md.filename);
+            path.push(format!(".{}", &f.md.filename));
             let path = append_ext("krp", path);
             let mut report = File::options()
                 .write(true)

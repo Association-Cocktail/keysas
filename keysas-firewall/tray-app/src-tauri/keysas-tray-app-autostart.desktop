@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Keysas USB Firewall
+GenericName=USB Firewall
+Comment=Monitors and controls USB device access
+Exec=/usr/bin/keysas-usbfilter-trayapp
+Icon=keysas-usbfilter-trayapp
+Categories=Security;Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

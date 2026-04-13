@@ -1,10 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-only
-/*
- *
- * (C) Copyright 2019-2023 Luc Bonnafoux, Stephane Neveu
- *
- */
-
 //! Entry point for the USB Firewall administration panel
 
 #![warn(unused_extern_crates)]
@@ -27,13 +21,10 @@
 mod app_controller;
 mod filter_store;
 mod service_if;
+mod tray_menu;
 
-use anyhow::anyhow;
 use std::sync::Arc;
-use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, State, SystemTray,
-    SystemTrayEvent, Window,
-};
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_controller::AppController;
 use crate::service_if::FileAuthorization;
@@ -44,40 +35,50 @@ pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-/// Payload for the init event sent to the usb_details window
-#[derive(Clone, serde::Serialize)]
-struct InitPayload {
-    /// Name of the USB device
-    usb_name: String,
-}
-
 fn main() -> Result<(), anyhow::Error> {
-    // Initialize the logger
-    simple_logger::init()?;
+    // Log at INFO for application code; suppress noise from async runtimes.
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .with_module_level("async_io", log::LevelFilter::Warn)
+        .with_module_level("polling", log::LevelFilter::Warn)
+        .with_module_level("zbus", log::LevelFilter::Warn)
+        .init()?;
 
-    // Launch the tauri application
     init_tauri()?;
-
     Ok(())
 }
 
-/// Initialize the tauri application as a system tray app
+/// Initialize the Tauri application as a system-tray app.
 fn init_tauri() -> Result<(), anyhow::Error> {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(AppController::init(app.handle())?);
+            // 1. Start the application controller (D-Bus polling thread, store).
+            app.manage(AppController::init(app.handle().clone())?);
+
+            // 2. Build the initial (empty) tray menu.
+            let initial_menu = tray_menu::build_usb_menu(app.handle(), &[])
+                .map_err(|e| format!("Failed to build initial tray menu: {e}"))?;
+
+            // 3. Create the system-tray icon with the native menu.
+            //    On Linux this goes through libayatana-appindicator (dbusmenu).
+            //    On Windows this uses the Win32 NotifyIcon API.
+            use tauri::tray::TrayIconBuilder;
+            let tray = TrayIconBuilder::new()
+                .icon(tauri::include_image!("icons/logo-keysas-short-32.png"))
+                .tooltip("Keysas USB Firewall")
+                .menu(&initial_menu)
+                .on_menu_event(on_menu_event)
+                .build(app)?;
+            app.manage(tray);
+
             Ok(())
         })
-        .system_tray(SystemTray::new())
-        .on_system_tray_event(|app, event| {
-            if let SystemTrayEvent::LeftClick { position, .. } = event {
-                if let Err(e) = open_usb_view(app, &position) {
-                    log::error!("Failed to open main view: {e}");
-                    app.exit(1);
-                }
-            }
-        })
-        .invoke_handler(tauri::generate_handler![get_file_list, toggle_file_auth])
+        .invoke_handler(tauri::generate_handler![
+            get_file_list,
+            get_usb_list,
+            toggle_file_auth,
+            override_usb
+        ])
         .build(tauri::generate_context!())?;
 
     app.run(|_app_handle, event| {
@@ -89,102 +90,111 @@ fn init_tauri() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Set the application on the bottom right corner over the desktop tray
-///
-/// # Arguments
-///
-/// * 'w' - Reference to the window
-/// * 'click' - Position of the click event, it corresponds to the top of the icon in the tray
-fn set_window_over_tray(w: &Window, click: &PhysicalPosition<f64>) -> Result<(), anyhow::Error> {
-    let screen = w
-        .current_monitor()?
-        .ok_or_else(|| anyhow!("Not screen detected"))?;
-    let scale_factor = screen.scale_factor();
+// ─────────────────────────────────────────────────────────────────────────────
+// Tray menu event handler
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Click position corresponds to the top left corner of the icon
-    // Convert the click physical position to logical
-    let click_log = click.to_logical::<f64>(scale_factor);
+fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
+    let id = event.id().as_ref().to_string();
 
-    let screen_pos_log = screen.position().to_logical::<f64>(scale_factor);
-    let screen_size_log = screen.size().to_logical::<f64>(scale_factor);
+    if id == "quit" {
+        app.exit(0);
+        return;
+    }
 
-    // Set arbitrary size for the window
-    // TODO: adapt it to the monitor scale factor
-    let window_size = LogicalSize::<f64>::new(400.0, 300.0);
-    w.set_size(window_size)?;
-
-    // Set the position of the window just above the click position and the farthest to the right
-    let x_log = if click_log.x + window_size.width <= screen_pos_log.x + screen_size_log.width {
-        click_log.x
-    } else {
-        screen_pos_log.x + screen_size_log.width - window_size.width
-    };
-    let window_pos = LogicalPosition::<f64>::new(x_log, click_log.y - window_size.height);
-    w.set_position(window_pos)?;
-
-    Ok(())
-}
-
-/// Toggle the USB view when the tray icon is clicked
-///
-/// # Arguments
-///
-/// * 'app' - The tauri application
-fn open_usb_view(app: &AppHandle, click: &PhysicalPosition<f64>) -> Result<(), anyhow::Error> {
-    // Get the window
-    match app.get_window("main") {
-        Some(w) => {
-            // If the window exists, toggle its visibility
-            match w.is_visible()? {
-                false => {
-                    set_window_over_tray(&w, click)?;
-                    w.set_focus()?;
-                    w.show()?;
+    // "authorize:{device_id}" — manually allow a blocked USB key.
+    if let Some(device_id) = id.strip_prefix("authorize:") {
+        let device_id = device_id.to_string();
+        if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+            match ctrl.allow_usb(&device_id) {
+                Ok(()) => {
+                    // Immediately refresh the menu so "Autoriser" disappears.
+                    tray_menu::rebuild_tray_menu(app, &ctrl);
                 }
-                true => {
-                    w.hide()?;
-                }
+                Err(e) => log::error!("on_menu_event authorize: {e}"),
             }
         }
-        None => {
-            // If the window does not exists, create a new one
-            let w =
-                tauri::WindowBuilder::new(app, "main", tauri::WindowUrl::App("index.html".into()))
-                    .decorations(false)
-                    .focused(true)
-                    .build()?;
-            set_window_over_tray(&w, click)?;
-        }
-    };
+        return;
+    }
 
-    Ok(())
+    // "device:{device_id}" — open the file-details window for this device.
+    if let Some(device_id) = id.strip_prefix("device:") {
+        let device_id = device_id.to_string();
+        let app2 = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            open_device_view(&app2, &device_id);
+        }) {
+            log::error!("on_menu_event device: run_on_main_thread failed: {e}");
+        }
+    }
 }
 
-/// Command to retrieve list of all the files in a USB device
-/// The list is returned as a json array of File object as follows
-/// [{
-///     device: string,
-///     path: string
-///     authorization: boolean
-/// }, ..]
-///
-/// # Arguments
-///
-/// * 'device_path' - Name of the path of the volume, e.g 'D:'
-/// * 'app_ctrl' - Handle to the application controler, it is supplied by tauri
+// ─────────────────────────────────────────────────────────────────────────────
+// File-details window
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Open (or show) the file-details window for the given device ID and emit
+/// a `show_device` event so the Vue frontend navigates to the details view.
+fn open_device_view(app: &AppHandle, device_id: &str) {
+    // Emit show_device with the full UsbDevice payload so the frontend can
+    // display the details without an extra round-trip.
+    if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+        if let Ok(store) = ctrl.store.read() {
+            if let Some(dev) = store.get_device(device_id) {
+                use tauri::Emitter;
+                let _ = app.emit("show_device", dev.clone());
+            }
+        }
+    }
+
+    // Show/create the window.
+    match app.get_webview_window("main") {
+        Some(w) => {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        None => {
+            if let Ok(w) = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .decorations(false)
+            .focused(true)
+            .build()
+            {
+                let _ = w;
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tauri commands (called from the Vue frontend via invoke())
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Return the current USB device list from the store as JSON.
+#[tauri::command]
+async fn get_usb_list(app_ctrl: State<'_, Arc<AppController>>) -> Result<String, String> {
+    match app_ctrl.store.read() {
+        Ok(store) => serde_json::to_string(store.get_devices())
+            .map_err(|e| format!("Serialization error: {e}")),
+        Err(e) => Err(format!("Store lock error: {e}")),
+    }
+}
+
+/// Return the list of files for a USB device.
 #[tauri::command]
 async fn get_file_list(
     device_path: String,
     app_ctrl: State<'_, Arc<AppController>>,
 ) -> Result<String, String> {
     match app_ctrl.get_file_list(&device_path) {
-        Ok(files) => match serde_json::to_string(&files) {
-            Ok(s) => Ok(s),
-            Err(e) => {
-                log::error!("Failed to serialize result: {e}");
-                Err(String::from("Failed to get files"))
-            }
-        },
+        Ok(files) => serde_json::to_string(&files)
+            .map_err(|e| {
+                log::error!("Failed to serialize file list: {e}");
+                String::from("Failed to get files")
+            }),
         Err(e) => {
             log::error!("Device not found: {e}");
             Err(String::from("Failed to get files"))
@@ -192,13 +202,7 @@ async fn get_file_list(
     }
 }
 
-/// Request to toggle the authorization for a file in a give device
-///
-/// # Arguments
-///
-/// * 'device' - Name of the USB device volume, e.g. 'D:'
-/// * 'path' - Full path to the file on the device
-/// * 'current_auth' - Current authorization status for the file
+/// Toggle the authorization for a single file.
 #[tauri::command]
 async fn toggle_file_auth(
     device: String,
@@ -208,9 +212,28 @@ async fn toggle_file_auth(
     app_ctrl: State<'_, Arc<AppController>>,
 ) -> Result<(), String> {
     let auth = FileAuthorization::from_u8(new_auth);
-    if let Err(e) = app_ctrl.request_file_auth_toggle(&device, &id, &path, auth) {
-        println!("toggle_file_auth: File toggle failed: {e}");
-        return Err(e.to_string());
-    }
+    app_ctrl
+        .request_file_auth_toggle(&device, &id, &path, auth)
+        .map_err(|e| {
+            log::error!("toggle_file_auth: {e}");
+            e.to_string()
+        })
+}
+
+/// Manually authorize a blocked (non-certified) USB device.
+///
+/// Requires `allow_user_usb_authorization = true` in the daemon config.
+#[tauri::command]
+async fn override_usb(
+    device_path: String,
+    app_ctrl: State<'_, Arc<AppController>>,
+    app: AppHandle,
+) -> Result<(), String> {
+    app_ctrl.allow_usb(&device_path).map_err(|e| {
+        log::error!("override_usb: {e}");
+        e.to_string()
+    })?;
+    // Refresh the tray menu immediately.
+    tray_menu::rebuild_tray_menu(&app, &app_ctrl);
     Ok(())
 }

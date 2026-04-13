@@ -78,11 +78,6 @@ assets = [
 
 maintainer-scripts = "pkg/debian/"
 
-[package.metadata.deb.systemd-units]
-unit-name = "keysas-firewall"
-enable    = false   # l'admin active manuellement après avoir fourni les certificats
-start     = false
-
 [target.'cfg(target_os = "windows")'.dependencies]
 libmailslot = {path = "../libmailslot"}
 windows-service = "0.6"

@@ -27,7 +27,7 @@ use serde::Serialize;
 use std::sync::{Arc, RwLock};
 
 use crate::app_controller::AppController;
-use crate::service_if::{ServiceInterface, FileUpdateMessage, UsbUpdateMessage};
+use crate::service_if::{ServiceInterface, FileUpdateMessage};
 
 /// Handle to the service interface client and server
 pub struct WindowsServiceInterface {
@@ -85,16 +85,7 @@ impl ServiceInterface for WindowsServiceInterface {
         todo!()
     }
 
-    fn send_usb_update(&self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
-        let msg_vec = match serde_json::to_string(update) {
-            Ok(m) => m,
-            Err(e) => return Err(anyhow!("Failed to serialize message: {e}")),
-        };
-
-        if let Err(e) = libmailslot::write_mailslot(TRAY_PIPE, &msg_vec) {
-            return Err(anyhow!("Failed to post message to the mailslot: {e}"));
-        }
-
-        Ok(())
+    fn allow_usb_override(&self, _device_path: &str) -> Result<(), anyhow::Error> {
+        Err(anyhow::anyhow!("USB override not implemented on Windows"))
     }
 }

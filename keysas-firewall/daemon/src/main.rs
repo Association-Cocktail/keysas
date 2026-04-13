@@ -158,7 +158,12 @@ fn main() -> Result<(), anyhow::Error> {
     // Initialize the logger
     #[cfg(target_os = "linux")]
     {
-        simple_logger::init()?;
+        simple_logger::SimpleLogger::new()
+            .with_level(LevelFilter::Info)
+            .with_module_level("async_io", LevelFilter::Warn)
+            .with_module_level("polling", LevelFilter::Warn)
+            .with_module_level("zbus", LevelFilter::Warn)
+            .init()?;
     }
 
     #[cfg(target_os = "windows")]

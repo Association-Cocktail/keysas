@@ -9,7 +9,7 @@
 
 #![warn(unused_extern_crates)]
 #![forbid(non_shorthand_field_patterns)]
-#![warn(dead_code)]
+#![allow(dead_code)]
 #![warn(missing_debug_implementations)]
 #![warn(missing_copy_implementations)]
 #![warn(trivial_casts)]
@@ -33,11 +33,15 @@ pub struct FileAuth {
     pub authorization: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct UsbDevice {
+    /// Unique device identifier (device node path, e.g. `/dev/sdb1`).
+    pub id: String,
     pub name: String,
+    /// Mount point (e.g. `/media/user/Volta`), empty while unmounted.
     pub path: String,
-    pub authorization: UsbAuthorization,
+    /// Serialized as u8 so TypeScript can compare with numeric enum values.
+    pub authorization: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -58,28 +62,45 @@ impl FilterStore {
         self.devices.push(device.clone());
     }
 
-    pub fn remove_device(&mut self, _device_name: &str) -> Result<(), anyhow::Error> {
-        todo!()
+    /// Replace the entire device list (used after each polling cycle to
+    /// reconcile the store with the daemon's current state).
+    pub fn replace_devices(&mut self, devices: Vec<UsbDevice>) {
+        self.devices = devices;
+    }
+
+    pub fn remove_device(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
+        self.devices.retain(|d| !d.id.eq(device_id));
+        // Also remove all files associated with the device
+        self.files.retain(|f| !f.device.eq(device_id));
+        Ok(())
     }
 
     pub fn get_devices(&self) -> &[UsbDevice] {
         &self.devices
     }
 
-    pub fn get_device(&self, device_path: &str) -> Option<&UsbDevice> {
-        self.devices.iter().find(|&d| d.path.eq(device_path))
+    /// Look up a device by its unique device ID.
+    pub fn get_device(&self, device_id: &str) -> Option<&UsbDevice> {
+        self.devices.iter().find(|d| d.id.eq(device_id))
     }
 
-    pub fn get_device_mut(&mut self, device_path: &str) -> Option<&mut UsbDevice> {
-        self.devices.iter_mut().find(|d| d.path.eq(device_path))
+    /// Look up a device mutably by its unique device ID.
+    pub fn get_device_mut(&mut self, device_id: &str) -> Option<&mut UsbDevice> {
+        self.devices.iter_mut().find(|d| d.id.eq(device_id))
     }
 
     pub fn set_device_auth(
         &mut self,
-        _device_name: &str,
-        _auth: UsbAuthorization,
+        device_id: &str,
+        auth: UsbAuthorization,
     ) -> Result<(), anyhow::Error> {
-        todo!()
+        match self.devices.iter_mut().find(|d| d.id.eq(device_id)) {
+            Some(d) => {
+                d.authorization = auth.as_u8();
+                Ok(())
+            }
+            None => Err(anyhow::anyhow!("Device '{}' not found", device_id)),
+        }
     }
 
     pub fn add_file(&mut self, file: &FileAuth) -> Result<(), anyhow::Error> {
@@ -89,30 +110,44 @@ impl FilterStore {
 
     pub fn remove_file(
         &mut self,
-        _device_name: &str,
-        _file_name: &str,
+        device_id: &str,
+        file_path: &str,
     ) -> Result<(), anyhow::Error> {
-        todo!()
+        self.files
+            .retain(|f| !(f.device.eq(device_id) && f.path.eq(file_path)));
+        Ok(())
     }
 
-    pub fn get_files(&self, device_path: &str) -> Result<Vec<FileAuth>, anyhow::Error> {
+    pub fn get_files(&self, device_id: &str) -> Result<Vec<FileAuth>, anyhow::Error> {
         let files: Vec<FileAuth> = self
             .files
             .iter()
-            .filter_map(|f| match f.device.eq(device_path) {
-                true => Some(f.clone()),
-                false => None,
-            })
+            .filter(|f| f.device.eq(device_id))
+            .cloned()
             .collect();
         Ok(files)
     }
 
     pub fn set_file_auth(
         &mut self,
-        _device_name: &str,
-        _file_name: &str,
-        _auth: UsbAuthorization,
+        device_id: &str,
+        file_path: &str,
+        auth: u8,
     ) -> Result<(), anyhow::Error> {
-        todo!()
+        match self
+            .files
+            .iter_mut()
+            .find(|f| f.device.eq(device_id) && f.path.eq(file_path))
+        {
+            Some(f) => {
+                f.authorization = auth;
+                Ok(())
+            }
+            None => Err(anyhow::anyhow!(
+                "File '{}' on device '{}' not found",
+                file_path,
+                device_id
+            )),
+        }
     }
 }

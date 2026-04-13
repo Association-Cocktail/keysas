@@ -263,6 +263,26 @@ pub struct FilePolicy {
     pub auth: FileAuthorization,
 }
 
+/// Look up the current mount point of `device` by parsing `/proc/mounts`.
+///
+/// Returns `None` if the device is not listed as mounted.
+#[cfg(target_os = "linux")]
+fn find_mount_point(device: &OsString) -> Option<String> {
+    use std::io::BufRead;
+    let file = std::fs::File::open("/proc/mounts").ok()?;
+    let dev_str = device.to_string_lossy();
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        // /proc/mounts columns: <device> <mountpoint> <fstype> <options> <dump> <pass>
+        let mut cols = line.splitn(3, ' ');
+        let dev = match cols.next() { Some(d) => d, None => continue };
+        let mnt = match cols.next() { Some(m) => m, None => continue };
+        if dev == dev_str.as_ref() {
+            return Some(mnt.to_string());
+        }
+    }
+    None
+}
+
 impl ServiceController {
     /// Initialize the service controller
     pub fn init(config: &Config) -> Result<Arc<Mutex<ServiceController>>, anyhow::Error> {
@@ -310,6 +330,9 @@ impl ServiceController {
             ctrl_hdl.gui.start(&ctrl)?;
             ctrl_hdl.usb_monitor.start(&ctrl)?;
             ctrl_hdl.file_filter.start(&ctrl)?;
+            // Recover devices that were mounted before this daemon instance started
+            #[cfg(target_os = "linux")]
+            ctrl_hdl.recover_mounted_devices();
         }
 
         Ok(ctrl)
@@ -378,9 +401,21 @@ impl ServiceController {
         // TODO - Improve list of USB device
         // TODO - If mount point is given insert it in correct list
 
-        // Test if the USB device does not already exists
-        if self.unmounted_usb.contains_key(&device.device_id) {
-            return Ok(false);
+        // Handle already-tracked devices:
+        //   Pending   → being processed, ignore duplicate event
+        //   AllowRead/AllowRW/AllowAll → pre-authorized by user override, proceed to mount
+        //   Block     → previously blocked and kept for UI; re-evaluate on replug
+        if let Some(existing) = self.unmounted_usb.get(&device.device_id) {
+            match existing.auth {
+                UsbAuthorization::Pending => return Ok(false),
+                UsbAuthorization::Block => {
+                    self.unmounted_usb.remove(&device.device_id);
+                }
+                _ => {
+                    // Pre-authorized via user override: tell the monitor to mount it.
+                    return Ok(true);
+                }
+            }
         }
 
         // Insert the new device in the list of unmounted devices
@@ -417,13 +452,81 @@ impl ServiceController {
         let dev_policy = self.unmounted_usb.get_mut(&device.device_id).unwrap();
         dev_policy.auth = auth;
 
-        // TODO - Update HMI
+        // Notify GUI immediately for blocked devices.
+        // Authorised devices are notified in update_usb() once the mount point is known.
+        if matches!(auth, UsbAuthorization::Block) {
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: device.device_id.to_string_lossy().into_owned(),
+                path: String::default(),
+                name: device.get_name(),
+                authorization: auth,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("authorize_usb: GUI notification failed: {e}");
+            }
+        }
 
         // Return authorization decision as boolean
         match auth {
             UsbAuthorization::Block | UsbAuthorization::Pending => Ok(false),
             _ => Ok(true),
         }
+    }
+
+    /// Manually authorize a blocked (non-certified) USB device.
+    ///
+    /// Requires `allow_user_usb_authorization = true` in the security policy.
+    ///
+    /// Steps:
+    ///   1. Verify the policy allows user overrides.
+    ///   2. Find the device in `unmounted_usb` with `Block` authorization.
+    ///   3. Promote its auth to `AllowRW` (or `AllowRead` if writes are disabled).
+    ///   4. Write `1` to the USB parent's `authorized` sysfs attribute so the
+    ///      kernel re-enumerates the device.  The udev monitor will then receive
+    ///      a new "add" event, see the pre-authorized entry in `unmounted_usb`,
+    ///      and proceed to mount it normally.
+    pub fn override_blocked_usb(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
+        if !self.policy.allow_user_usb_authorization {
+            return Err(anyhow!(
+                "User USB authorization override is disabled by policy"
+            ));
+        }
+
+        let key = OsString::from(device_id);
+
+        let syspath = match self.unmounted_usb.get(&key) {
+            Some(p) if p.auth == UsbAuthorization::Block => p
+                .device
+                .usb_syspath
+                .clone()
+                .ok_or_else(|| anyhow!("No sysfs path for device '{device_id}'"))?,
+            Some(_) => return Err(anyhow!("Device '{device_id}' is not in a blocked state")),
+            None => return Err(anyhow!("Device '{device_id}' not found in blocked list")),
+        };
+
+        // Update auth so the udev add event (triggered below) is treated as
+        // pre-authorized and the monitor proceeds to mount instead of blocking.
+        let new_auth = if self.policy.allow_user_file_write {
+            UsbAuthorization::AllowRW
+        } else {
+            UsbAuthorization::AllowRead
+        };
+
+        if let Some(policy) = self.unmounted_usb.get_mut(&key) {
+            policy.auth = new_auth;
+        }
+
+        // Re-authorize the USB device at the kernel level.
+        let auth_path = std::path::Path::new(&syspath).join("authorized");
+        std::fs::write(&auth_path, b"1\n")
+            .map_err(|e| anyhow!("Failed to re-authorize '{device_id}' via {auth_path:?}: {e}"))?;
+
+        info!(
+            "User override: device '{}' re-authorized at kernel level (auth={:?})",
+            device_id, new_auth
+        );
+        Ok(())
     }
 
     /// Update information about a USB device once it is mounted.
@@ -454,7 +557,91 @@ impl ServiceController {
             }
         }
 
+        // Notify GUI that the device is now mounted and accessible.
+        if let Some(p) = self.mounted_usb.get(&device.device_id) {
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: device.device_id.to_string_lossy().into_owned(),
+                path: p.device.mnt_point.as_ref()
+                    .map(|m| m.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                name: p.device.get_name(),
+                authorization: p.auth,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("update_usb: GUI notification failed: {e}");
+            }
+        }
+
         Ok(())
+    }
+
+    /// Remove a USB device from the controller tracking tables and clean up
+    /// associated resources (fanotify mark).
+    ///
+    /// Return the device IDs of all entries in `unmounted_usb` whose
+    /// `usb_syspath` starts with `prefix`.  Used to find which tracked blocked
+    /// devices belong to a USB parent that is being physically unplugged.
+    pub fn unmounted_usb_ids_with_syspath_prefix(
+        &self,
+        prefix: &std::path::Path,
+    ) -> Vec<OsString> {
+        self.unmounted_usb
+            .iter()
+            .filter(|(_, p)| {
+                p.device
+                    .usb_syspath
+                    .as_deref()
+                    .map(|sp| std::path::Path::new(sp).starts_with(prefix))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Unconditionally remove a device from `unmounted_usb`.
+    /// Used when a physical unplug is detected for a previously deauthorized device.
+    pub fn force_remove_usb(&mut self, device_id: &OsString) {
+        if self.unmounted_usb.remove(device_id).is_some() {
+            info!("force_remove_usb: removed {:?} after physical unplug", device_id);
+        }
+    }
+
+    /// Called by the USB monitor when a `remove` udev event is received.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Device node path (e.g. `/dev/sdb1`)
+    pub fn remove_usb(&mut self, device_id: &OsString) {
+        if let Some(policy) = self.mounted_usb.remove(device_id) {
+            // Remove the fanotify mount mark so the now-unmounted filesystem
+            // is no longer intercepted.
+            let block_policy = UsbDevicePolicy {
+                device: policy.device.clone(),
+                auth: UsbAuthorization::Block,
+            };
+            if let Err(e) = self.file_filter.update_usb_auth(&block_policy) {
+                warn!("remove_usb: failed to remove fanotify mark for {:?}: {e}", device_id);
+            }
+            info!("USB device {:?} removed (was mounted at {:?})",
+                device_id,
+                policy.device.mnt_point);
+        } else if let Some(policy) = self.unmounted_usb.get(device_id) {
+            if policy.auth == UsbAuthorization::Block {
+                // This remove event was triggered by our own kernel-level
+                // deauthorization (writing 0 to sysfs/authorized).  Keep the
+                // entry in the store so the tray-app polling thread can display
+                // "blocked" in the UI.  The entry will be replaced on replug.
+                info!(
+                    "USB device {:?} kernel-disconnected after block — \
+                     keeping entry visible in tray",
+                    device_id
+                );
+            } else {
+                self.unmounted_usb.remove(device_id);
+                info!("USB device {:?} removed (was pending/unmounted)", device_id);
+            }
+        }
     }
 
     /// Decide to authorize a file
@@ -622,9 +809,14 @@ impl ServiceController {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("krp"))
         {
             // Try to find the corresponding file
+            // The .krp is named ".<data_file>.krp" — strip ".krp" then strip the leading '.'
             let mut file_path = path.to_path_buf();
-            // file_path.file_name should not be None at this point
             file_path.set_extension("");
+            if let (Some(parent), Some(fname)) = (file_path.parent(), file_path.file_name()) {
+                if let Some(stripped) = fname.to_string_lossy().strip_prefix('.') {
+                    file_path = parent.join(stripped);
+                }
+            }
 
             match file_path.is_file() {
                 true => {
@@ -661,18 +853,12 @@ impl ServiceController {
         }
 
         // If not try to find the corresponding report
-        // It should be in the same directory with the same name + '.krp'
-        let mut path_report = PathBuf::from(path);
-        match path_report.extension() {
-            Some(ext) => {
-                let mut ext = ext.to_os_string();
-                ext.push(".krp");
-                path_report.set_extension(ext);
-            }
-            _ => {
-                path_report.set_extension(".krp");
-            }
-        }
+        // It is in the same directory, hidden, named ".<filename>.krp"
+        let path_report = if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
+            parent.join(format!(".{}.krp", fname.to_string_lossy()))
+        } else {
+            PathBuf::from(path)
+        };
         match path_report.is_file() {
             true => {
                 // If a corresponding report is found then validate both the file and the report
@@ -775,13 +961,102 @@ impl ServiceController {
         result
     }
 
+    /// Re-register USB devices that were certified and mounted before this daemon
+    /// instance started (hot-restart recovery).
+    ///
+    /// For each sentinel in `/run/keysas/certified/`:
+    ///   1. If the device node no longer exists, remove the stale sentinel.
+    ///   2. If the device is not currently mounted, skip it.
+    ///   3. Otherwise, insert it directly into `mounted_usb` with auth derived
+    ///      from the current policy (sentinel presence attests prior certification).
+    ///   4. Re-apply the fanotify mount mark so file access is filtered immediately.
+    ///
+    /// Desktop notifications are intentionally skipped; the tray-app will pick
+    /// up the restored devices on its next 5-second polling cycle.
+    #[cfg(target_os = "linux")]
+    fn recover_mounted_devices(&mut self) {
+        let certified_dir = std::path::Path::new("/run/keysas/certified");
+        if !certified_dir.exists() {
+            return;
+        }
+
+        let entries = match std::fs::read_dir(certified_dir) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("recover_mounted_devices: cannot read sentinel dir: {e}");
+                return;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let dev_name = entry.file_name().to_string_lossy().into_owned();
+            let device_id = OsString::from(format!("/dev/{}", dev_name));
+
+            // Device unplugged while the daemon was stopped — remove stale sentinel.
+            if !std::path::Path::new(&device_id).exists() {
+                let _ = std::fs::remove_file(entry.path());
+                info!(
+                    "recover_mounted_devices: /dev/{} gone, removed sentinel",
+                    dev_name
+                );
+                continue;
+            }
+
+            // Device present but not currently mounted — nothing to re-register.
+            let mnt_point = match find_mount_point(&device_id) {
+                Some(m) => m,
+                None => {
+                    info!(
+                        "recover_mounted_devices: /dev/{} not mounted, skipping",
+                        dev_name
+                    );
+                    continue;
+                }
+            };
+
+            // Re-derive auth from the current policy.
+            // The sentinel already attests that the device passed certification.
+            let auth = if self.policy.allow_user_file_write {
+                UsbAuthorization::AllowRW
+            } else {
+                UsbAuthorization::AllowRead
+            };
+
+            let device = UsbDevice {
+                device_id: device_id.clone(),
+                mnt_point: Some(OsString::from(&mnt_point)),
+                vendor: OsString::new(),
+                model: OsString::new(),
+                revision: OsString::new(),
+                serial: OsString::new(),
+                usb_syspath: None,
+            };
+            let policy = UsbDevicePolicy { device, auth };
+
+            // Re-apply the fanotify mount mark.
+            if let Err(e) = self.file_filter.update_usb_auth(&policy) {
+                warn!(
+                    "recover_mounted_devices: fanotify mark failed for \
+                     /dev/{dev_name}: {e}"
+                );
+            } else {
+                info!(
+                    "recover_mounted_devices: restored /dev/{} at {} (auth={:?})",
+                    dev_name, mnt_point, auth
+                );
+            }
+
+            self.mounted_usb.insert(device_id, policy);
+        }
+    }
+
     /// Send the list of Usb devices and files currently registered in the firewall
-    /// 
+    ///
     /// For now, send the list of USB devices registered
     /// Files are not currently stored in the controller: TO BE FIXED
-    /// 
+    ///
     /// # Return value
-    /// 
+    ///
     /// * error if needed
     pub fn send_usb_file_list(&self) -> Result<(), anyhow::Error> {
         for (_, usb) in self.unmounted_usb.iter() {
