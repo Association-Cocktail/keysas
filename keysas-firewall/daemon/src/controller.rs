@@ -809,9 +809,14 @@ impl ServiceController {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("krp"))
         {
             // Try to find the corresponding file
+            // The .krp is named ".<data_file>.krp" — strip ".krp" then strip the leading '.'
             let mut file_path = path.to_path_buf();
-            // file_path.file_name should not be None at this point
             file_path.set_extension("");
+            if let (Some(parent), Some(fname)) = (file_path.parent(), file_path.file_name()) {
+                if let Some(stripped) = fname.to_string_lossy().strip_prefix('.') {
+                    file_path = parent.join(stripped);
+                }
+            }
 
             match file_path.is_file() {
                 true => {
@@ -848,18 +853,12 @@ impl ServiceController {
         }
 
         // If not try to find the corresponding report
-        // It should be in the same directory with the same name + '.krp'
-        let mut path_report = PathBuf::from(path);
-        match path_report.extension() {
-            Some(ext) => {
-                let mut ext = ext.to_os_string();
-                ext.push(".krp");
-                path_report.set_extension(ext);
-            }
-            _ => {
-                path_report.set_extension(".krp");
-            }
-        }
+        // It is in the same directory, hidden, named ".<filename>.krp"
+        let path_report = if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
+            parent.join(format!(".{}.krp", fname.to_string_lossy()))
+        } else {
+            PathBuf::from(path)
+        };
         match path_report.is_file() {
             true => {
                 // If a corresponding report is found then validate both the file and the report

@@ -166,7 +166,8 @@ pub fn list_files_in(directory: &str) -> Result<Vec<FileStatus>> {
 /// - OK file: data file present, no .krp (KrpMode::FailOnly) or with .krp (KrpMode::Always)
 /// - KO file: only a .krp present, no data file (file was blocked, not copied)
 pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
-    let re = Regex::new(r"^\.")?;
+    let re_skip_dot = Regex::new(r"^\.")?;
+    let re_hidden_krp = Regex::new(r"^\..+\.krp$")?;
     let mut data_files: Vec<String> = Vec::new();
     let mut krp_files: Vec<String> = Vec::new();
 
@@ -179,7 +180,7 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
             Some(n) => n,
             None => continue,
         };
-        if re.is_match(&name) {
+        if re_skip_dot.is_match(&name) && !re_hidden_krp.is_match(&name) {
             continue;
         }
         if name.ends_with(".sha256") {
@@ -197,7 +198,7 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
 
     // Data files: present = passed (look up .krp only if KrpMode::Always wrote one)
     for name in &data_files {
-        let krp_path = format!("{}/{}.krp", directory, name);
+        let krp_path = format!("{}/.{}.krp", directory, name);
         let (is_valid, reason, detail, checks, check_details) =
             if std::path::Path::new(&krp_path).exists() {
                 parse_krp(&krp_path)
@@ -216,7 +217,9 @@ pub fn list_files_out(directory: &str) -> Result<Vec<FileStatus>> {
 
     // .krp-only files: blocked files (data file was not copied to OUT)
     for krp_name in &krp_files {
-        let original = krp_name[..krp_name.len() - 4].to_string();
+        // krp_name has the form ".original_name.krp" — strip leading '.' and trailing '.krp'
+        let without_dot = krp_name.strip_prefix('.').unwrap_or(krp_name);
+        let original = without_dot[..without_dot.len() - 4].to_string();
         if data_set.contains(original.as_str()) {
             continue;
         } // already handled above
