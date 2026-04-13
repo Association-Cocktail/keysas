@@ -72,7 +72,8 @@ impl AppController {
         Ok(ctrl)
     }
 
-    /// Called when a file notification has been received from the driver
+    /// Called when a file notification has been received from the driver (reserved for future push-based file updates)
+    #[allow(dead_code)]
     /// It adds the new file to the data store and notifies the view to update itself
     pub fn notify_file_change(&self, update: &FileUpdateMessage) {
         let mut id: [u16; 16] = Default::default();
@@ -116,7 +117,7 @@ impl AppController {
                 id: u.device,
                 name: u.name,
                 path: u.path,
-                authorization: u.authorization,
+                authorization: u.authorization.as_u8(),
             })
             .collect();
 
@@ -131,7 +132,8 @@ impl AppController {
         }
     }
 
-    /// Called when a usb notification has been received from the driver.
+    /// Called when a usb notification has been received from the driver (reserved for future push-based updates).
+    #[allow(dead_code)]
     ///
     /// Upserts the device in the store (update if already present, add otherwise)
     /// then emits a `usb_update` event so the UI can refresh.
@@ -141,13 +143,13 @@ impl AppController {
                 if let Some(existing) = store.get_device_mut(&update.device) {
                     existing.name.clone_from(&update.name);
                     existing.path.clone_from(&update.path);
-                    existing.authorization = update.authorization;
+                    existing.authorization = update.authorization.as_u8();
                 } else {
                     store.add_device(&UsbDevice {
                         id: update.device.clone(),
                         name: update.name.clone(),
                         path: update.path.clone(),
-                        authorization: update.authorization,
+                        authorization: update.authorization.as_u8(),
                     });
                 }
             }
@@ -157,6 +159,16 @@ impl AppController {
         if let Err(e) = self.view.emit("usb_update", &update.device) {
             log::error!("notify_usb_change: failed to emit usb_update event: {e}");
         }
+    }
+
+    /// Return a clone of the application handle (used by the polling thread).
+    pub fn app_handle(&self) -> AppHandle {
+        self.view.clone()
+    }
+
+    /// Ask the daemon to manually authorize a blocked USB device.
+    pub fn allow_usb(&self, device_path: &str) -> Result<(), anyhow::Error> {
+        self.comm.allow_usb_override(device_path)
     }
 
     /// Return the list of files in the datastore

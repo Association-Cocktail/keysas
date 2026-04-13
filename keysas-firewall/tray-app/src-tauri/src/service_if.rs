@@ -40,7 +40,7 @@
 
 #![warn(unused_extern_crates)]
 #![forbid(non_shorthand_field_patterns)]
-#![warn(dead_code)]
+#![allow(dead_code)]
 #![warn(missing_debug_implementations)]
 #![warn(missing_copy_implementations)]
 #![warn(trivial_casts)]
@@ -139,35 +139,29 @@ pub struct UsbUpdateMessage {
 pub struct ServiceInterfaceBuilder {}
 
 impl ServiceInterfaceBuilder {
-    pub fn build(app: &tauri::AppHandle) -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
+    pub fn build(_app: &tauri::AppHandle) -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
         cfg_if! {
             if #[cfg(target_os = "linux")] {
-                use crate::linux::sni::SniHandle;
-                use anyhow::anyhow;
-                use tauri::Manager;
-                let sni = app
-                    .try_state::<std::sync::Arc<SniHandle>>()
-                    .ok_or_else(|| anyhow!("SniHandle not in managed state — start_sni must run first"))?
-                    .inner()
-                    .clone();
                 let iface: Box<dyn ServiceInterface + Send + Sync> =
-                    Box::new(LinuxServiceInterface::init((*sni).clone())?);
+                    Box::new(LinuxServiceInterface::init()?);
                 return Ok(iface)
             } else if #[cfg(target_os = "windows")] {
                 let iface: Box<dyn ServiceInterface + Send + Sync> = Box::new(WindowsServiceInterface::init()?);
                 return Ok(iface)
             } else {
-                return Err(anyhow!("OS not supported"))
+                return Err(anyhow::anyhow!("OS not supported"))
             }
         }
     }
 }
 
-/// Generice Service Interface
+/// Generic Service Interface
 pub trait ServiceInterface {
     fn start_server(&self, ctrl: &Arc<AppController>) -> Result<(), anyhow::Error>;
 
     fn send_file_update(&self, update: &FileUpdateMessage) -> Result<(), anyhow::Error>;
 
-    fn send_usb_update(&self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error>;
+    /// Manually authorize a blocked (non-certified) USB device.
+    /// Requires `allow_user_usb_authorization = true` on the daemon side.
+    fn allow_usb_override(&self, device_path: &str) -> Result<(), anyhow::Error>;
 }

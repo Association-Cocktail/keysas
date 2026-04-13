@@ -111,6 +111,18 @@ impl FirewallService {
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
 
+    /// Manually authorize a previously blocked (non-certified) USB device.
+    ///
+    /// Only succeeds if `allow_user_usb_authorization = true` in the daemon
+    /// configuration.  Returns an error string otherwise.
+    fn override_usb_authorization(&self, device: String) -> zbus::fdo::Result<()> {
+        self.ctrl
+            .lock()
+            .unwrap()
+            .override_blocked_usb(&device)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
     /// Change the authorization of a USB device.
     ///
     /// `auth` encodes UsbAuthorization:

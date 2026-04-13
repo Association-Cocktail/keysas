@@ -401,9 +401,21 @@ impl ServiceController {
         // TODO - Improve list of USB device
         // TODO - If mount point is given insert it in correct list
 
-        // Test if the USB device does not already exists
-        if self.unmounted_usb.contains_key(&device.device_id) {
-            return Ok(false);
+        // Handle already-tracked devices:
+        //   Pending   → being processed, ignore duplicate event
+        //   AllowRead/AllowRW/AllowAll → pre-authorized by user override, proceed to mount
+        //   Block     → previously blocked and kept for UI; re-evaluate on replug
+        if let Some(existing) = self.unmounted_usb.get(&device.device_id) {
+            match existing.auth {
+                UsbAuthorization::Pending => return Ok(false),
+                UsbAuthorization::Block => {
+                    self.unmounted_usb.remove(&device.device_id);
+                }
+                _ => {
+                    // Pre-authorized via user override: tell the monitor to mount it.
+                    return Ok(true);
+                }
+            }
         }
 
         // Insert the new device in the list of unmounted devices
@@ -462,6 +474,61 @@ impl ServiceController {
         }
     }
 
+    /// Manually authorize a blocked (non-certified) USB device.
+    ///
+    /// Requires `allow_user_usb_authorization = true` in the security policy.
+    ///
+    /// Steps:
+    ///   1. Verify the policy allows user overrides.
+    ///   2. Find the device in `unmounted_usb` with `Block` authorization.
+    ///   3. Promote its auth to `AllowRW` (or `AllowRead` if writes are disabled).
+    ///   4. Write `1` to the USB parent's `authorized` sysfs attribute so the
+    ///      kernel re-enumerates the device.  The udev monitor will then receive
+    ///      a new "add" event, see the pre-authorized entry in `unmounted_usb`,
+    ///      and proceed to mount it normally.
+    pub fn override_blocked_usb(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
+        if !self.policy.allow_user_usb_authorization {
+            return Err(anyhow!(
+                "User USB authorization override is disabled by policy"
+            ));
+        }
+
+        let key = OsString::from(device_id);
+
+        let syspath = match self.unmounted_usb.get(&key) {
+            Some(p) if p.auth == UsbAuthorization::Block => p
+                .device
+                .usb_syspath
+                .clone()
+                .ok_or_else(|| anyhow!("No sysfs path for device '{device_id}'"))?,
+            Some(_) => return Err(anyhow!("Device '{device_id}' is not in a blocked state")),
+            None => return Err(anyhow!("Device '{device_id}' not found in blocked list")),
+        };
+
+        // Update auth so the udev add event (triggered below) is treated as
+        // pre-authorized and the monitor proceeds to mount instead of blocking.
+        let new_auth = if self.policy.allow_user_file_write {
+            UsbAuthorization::AllowRW
+        } else {
+            UsbAuthorization::AllowRead
+        };
+
+        if let Some(policy) = self.unmounted_usb.get_mut(&key) {
+            policy.auth = new_auth;
+        }
+
+        // Re-authorize the USB device at the kernel level.
+        let auth_path = std::path::Path::new(&syspath).join("authorized");
+        std::fs::write(&auth_path, b"1\n")
+            .map_err(|e| anyhow!("Failed to re-authorize '{device_id}' via {auth_path:?}: {e}"))?;
+
+        info!(
+            "User override: device '{}' re-authorized at kernel level (auth={:?})",
+            device_id, new_auth
+        );
+        Ok(())
+    }
+
     /// Update information about a USB device once it is mounted.
     ///
     /// Moves the device from `unmounted_usb` to `mounted_usb` with the mount point set.
@@ -512,6 +579,34 @@ impl ServiceController {
     /// Remove a USB device from the controller tracking tables and clean up
     /// associated resources (fanotify mark).
     ///
+    /// Return the device IDs of all entries in `unmounted_usb` whose
+    /// `usb_syspath` starts with `prefix`.  Used to find which tracked blocked
+    /// devices belong to a USB parent that is being physically unplugged.
+    pub fn unmounted_usb_ids_with_syspath_prefix(
+        &self,
+        prefix: &std::path::Path,
+    ) -> Vec<OsString> {
+        self.unmounted_usb
+            .iter()
+            .filter(|(_, p)| {
+                p.device
+                    .usb_syspath
+                    .as_deref()
+                    .map(|sp| std::path::Path::new(sp).starts_with(prefix))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Unconditionally remove a device from `unmounted_usb`.
+    /// Used when a physical unplug is detected for a previously deauthorized device.
+    pub fn force_remove_usb(&mut self, device_id: &OsString) {
+        if self.unmounted_usb.remove(device_id).is_some() {
+            info!("force_remove_usb: removed {:?} after physical unplug", device_id);
+        }
+    }
+
     /// Called by the USB monitor when a `remove` udev event is received.
     ///
     /// # Arguments
@@ -531,8 +626,21 @@ impl ServiceController {
             info!("USB device {:?} removed (was mounted at {:?})",
                 device_id,
                 policy.device.mnt_point);
-        } else if self.unmounted_usb.remove(device_id).is_some() {
-            info!("USB device {:?} removed (was blocked)", device_id);
+        } else if let Some(policy) = self.unmounted_usb.get(device_id) {
+            if policy.auth == UsbAuthorization::Block {
+                // This remove event was triggered by our own kernel-level
+                // deauthorization (writing 0 to sysfs/authorized).  Keep the
+                // entry in the store so the tray-app polling thread can display
+                // "blocked" in the UI.  The entry will be replaced on replug.
+                info!(
+                    "USB device {:?} kernel-disconnected after block — \
+                     keeping entry visible in tray",
+                    device_id
+                );
+            } else {
+                self.unmounted_usb.remove(device_id);
+                info!("USB device {:?} removed (was pending/unmounted)", device_id);
+            }
         }
     }
 

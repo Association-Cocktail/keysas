@@ -9,7 +9,7 @@
 
 #![warn(unused_extern_crates)]
 #![forbid(non_shorthand_field_patterns)]
-#![warn(dead_code)]
+#![allow(dead_code)]
 #![warn(missing_debug_implementations)]
 #![warn(missing_copy_implementations)]
 #![warn(trivial_casts)]
@@ -40,7 +40,8 @@ pub struct UsbDevice {
     pub name: String,
     /// Mount point (e.g. `/media/user/Volta`), empty while unmounted.
     pub path: String,
-    pub authorization: UsbAuthorization,
+    /// Serialized as u8 so TypeScript can compare with numeric enum values.
+    pub authorization: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -95,7 +96,7 @@ impl FilterStore {
     ) -> Result<(), anyhow::Error> {
         match self.devices.iter_mut().find(|d| d.id.eq(device_id)) {
             Some(d) => {
-                d.authorization = auth;
+                d.authorization = auth.as_u8();
                 Ok(())
             }
             None => Err(anyhow::anyhow!("Device '{}' not found", device_id)),

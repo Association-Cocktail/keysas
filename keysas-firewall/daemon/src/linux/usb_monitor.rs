@@ -310,8 +310,13 @@ impl UsbMonitor for LinuxUsbMonitor {
         let stop_flag = self.stop_flag.clone();
 
         thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Look for usb device
-            let monitor = MonitorBuilder::new()?.match_subsystem("block")?.listen()?;
+            // Monitor "block" (partition add/remove) and "usb" (physical unplug
+            // of a device that was already kernel-deauthorized, whose block node
+            // was already gone so no second "block remove" event fires).
+            let monitor = MonitorBuilder::new()?
+                .match_subsystem("block")?
+                .match_subsystem_devtype("usb", "usb_device")?
+                .listen()?;
 
             let mut fds = vec![pollfd {
                 fd: monitor.as_raw_fd(),
@@ -362,6 +367,7 @@ impl UsbMonitor for LinuxUsbMonitor {
                 };
 
                 let action = event.action();
+                let subsystem = event.device().subsystem().map(|s| s.to_os_string());
                 let devtype = event
                     .device()
                     .property_value(OsStr::new("DEVTYPE"))
@@ -369,6 +375,39 @@ impl UsbMonitor for LinuxUsbMonitor {
 
                 let is_partition =
                     devtype.as_deref() == Some(OsStr::new("partition"));
+
+                // ── Physical unplug of a deauthorized USB device ─────────────
+                // When the kernel deauthorizes a device (writes 0 to authorized),
+                // the block node (/dev/sdbX) disappears immediately.  The later
+                // physical unplug generates a "usb_device remove" event on the
+                // "usb" subsystem — not a "block" event — so we must handle it
+                // here to remove the kept-blocked entry from the store.
+                let is_usb_device = subsystem.as_deref() == Some(OsStr::new("usb"))
+                    && devtype.as_deref() == Some(OsStr::new("usb_device"));
+
+                if action == Some(OsStr::new("remove")) && is_usb_device {
+                    // Walk the sysfs children of this USB device to find any
+                    // block nodes that are still tracked as blocked.
+                    let syspath = event.device().syspath().to_path_buf();
+                    let mut ctrl = ctrl_hdl.lock().unwrap();
+                    // Collect all device IDs under /sys/<usb_syspath>/**/dev
+                    // by checking /dev/<sysname> patterns.  The simplest heuristic:
+                    // iterate unmounted_usb and remove any whose usb_syspath starts
+                    // with this device's syspath.
+                    let to_remove: Vec<OsString> = ctrl
+                        .unmounted_usb_ids_with_syspath_prefix(&syspath)
+                        .into_iter()
+                        .collect();
+                    for id in to_remove {
+                        log::info!(
+                            "Physical unplug detected for deauthorized device {:?} \
+                             (USB parent: {:?})",
+                            id, syspath
+                        );
+                        ctrl.force_remove_usb(&id);
+                    }
+                    continue;
+                }
 
                 // ── Remove event: clean up sentinel and notify controller ────
                 if action == Some(OsStr::new("remove")) && is_partition {

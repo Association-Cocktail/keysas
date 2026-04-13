@@ -13,22 +13,11 @@ import {listen} from '@tauri-apps/api/event'
         </tr>
       </thead>
     </table>
-    <table v-if="showUsbList">
-      <tr v-for="usb in usb_list">
-        <td class="usb_device">
-          <button @click="showUsbDevice(usb)">{{ usb.name }} - {{ usb.path }}</button>
-        </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.AllowRW || usb.authorization == AuthorizationMode.AllowAll">
-          <button class="bi-folder-check"></button>
-        </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.AllowRead">
-          <button class="bi-folder-plus"></button>
-        </td>
-        <td class="usb_auth" v-if="usb.authorization == AuthorizationMode.Block || usb.authorization == AuthorizationMode.Pending">
-          <button class="bi-folder-x"></button>
-        </td>
-      </tr>
-    </table>
+    <!-- Placeholder: shown when no device is selected from the tray menu -->
+    <div v-if="!showUsbDetails" class="placeholder">
+      Sélectionnez un périphérique dans le menu de la barre système.
+    </div>
+    <!-- File details view -->
     <table v-if="showUsbDetails">
       <thead>
         <tr>
@@ -41,9 +30,15 @@ import {listen} from '@tauri-apps/api/event'
       <tbody>
         <tr v-for="file in file_list">
           <td>{{ file.path }}</td>
-          <td v-if="file.authorization == AuthorizationMode.AllowRead"><button class="bi-file-earmark-check" @click="toggleFileAuth(file, AuthorizationMode.AllowRW)"></button></td>
-          <td v-if="file.authorization == AuthorizationMode.AllowRW"><button class="bi-file-earmark-plus" @click="toggleFileAuth(file, AuthorizationMode.Block)"></button></td>
-          <td v-if="file.authorization == AuthorizationMode.Block"><button class="bi-file-earmark-x" @click="toggleFileAuth(file, AuthorizationMode.AllowRead)"></button></td>
+          <td v-if="file.authorization == AuthorizationMode.AllowRead">
+            <button class="bi-file-earmark-check" @click="toggleFileAuth(file, AuthorizationMode.AllowRW)"></button>
+          </td>
+          <td v-if="file.authorization == AuthorizationMode.AllowRW">
+            <button class="bi-file-earmark-plus" @click="toggleFileAuth(file, AuthorizationMode.Block)"></button>
+          </td>
+          <td v-if="file.authorization == AuthorizationMode.Block">
+            <button class="bi-file-earmark-x" @click="toggleFileAuth(file, AuthorizationMode.AllowRead)"></button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -52,6 +47,7 @@ import {listen} from '@tauri-apps/api/event'
 
 <script lang="ts">
 import {invoke} from "@tauri-apps/api/core"
+import {getCurrentWebviewWindow} from '@tauri-apps/api/webviewWindow'
 
 // Must match UsbAuthorization in service_if.rs
 enum AuthorizationMode {
@@ -66,7 +62,7 @@ declare interface UsbDevice {
   id: string,
   name: string,
   path: string,
-  authorization: AuthorizationMode
+  authorization: number
 }
 
 declare interface File {
@@ -78,35 +74,26 @@ declare interface File {
 
 export default {
   name: 'App',
-  components: {
-  },
+  components: {},
   data() {
     return {
-      showUsbList: true,
       showUsbDetails: false,
-      usb_list:  [] as UsbDevice[],
       file_list: [] as File[],
       usb_device: {} as UsbDevice,
     }
   },
   async mounted() {
-    // Populate USB list immediately and on every daemon update
-    await this.refreshUsbList();
-    await listen('usb_update', async () => {
-      await this.refreshUsbList();
+    // Open the file-details view when the user clicks a device in the tray menu.
+    await listen('show_device', (event) => {
+      const device = event.payload as UsbDevice;
+      this.showUsbDevice(device);
     });
+    // Keep the file list up to date as files are scanned.
     await listen('file_update', (event) => {
       this.refreshFileList(event.payload as string);
     });
   },
   methods: {
-    async refreshUsbList() {
-      invoke('get_usb_list')
-        .then((result) => {
-          this.usb_list = JSON.parse(result as string) as UsbDevice[];
-        })
-        .catch((error) => console.error('get_usb_list:', error));
-    },
     async refreshFileList(device_path: string) {
       if (device_path === this.usb_device.path) {
         invoke('get_file_list', {devicePath: device_path})
@@ -122,38 +109,33 @@ export default {
       }
     },
     async showUsbDevice(usb_device: UsbDevice) {
-      // Set the selected device
       this.usb_device = usb_device;
-
-      // Fetch the file list from the backend
+      this.file_list = [];
       this.refreshFileList(usb_device.path);
-      
-      // Display the details window
-      this.showUsbList = false;
       this.showUsbDetails = true;
     },
     async toggleFileAuth(file: File, new_mode: AuthorizationMode) {
-      let auth = 0; // Blocked
+      let auth = 0;
       if (new_mode == AuthorizationMode.AllowRead) {
         auth = 1;
       } else if (new_mode == AuthorizationMode.AllowRW) {
         auth = 2;
       }
-      console.log("New authorization");
       invoke('toggle_file_auth', {device: file.device, id: file.id, path: file.path, newAuth: auth})
-        .then((result) => {
-          console.log("New authorization result OK");
+        .then(() => {
           file.authorization = new_mode;
         })
-        .catch((error) => alert("Toggle file authorization failed"));
+        .catch(() => alert("Toggle file authorization failed"));
     },
-    backToUsbList() {
+    async backToUsbList() {
       this.showUsbDetails = false;
-      this.showUsbList = true;
+      this.file_list = [];
+      // The USB list lives in the native tray menu; just hide the window.
+      const win = getCurrentWebviewWindow();
+      await win.hide();
     }
   },
 };
-
 </script>
 
 <style scoped>
@@ -180,12 +162,12 @@ export default {
   border-bottom: 1px solid lightgray;
 }
 
-.usb_device {
-  width: 85%;
-}
-
-.usb_auth {
-  width: 5%;
+.placeholder {
+  padding: 24px 16px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 13px;
+  color: #666;
+  text-align: center;
 }
 
 button {
