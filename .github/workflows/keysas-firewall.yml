@@ -600,6 +600,9 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
+      - name: Compress man page
+        run: gzip -k -f keysas-firewall/daemon/pkg/keysas-usbfilter-daemon.8
+
       - name: Package .deb
         working-directory: keysas-firewall/daemon
         run: cargo deb --no-build
