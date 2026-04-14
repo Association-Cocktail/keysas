@@ -70,6 +70,7 @@ impl ServiceInterface for LinuxServiceInterface {
                                     let updates: Vec<UsbUpdateMessage> = entries
                                         .into_iter()
                                         .map(|(device, path, name, auth_u8)| UsbUpdateMessage {
+                                            code: crate::service_if::GuiMessageCode::UsbUpdateMessage,
                                             device,
                                             path,
                                             name,

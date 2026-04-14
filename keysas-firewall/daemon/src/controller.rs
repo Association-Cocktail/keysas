@@ -340,28 +340,37 @@ impl ServiceController {
 
     /// Called by the GUI to update a USB key policy in the firewall.
     ///
-    /// Looks up the device in `mounted_usb` by its device ID, then applies the
-    /// new fanotify mount mark via `file_filter.update_usb_auth()`.
+    /// Two cases:
+    /// - Device already mounted (`mounted_usb`): update the file-filter mark.
+    /// - Device blocked but not yet mounted (`unmounted_usb`): treat the update
+    ///   as a user override and call `override_blocked_usb()` to authorize it.
     ///
     /// # Arguments
     ///
     /// * `update` - Contains the device ID and new authorization status
-    pub fn request_usb_update(&self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
+    pub fn request_usb_update(&mut self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
         let device_key = OsString::from(&update.device);
-        match self.mounted_usb.get(&device_key) {
-            Some(policy) => {
-                let new_policy = UsbDevicePolicy {
-                    device: policy.device.clone(),
-                    auth: update.authorization,
-                };
-                self.file_filter.update_usb_auth(&new_policy)?;
-            }
-            None => {
-                warn!(
-                    "request_usb_update: device '{}' not found in mounted_usb",
-                    update.device
-                );
-            }
+
+        if let Some(policy) = self.mounted_usb.get(&device_key) {
+            // Device is already mounted — just update the file-filter authorization.
+            let new_policy = UsbDevicePolicy {
+                device: policy.device.clone(),
+                auth: update.authorization,
+            };
+            self.file_filter.update_usb_auth(&new_policy)?;
+        } else if self.unmounted_usb.contains_key(&device_key)
+            && matches!(
+                update.authorization,
+                UsbAuthorization::AllowRead | UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
+            )
+        {
+            // Blocked but not yet mounted: this is a user override request.
+            self.override_blocked_usb(&update.device)?;
+        } else {
+            warn!(
+                "request_usb_update: device '{}' not found in mounted or unmounted list",
+                update.device
+            );
         }
         Ok(())
     }
@@ -478,14 +487,14 @@ impl ServiceController {
     ///
     /// Requires `allow_user_usb_authorization = true` in the security policy.
     ///
-    /// Steps:
-    ///   1. Verify the policy allows user overrides.
-    ///   2. Find the device in `unmounted_usb` with `Block` authorization.
-    ///   3. Promote its auth to `AllowRW` (or `AllowRead` if writes are disabled).
-    ///   4. Write `1` to the USB parent's `authorized` sysfs attribute so the
-    ///      kernel re-enumerates the device.  The udev monitor will then receive
-    ///      a new "add" event, see the pre-authorized entry in `unmounted_usb`,
-    ///      and proceed to mount it normally.
+    /// Platform behaviour:
+    ///   Linux — promotes auth then writes `1` to the USB parent's `authorized`
+    ///     sysfs attribute so the kernel re-enumerates the device.  The udev
+    ///     monitor receives a new "add" event, finds the pre-authorized entry in
+    ///     `unmounted_usb`, and proceeds to mount normally.
+    ///   Windows — the drive was kept accessible (not ejected) when the policy
+    ///     allows user overrides; `update_usb()` is called directly to move the
+    ///     device to `mounted_usb` and update the minifilter authorization.
     pub fn override_blocked_usb(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
         if !self.policy.allow_user_usb_authorization {
             return Err(anyhow!(
@@ -495,38 +504,67 @@ impl ServiceController {
 
         let key = OsString::from(device_id);
 
-        let syspath = match self.unmounted_usb.get(&key) {
-            Some(p) if p.auth == UsbAuthorization::Block => p
-                .device
-                .usb_syspath
-                .clone()
-                .ok_or_else(|| anyhow!("No sysfs path for device '{device_id}'"))?,
-            Some(_) => return Err(anyhow!("Device '{device_id}' is not in a blocked state")),
-            None => return Err(anyhow!("Device '{device_id}' not found in blocked list")),
-        };
-
-        // Update auth so the udev add event (triggered below) is treated as
-        // pre-authorized and the monitor proceeds to mount instead of blocking.
         let new_auth = if self.policy.allow_user_file_write {
             UsbAuthorization::AllowRW
         } else {
             UsbAuthorization::AllowRead
         };
 
+        // Verify the device is tracked and blocked; clone what we need before
+        // the mutable borrow below.
+        let device = match self.unmounted_usb.get(&key) {
+            Some(p) if p.auth == UsbAuthorization::Block => p.device.clone(),
+            Some(_) => return Err(anyhow!("Device '{device_id}' is not in a blocked state")),
+            None => return Err(anyhow!("Device '{device_id}' not found in blocked list")),
+        };
+
+        // Promote auth in unmounted_usb.
         if let Some(policy) = self.unmounted_usb.get_mut(&key) {
             policy.auth = new_auth;
         }
 
-        // Re-authorize the USB device at the kernel level.
-        let auth_path = std::path::Path::new(&syspath).join("authorized");
-        std::fs::write(&auth_path, b"1\n")
-            .map_err(|e| anyhow!("Failed to re-authorize '{device_id}' via {auth_path:?}: {e}"))?;
+        // Platform-specific: make the newly authorized device accessible.
+        #[cfg(target_os = "linux")]
+        {
+            let syspath = device
+                .usb_syspath
+                .ok_or_else(|| anyhow!("No sysfs path for device '{device_id}'"))?;
+            let auth_path = std::path::Path::new(&syspath).join("authorized");
+            std::fs::write(&auth_path, b"1\n").map_err(|e| {
+                anyhow!("Failed to re-authorize '{device_id}' via {auth_path:?}: {e}")
+            })?;
+            info!(
+                "User override: device '{}' re-authorized at kernel level (auth={:?})",
+                device_id, new_auth
+            );
+        }
 
-        info!(
-            "User override: device '{}' re-authorized at kernel level (auth={:?})",
-            device_id, new_auth
-        );
+        #[cfg(target_os = "windows")]
+        {
+            // The drive was kept mounted (not ejected) because
+            // allow_user_usb_authorization = true.  Its mnt_point was stored in
+            // unmounted_usb when it was first detected.
+            if device.mnt_point.is_none() {
+                return Err(anyhow!(
+                    "No mount point stored for device '{device_id}': cannot authorize"
+                ));
+            }
+            // update_usb() removes the entry from unmounted_usb, inserts it into
+            // mounted_usb, updates the minifilter, and notifies the GUI.
+            self.update_usb(&device)?;
+            info!(
+                "User override: device '{}' authorized via minifilter (auth={:?})",
+                device_id, new_auth
+            );
+        }
+
         Ok(())
+    }
+
+    /// Return `true` when the security policy allows users to manually
+    /// authorize blocked (non-certified) USB devices.
+    pub fn is_user_usb_auth_enabled(&self) -> bool {
+        self.policy.allow_user_usb_authorization
     }
 
     /// Update information about a USB device once it is mounted.

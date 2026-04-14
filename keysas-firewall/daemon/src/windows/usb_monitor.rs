@@ -415,9 +415,12 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
         }
     };
 
-    let mut device = UsbDevice {
+    let device = UsbDevice {
         device_id: OsString::from(format!("\\\\.\\PhysicalDrive{disk_number}")),
-        mnt_point: None,
+        // Store the mount point before calling authorize_usb so that it is
+        // preserved in unmounted_usb and available for override_blocked_usb()
+        // if the user later manually authorizes the device.
+        mnt_point: Some(OsString::from(format!("{drive_letter}:\\"))),
         vendor: OsString::from(&vendor),
         model: OsString::from(&model),
         revision: OsString::from(&revision),
@@ -445,7 +448,6 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
     );
 
     if authorized {
-        device.mnt_point = Some(OsString::from(format!("{drive_letter}:\\")));
         if let Err(e) = ctrl.lock().unwrap().update_usb(&device) {
             log::warn!("Failed to update USB mount state: {e}");
         } else {
@@ -458,9 +460,20 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
             );
         }
     } else {
-        match eject_volume(drive_letter) {
-            Ok(()) => log::info!("Blocked drive {drive_letter}: ejected"),
-            Err(e) => log::warn!("Failed to eject blocked drive {drive_letter}: {e}"),
+        // When user override is allowed by policy, keep the drive accessible at
+        // the filesystem level: the minifilter will block all file access until
+        // the user clicks "Autoriser" in the tray app.  This avoids requiring a
+        // physical replug after the override.
+        if ctrl.lock().unwrap().is_user_usb_auth_enabled() {
+            log::info!(
+                "Blocked USB PhysicalDrive{disk_number} ({drive_letter}:): \
+                 kept mounted, awaiting user override"
+            );
+        } else {
+            match eject_volume(drive_letter) {
+                Ok(()) => log::info!("Blocked drive {drive_letter}: ejected"),
+                Err(e) => log::warn!("Failed to eject blocked drive {drive_letter}: {e}"),
+            }
         }
     }
 }

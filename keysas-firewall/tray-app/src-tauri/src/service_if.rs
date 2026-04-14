@@ -127,12 +127,23 @@ pub struct FileUpdateMessage {
     pub authorization: FileAuthorization,
 }
 
+/// Message code — mirrors the daemon's GuiMessageCode so that JSON
+/// round-trips between the tray app and daemon are consistent.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub enum GuiMessageCode {
+    UsbUpdateMessage,
+    FileUpdateMessage,
+    UsbFileListRequest,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UsbUpdateMessage {
+    /// Discriminator required by the daemon's deserializer
+    pub code: GuiMessageCode,
     pub device: String,
     pub path: String,
     pub name: String,
-    pub authorization: UsbAuthorization
+    pub authorization: UsbAuthorization,
 }
 
 #[derive(Debug, Copy, Clone)]

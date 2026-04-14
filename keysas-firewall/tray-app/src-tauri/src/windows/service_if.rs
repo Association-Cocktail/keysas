@@ -23,11 +23,12 @@
 #![warn(unused_imports)]
 
 use anyhow::anyhow;
-use serde::Serialize;
 use std::sync::{Arc, RwLock};
 
 use crate::app_controller::AppController;
-use crate::service_if::{ServiceInterface, FileUpdateMessage};
+use crate::service_if::{
+    FileUpdateMessage, GuiMessageCode, ServiceInterface, UsbAuthorization, UsbUpdateMessage,
+};
 
 /// Handle to the service interface client and server
 pub struct WindowsServiceInterface {
@@ -66,13 +67,19 @@ impl ServiceInterface for WindowsServiceInterface {
                     return;
                 }
             };
-            println!("Start listening for daemon");
+            log::info!("Windows tray: listening for daemon on {SERVICE_PIPE}");
             loop {
                 while let Ok(Some(msg)) = libmailslot::read_mailslot(&server) {
-                    if let Ok(update) = serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
+                    if let Ok(update) =
+                        serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
                     {
                         ctrl_hdl.notify_file_change(&update);
-                        println!("message from service {:?}", update);
+                    } else if let Ok(update) =
+                        serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
+                    {
+                        ctrl_hdl.notify_usb_change(&update);
+                    } else {
+                        log::warn!("Windows tray: unrecognised message from daemon");
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
@@ -82,10 +89,27 @@ impl ServiceInterface for WindowsServiceInterface {
     }
 
     fn send_file_update(&self, update: &FileUpdateMessage) -> Result<(), anyhow::Error> {
-        todo!()
+        let json = serde_json::to_string(update)
+            .map_err(|e| anyhow!("Failed to serialize FileUpdateMessage: {e}"))?;
+        libmailslot::write_mailslot(TRAY_PIPE, &json)
+            .map_err(|e| anyhow!("Failed to send FileUpdateMessage to daemon: {e}"))
     }
 
-    fn allow_usb_override(&self, _device_path: &str) -> Result<(), anyhow::Error> {
-        Err(anyhow::anyhow!("USB override not implemented on Windows"))
+    /// Send an override request for a blocked (non-certified) USB device to the
+    /// daemon via the app-to-service mailslot.  The daemon's mailslot server
+    /// deserialises the message as `UsbUpdateMessage` and routes it through
+    /// `request_usb_update()` → `override_blocked_usb()`.
+    fn allow_usb_override(&self, device_path: &str) -> Result<(), anyhow::Error> {
+        let msg = UsbUpdateMessage {
+            code: GuiMessageCode::UsbUpdateMessage,
+            device: device_path.to_string(),
+            path: String::new(),
+            name: String::new(),
+            authorization: UsbAuthorization::AllowRW,
+        };
+        let json = serde_json::to_string(&msg)
+            .map_err(|e| anyhow!("Failed to serialize USB override message: {e}"))?;
+        libmailslot::write_mailslot(TRAY_PIPE, &json)
+            .map_err(|e| anyhow!("Failed to send USB override to daemon: {e}"))
     }
 }

@@ -83,8 +83,7 @@ impl GuiInterface for WindowsGuiInterface {
                     // Try to read a usb update message
                     else if let Ok(update) = serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes()) {
                         {
-                            let controller = ctrl_hdl.lock().unwrap();
-                            if let Err(e) = controller.request_usb_update(&update) {
+                            if let Err(e) = ctrl_hdl.lock().unwrap().request_usb_update(&update) {
                                 error!("Failed to handle usb update request: {e}");
                             }
                         }
