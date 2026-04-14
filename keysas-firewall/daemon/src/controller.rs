@@ -739,6 +739,12 @@ impl ServiceController {
             }
         }
 
+        // If allow_user_file_read is disabled, block without prompting the user
+        if !self.policy.allow_user_file_read {
+            info!("authorize_file: file not validated and allow_user_file_read=false — blocking {:?}", file_path);
+            return Ok(false);
+        }
+
         // If the validation fails, ask the user authorization
         self.user_authorize_file(file_path.as_path())
     }
