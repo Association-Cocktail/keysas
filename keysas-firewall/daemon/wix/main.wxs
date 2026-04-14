@@ -210,13 +210,19 @@
               DiskId='1'
               Source='$(var.MinifilterDir)/KeysasMinifilter.cat'/>
 
+            <!--
+              Do NOT start the minifilter at install time: the driver requires
+              either test-signing mode (dev/test) or a proper EV + attestation
+              signature (production).  Starting here would cause an immediate
+              rollback if signing is not trusted.  The service starts on next
+              boot (Start=3 / SERVICE_DEMAND_START, triggered by SCM).
+            -->
             <ServiceControl
               Id='svc_minifilter_control'
               Name='KeysasMinifilter'
-              Start='install'
               Stop='both'
               Remove='uninstall'
-              Wait='yes'/>
+              Wait='no'/>
           </Component>
         </Directory>
       </Directory>
