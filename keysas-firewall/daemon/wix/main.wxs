@@ -152,9 +152,14 @@
               the service was created.
             -->
             <RegistryKey Root='HKLM' Key='SYSTEM\CurrentControlSet\Services\KeysasMinifilter'>
-              <!-- Service registration -->
-              <RegistryValue Type='expandable' Name='ImagePath'
-                Value='%SystemRoot%\System32\drivers\KeysasMinifilter.sys'/>
+              <!-- Service registration.
+                   ImagePath MUST use the NT namespace path \SystemRoot\... (not the
+                   Win32 %SystemRoot% env-var form).  NtLoadDriver() expects an NT
+                   path; passing a Win32 path causes ERROR_PATH_NOT_FOUND even when
+                   the .sys file is physically present in System32\drivers\.
+                   This matches what SetupAPI writes when installing via INF (%12%). -->
+              <RegistryValue Type='string' Name='ImagePath'
+                Value='\SystemRoot\System32\drivers\KeysasMinifilter.sys'/>
               <RegistryValue Type='string'  Name='DisplayName'   Value='Keysas Mini-Filter Driver'/>
               <RegistryValue Type='string'  Name='Description'   Value='Keysas Mini-Filter Driver'/>
               <RegistryValue Type='integer' Name='Type'          Value='2'/>  <!-- SERVICE_FILE_SYSTEM_DRIVER -->
