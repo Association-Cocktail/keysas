@@ -28,6 +28,9 @@ jobs:
   build-ebpf:
     name: Build eBPF program
     runs-on: ubuntu-latest
+    if: >-
+      !contains(github.event.head_commit.message, '[skip linux]') &&
+      !contains(github.event.pull_request.title,  '[skip linux]')
 
     steps:
       - name: Checkout
@@ -119,6 +122,9 @@ jobs:
   check-tray-app:
     name: cargo check — tray-app (Linux)
     runs-on: ubuntu-latest
+    if: >-
+      !contains(github.event.head_commit.message, '[skip linux]') &&
+      !contains(github.event.pull_request.title,  '[skip linux]')
 
     steps:
       - name: Checkout
@@ -163,6 +169,9 @@ jobs:
   build-tray-app-msi:
     name: Build tray-app MSI (Windows)
     runs-on: windows-latest
+    if: >-
+      !contains(github.event.head_commit.message, '[skip windows]') &&
+      !contains(github.event.pull_request.title,  '[skip windows]')
 
     steps:
       - name: Checkout
@@ -455,6 +464,9 @@ jobs:
   build-tray-app-deb:
     name: Build tray-app .deb (Linux)
     runs-on: ubuntu-latest
+    if: >-
+      !contains(github.event.head_commit.message, '[skip linux]') &&
+      !contains(github.event.pull_request.title,  '[skip linux]')
 
     steps:
       - name: Checkout
