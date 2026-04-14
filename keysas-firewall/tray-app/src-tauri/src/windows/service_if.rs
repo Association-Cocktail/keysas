@@ -112,4 +112,18 @@ impl ServiceInterface for WindowsServiceInterface {
         libmailslot::write_mailslot(TRAY_PIPE, &json)
             .map_err(|e| anyhow!("Failed to send USB override to daemon: {e}"))
     }
+
+    fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error> {
+        let msg = UsbUpdateMessage {
+            code: GuiMessageCode::UsbUpdateMessage,
+            device: device_path.to_string(),
+            path: String::new(),
+            name: String::new(),
+            authorization: UsbAuthorization::AllowRW,
+        };
+        let json = serde_json::to_string(&msg)
+            .map_err(|e| anyhow!("Failed to serialize USB write elevation message: {e}"))?;
+        libmailslot::write_mailslot(TRAY_PIPE, &json)
+            .map_err(|e| anyhow!("Failed to send USB write elevation to daemon: {e}"))
+    }
 }

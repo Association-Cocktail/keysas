@@ -120,4 +120,16 @@ impl ServiceInterface for LinuxServiceInterface {
             .map_err(|e| anyhow!("override_usb_authorization failed: {e}"))?;
         Ok(())
     }
+
+    fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error> {
+        let conn = zbus::blocking::Connection::system()
+            .map_err(|e| anyhow!("System bus connection failed: {e}"))?;
+        let proxy = Firewall1ProxyBlocking::new(&conn)
+            .map_err(|e| anyhow!("Firewall1 proxy error: {e}"))?;
+        // auth=3 maps to UsbAuthorization::AllowRW in the daemon
+        proxy
+            .update_usb_authorization(device_path, 3)
+            .map_err(|e| anyhow!("update_usb_authorization(AllowRW) failed: {e}"))?;
+        Ok(())
+    }
 }

@@ -171,6 +171,11 @@ impl AppController {
         self.comm.allow_usb_override(device_path)
     }
 
+    /// Ask the daemon to elevate a read-only USB device to read-write access.
+    pub fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error> {
+        self.comm.allow_write_usb(device_path)
+    }
+
     /// Return the list of files in the datastore
     pub fn get_file_list(&self, device_path: &str) -> Result<Vec<FileAuth>, anyhow::Error> {
         match self.store.read() {

@@ -99,7 +99,7 @@ use log::*;
 use oqs::sig::{Algorithm, Sig};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
@@ -210,6 +210,11 @@ pub struct ServiceController {
     usb_ca_pub: KeysasHybridPubKeys,
     unmounted_usb: HashMap<OsString, UsbDevicePolicy>,
     mounted_usb: HashMap<OsString, UsbDevicePolicy>,
+    /// Cache of files that have been pre-validated before the fanotify mark was
+    /// placed on the mount point.  The event handler checks this set first and
+    /// returns immediately with `true`, avoiding any file I/O (and therefore any
+    /// re-entrant FAN_OPEN_PERM event) from within the handler.
+    validated_files: HashSet<PathBuf>,
 }
 
 /// Representation of USB device in the firewall
@@ -325,6 +330,7 @@ impl ServiceController {
             usb_ca_pub,
             unmounted_usb: HashMap::new(),
             mounted_usb: HashMap::new(),
+            validated_files: HashSet::new(),
         }));
 
         // Start the interfaces
@@ -352,6 +358,16 @@ impl ServiceController {
     ///
     /// * `update` - Contains the device ID and new authorization status
     pub fn request_usb_update(&mut self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
+        // Enforce write policy: reject AllowRW if the admin disabled it.
+        if matches!(update.authorization, UsbAuthorization::AllowRW | UsbAuthorization::AllowAll)
+            && !self.policy.allow_user_file_write
+        {
+            return Err(anyhow!(
+                "request_usb_update: elevation to {:?} refused — allow_user_file_write=false",
+                update.authorization
+            ));
+        }
+
         let device_key = OsString::from(&update.device);
 
         if let Some(policy) = self.mounted_usb.get(&device_key) {
@@ -729,6 +745,15 @@ impl ServiceController {
 
         // Skip the directories
         if file_path.metadata()?.is_dir() {
+            return Ok(true);
+        }
+
+        // .krp files are internal station-report files: always allow immediately.
+        // Calling validate_file() on a .krp would require opening its linked data
+        // file, which generates a new FAN_OPEN_PERM event that the single-threaded
+        // fanotify event loop cannot process while it is already handling this event
+        // → deadlock.  .krp files contain only signatures/digests, not user data.
+        if file_path.extension().map_or(false, |e| e.eq_ignore_ascii_case("krp")) {
             return Ok(true);
         }
 

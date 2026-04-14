@@ -117,6 +117,20 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         return;
     }
 
+    // "allow_write:{device_id}" — elevate AllowRead → AllowRW.
+    if let Some(device_id) = id.strip_prefix("allow_write:") {
+        let device_id = device_id.to_string();
+        if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+            match ctrl.allow_write_usb(&device_id) {
+                Ok(()) => {
+                    tray_menu::rebuild_tray_menu(app, &ctrl);
+                }
+                Err(e) => log::error!("on_menu_event allow_write: {e}"),
+            }
+        }
+        return;
+    }
+
     // "device:{device_id}" — open the file-details window for this device.
     if let Some(device_id) = id.strip_prefix("device:") {
         let device_id = device_id.to_string();

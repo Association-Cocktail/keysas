@@ -175,4 +175,8 @@ pub trait ServiceInterface {
     /// Manually authorize a blocked (non-certified) USB device.
     /// Requires `allow_user_usb_authorization = true` on the daemon side.
     fn allow_usb_override(&self, device_path: &str) -> Result<(), anyhow::Error>;
+
+    /// Elevate a read-only USB device to read-write access.
+    /// Requires `allow_user_file_write = true` on the daemon side.
+    fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error>;
 }
