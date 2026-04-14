@@ -50,27 +50,45 @@ fn keysas_service_main(_args: Vec<OsString>) {
     // Declare service event handler
     let event_handler = move |event| -> ServiceControlHandlerResult {
         match event {
-            ServiceControl::Stop => {
-                info!("Service asked to stop");
-                ServiceControlHandlerResult::NoError
-            }
+            ServiceControl::Stop => ServiceControlHandlerResult::NoError,
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
         }
     };
 
-    // Register the service handler
+    // Register the service handler — MUST happen before any other SCM interaction.
     let status_handle = match service_control_handler::register("Keysas Service", event_handler) {
         Ok(h) => h,
-        Err(e) => {
-            error!("Failed to get status handle: {e}");
-            return;
-        }
+        Err(_) => return,
     };
 
-    // Start running the service
+    // Report START_PENDING immediately so the SCM does not time out while we
+    // initialise the logger and the rest of the service.
+    let _ = status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::StartPending,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 1,
+        wait_hint: Duration::from_secs(30),
+        process_id: None,
+    });
+
+    // Initialise the Windows Event Log now that we are inside the service
+    // entry point (running under LocalSystem, HKLM write is guaranteed).
+    // Non-fatal: if eventlog fails we fall back to a no-op logger so the
+    // service still starts.
+    if eventlog::init("Keysas Service", log::Level::Info).is_err() {
+        let _ = simple_logger::SimpleLogger::new()
+            .with_level(log::LevelFilter::Info)
+            .init();
+    }
+
+    info!("Keysas service: entry point reached, initialising…");
+
+    // Report RUNNING before the heavy initialisation so the SCM is satisfied.
     if let Err(e) = status_handle.set_service_status(ServiceStatus {
-        service_type: ServiceType::OWN_PROCESS, // Run the service in a separate process
+        service_type: ServiceType::OWN_PROCESS,
         current_state: ServiceState::Running,
         controls_accepted: ServiceControlAccept::STOP,
         exit_code: ServiceExitCode::Win32(0),
@@ -78,9 +96,9 @@ fn keysas_service_main(_args: Vec<OsString>) {
         wait_hint: Duration::default(),
         process_id: None,
     }) {
-        error!("Failed to set service status to running: {e}");
+        error!("Failed to set service status to Running: {e}");
         return;
-    };
+    }
 
     info!("Keysas service started");
 

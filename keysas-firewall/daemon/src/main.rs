@@ -166,13 +166,6 @@ fn main() -> Result<(), anyhow::Error> {
             .init()?;
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        eventlog::init("Keysas Service", log::Level::Trace)?;
-    }
-
-    info!("Event log initialized");
-
     // Get command arguments
     let mut config = Config::default();
     command_args(&mut config);
