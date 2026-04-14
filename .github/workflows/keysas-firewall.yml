@@ -205,6 +205,13 @@ jobs:
           path: keysas-firewall/tray-app/src-tauri/target/release/bundle/msi/*.msi
           retention-days: 7
 
+      - name: Upload tray-app binary (reused by build-windows-msi)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trayapp-windows-exe
+          path: keysas-firewall/tray-app/src-tauri/target/release/keysas-usbfilter-trayapp.exe
+          retention-days: 1
+
   # ─────────────────────────────────────────────────────────────────────────────
   # 5. Build the full MSI : minifilter (WDK) + daemon (MSVC) + packaging (WiX v3)
   #    Everything on one Windows runner — no cross-compilation, no Docker.
@@ -219,6 +226,7 @@ jobs:
   build-windows-msi:
     name: Build MSI daemon+minifilter (Windows)
     runs-on: windows-latest
+    needs: build-tray-app-msi
 
     steps:
       - name: Checkout
@@ -405,21 +413,12 @@ jobs:
         working-directory: keysas-firewall/daemon
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      # ── Tray-app ───────────────────────────────────────────────────────────
-      - name: Set up Node.js (tray-app frontend)
-        uses: actions/setup-node@v4
+      # ── Tray-app (reuse binary built by build-tray-app-msi) ──────────────────
+      - name: Download tray-app binary
+        uses: actions/download-artifact@v4
         with:
-          node-version: lts/*
-          cache: npm
-          cache-dependency-path: keysas-firewall/tray-app/package-lock.json
-
-      - name: Build tray-app frontend
-        working-directory: keysas-firewall/tray-app
-        run: npm ci && npm run build
-
-      - name: Build tray-app binary (Release MSVC)
-        working-directory: keysas-firewall/tray-app/src-tauri
-        run: cargo build --release --target x86_64-pc-windows-msvc
+          name: trayapp-windows-exe
+          path: keysas-firewall/tray-app/src-tauri/target/x86_64-pc-windows-msvc/release
 
       # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
       - name: Install cargo-wix
