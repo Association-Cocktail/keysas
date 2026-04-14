@@ -2,6 +2,8 @@ use std::{ffi::OsString, thread, time::Duration};
 use anyhow::anyhow;
 use log::*;
 use registry::{Data, Hive, Security};
+use x509_cert::Certificate;
+use x509_cert::der::DecodePem;
 use windows_service::define_windows_service;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
@@ -144,7 +146,7 @@ pub fn load_security_policy(_config: &Config) -> Result<SecurityPolicy, anyhow::
 
 pub fn load_certificates(
     _config: &Config,
-) -> Result<(KeysasHybridPubKeys, KeysasHybridPubKeys), anyhow::Error> {
+) -> Result<(KeysasHybridPubKeys, KeysasHybridPubKeys, Certificate, Certificate), anyhow::Error> {
     let regkey = match Hive::LocalMachine.open(
         r"SYSTEM\CurrentControlSet\Services\Keysas Service\config",
         Security::Read,
@@ -205,5 +207,16 @@ pub fn load_certificates(
         }
     };
 
-    Ok((st_ca_pub, usb_ca_pub))
+    // Load the raw station CA certificates for file-report signature validation.
+    let st_cl_bytes = std::fs::read(&*st_cl_path)
+        .map_err(|e| anyhow!("Cannot read station CA ED25519 certificate {st_cl_path:?}: {e}"))?;
+    let st_ca_cert_cl = Certificate::from_pem(&st_cl_bytes)
+        .map_err(|e| anyhow!("Cannot parse station CA ED25519 certificate: {e}"))?;
+
+    let st_pq_bytes = std::fs::read(&*st_pq_path)
+        .map_err(|e| anyhow!("Cannot read station CA ML-DSA87 certificate {st_pq_path:?}: {e}"))?;
+    let st_ca_cert_pq = Certificate::from_pem(&st_pq_bytes)
+        .map_err(|e| anyhow!("Cannot parse station CA ML-DSA87 certificate: {e}"))?;
+
+    Ok((st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq))
 }

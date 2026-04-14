@@ -113,9 +113,10 @@ use crate::gui_interface::{
 use crate::usb_monitor::{UsbMonitor, UsbMonitorBuilder};
 use crate::Config;
 use keysas_lib::{
-    // file_report::parse_report,
+    file_report::parse_report,
     keysas_key::{KeysasHybridPubKeys, KeysasHybridSignature, PublicKeys},
 };
+use x509_cert::Certificate;
 
 #[cfg(target_os = "windows")]
 use crate::windows::service::{load_certificates, load_security_policy};
@@ -203,8 +204,9 @@ pub struct ServiceController {
     gui: Box<dyn GuiInterface + Sync + Send>,
     file_filter: Box<dyn FileFilterInterface + Sync + Send>,
     policy: SecurityPolicy,
-    #[allow(dead_code)]
-    st_ca_pub: KeysasHybridPubKeys,
+    /// Station CA certificates used to validate file reports (.krp)
+    st_ca_cert_cl: Certificate,
+    st_ca_cert_pq: Certificate,
     usb_ca_pub: KeysasHybridPubKeys,
     unmounted_usb: HashMap<OsString, UsbDevicePolicy>,
     mounted_usb: HashMap<OsString, UsbDevicePolicy>,
@@ -297,7 +299,7 @@ impl ServiceController {
         log::info!("Policy loaded");
 
         // Load local certificates for the CA
-        let (st_ca_pub, usb_ca_pub) = match load_certificates(config) {
+        let (_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq) = match load_certificates(config) {
             Ok(c) => c,
             Err(e) => {
                 return Err(anyhow!(
@@ -318,7 +320,8 @@ impl ServiceController {
             gui,
             file_filter,
             policy,
-            st_ca_pub,
+            st_ca_cert_cl,
+            st_ca_cert_pq,
             usb_ca_pub,
             unmounted_usb: HashMap::new(),
             mounted_usb: HashMap::new(),
@@ -847,13 +850,12 @@ impl ServiceController {
     ///
     /// * `path` - Path to the file
     fn validate_file(&self, path: &Path) -> Result<bool, anyhow::Error> {
-        // Test if the file is a station report
+        // Test if the file is itself a station report (.krp)
         if Path::new(path)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("krp"))
         {
-            // Try to find the corresponding file
-            // The .krp is named ".<data_file>.krp" — strip ".krp" then strip the leading '.'
+            // Derive the data-file path: ".foo.krp" → "foo"
             let mut file_path = path.to_path_buf();
             file_path.set_extension("");
             if let (Some(parent), Some(fname)) = (file_path.parent(), file_path.file_name()) {
@@ -862,66 +864,61 @@ impl ServiceController {
                 }
             }
 
-            match file_path.is_file() {
-                true => {
-                    // If it exists, validate both
-                    // match parse_report(
-                    //     Path::new(path),
-                    //     Some(&file_path),
-                    //     Some(&self.ca_cert_cl),
-                    //     Some(&self.ca_cert_pq),
-                    // ) {
-                    //     Ok(_) => return Ok(true),
-                    //     Err(e) => {
-                    //         info!("Failed to parse report: {e}");
-                    //         return Ok(false);
-                    //     }
-                    // }
+            return if file_path.is_file() {
+                // Validate the report and the linked data file together
+                match parse_report(
+                    path,
+                    Some(&file_path),
+                    Some(&self.st_ca_cert_cl),
+                    Some(&self.st_ca_cert_pq),
+                ) {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        info!("validate_file: invalid report (with data file): {e}");
+                        Ok(false)
+                    }
                 }
-                false => {
-                    // If no corresponding file validate it alone
-                    // match parse_report(
-                    //     Path::new(path),
-                    //     None,
-                    //     Some(&self.ca_cert_cl),
-                    //     Some(&self.ca_cert_pq),
-                    // ) {
-                    //     Ok(_) => return Ok(true),
-                    //     Err(e) => {
-                    //         info!("Failed to parse report: {e}");
-                    //         return Ok(false);
-                    //     }
-                    // }
+            } else {
+                // No linked data file — validate the report alone
+                match parse_report(
+                    path,
+                    None,
+                    Some(&self.st_ca_cert_cl),
+                    Some(&self.st_ca_cert_pq),
+                ) {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        info!("validate_file: invalid standalone report: {e}");
+                        Ok(false)
+                    }
                 }
-            }
+            };
         }
 
-        // If not try to find the corresponding report
-        // It is in the same directory, hidden, named ".<filename>.krp"
+        // Regular file: look for its station report ".<filename>.krp" in the same directory
         let path_report = if let (Some(parent), Some(fname)) = (path.parent(), path.file_name()) {
             parent.join(format!(".{}.krp", fname.to_string_lossy()))
         } else {
             PathBuf::from(path)
         };
-        match path_report.is_file() {
-            true => {
-                // If a corresponding report is found then validate both the file and the report
-                // if let Err(e) = parse_report(
-                //     path_report.as_path(),
-                //     Some(path),
-                //     Some(&self.ca_cert_cl),
-                //     Some(&self.ca_cert_pq),
-                // ) {
-                //     info!("Failed to parse file and report: {e}");
-                //     return Ok(false);
-                // }
-                Ok(true)
+
+        if path_report.is_file() {
+            // Validate both the report and the data file (hash check included)
+            match parse_report(
+                path_report.as_path(),
+                Some(path),
+                Some(&self.st_ca_cert_cl),
+                Some(&self.st_ca_cert_pq),
+            ) {
+                Ok(_) => Ok(true),
+                Err(e) => {
+                    info!("validate_file: invalid report for {:?}: {e}", path);
+                    Ok(false)
+                }
             }
-            false => {
-                // There is no corresponding report for validating the file
-                info!("No report found at {:?}", path_report);
-                Ok(false)
-            }
+        } else {
+            info!("validate_file: no report found at {:?}", path_report);
+            Ok(false)
         }
     }
 
