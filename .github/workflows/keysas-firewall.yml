@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust nightly + rust-src
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           components: rust-src
@@ -82,7 +82,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           rustflags: ""  # Don't treat warnings as errors on the daemon check
@@ -131,7 +131,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           rustflags: ""  # Don't treat warnings as errors on the tray-app check
@@ -178,7 +178,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           rustflags: ""  # Don't treat warnings as errors on MSI build
@@ -243,7 +243,7 @@ jobs:
 
       # ── Toolchain setup ────────────────────────────────────────────────────
       - name: Set up Rust stable (MSVC)
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           rustflags: ""
@@ -452,7 +452,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           rustflags: ""
@@ -512,7 +512,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           rustflags: ""
@@ -568,7 +568,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           rustflags: ""
