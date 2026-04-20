@@ -929,6 +929,7 @@ impl ServiceController {
             device.serial.to_string_lossy(),
             "out"
         );
+        info!("validate_usb_signature: verifying data={:?}", data);
 
         match KeysasHybridPubKeys::verify_key_signatures(
             data.as_bytes(),
@@ -936,7 +937,10 @@ impl ServiceController {
             &self.usb_ca_pub,
         ) {
             Ok(_) => Ok(true),
-            Err(_e) => Ok(false),
+            Err(e) => {
+                warn!("validate_usb_signature: verification failed: {e}");
+                Ok(false)
+            }
         }
     }
 
