@@ -42,6 +42,8 @@ pub struct UsbDevice {
     pub path: String,
     /// Serialized as u8 so TypeScript can compare with numeric enum values.
     pub authorization: u8,
+    /// Files that were blocked (not pre-certified) and are awaiting user authorization.
+    pub blocked_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +89,13 @@ impl FilterStore {
     /// Look up a device mutably by its unique device ID.
     pub fn get_device_mut(&mut self, device_id: &str) -> Option<&mut UsbDevice> {
         self.devices.iter_mut().find(|d| d.id.eq(device_id))
+    }
+
+    /// Set the blocked-files list for a device (replaces previous list).
+    pub fn set_device_blocked_files(&mut self, device_id: &str, files: Vec<String>) {
+        if let Some(d) = self.devices.iter_mut().find(|d| d.id == device_id) {
+            d.blocked_files = files;
+        }
     }
 
     pub fn set_device_auth(

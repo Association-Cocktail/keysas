@@ -179,4 +179,11 @@ pub trait ServiceInterface {
     /// Elevate a read-only USB device to read-write access.
     /// Requires `allow_user_file_write = true` on the daemon side.
     fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error>;
+
+    /// Return the list of blocked (non-certified) file paths for a device.
+    /// Requires `allow_user_file_read = true` on the daemon side.
+    fn get_blocked_files(&self, device_id: &str) -> Result<Vec<String>, anyhow::Error>;
+
+    /// Move a blocked file into the pre-validated cache so the next open succeeds.
+    fn authorize_blocked_file(&self, device_id: &str, path: &str) -> Result<(), anyhow::Error>;
 }

@@ -148,7 +148,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                             };
 
                             ctrl.lock()
-                                .map(|g| g.authorize_file(&file, false).unwrap_or(false))
+                                .map(|mut g| g.authorize_file(&file, false).unwrap_or(false))
                                 .unwrap_or(false)
                         };
 

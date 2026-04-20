@@ -215,6 +215,10 @@ pub struct ServiceController {
     /// returns immediately with `true`, avoiding any file I/O (and therefore any
     /// re-entrant FAN_OPEN_PERM event) from within the handler.
     validated_files: HashSet<PathBuf>,
+    /// Files that were denied at open time because they were not pre-certified.
+    /// Keyed by device_id.  The tray-app polls this list and can authorize
+    /// individual paths, which moves them into `validated_files`.
+    blocked_files: HashMap<OsString, Vec<PathBuf>>,
 }
 
 /// Representation of USB device in the firewall
@@ -331,6 +335,7 @@ impl ServiceController {
             unmounted_usb: HashMap::new(),
             mounted_usb: HashMap::new(),
             validated_files: HashSet::new(),
+            blocked_files: HashMap::new(),
         }));
 
         // Start the interfaces
@@ -736,12 +741,13 @@ impl ServiceController {
                 warn!("remove_usb: failed to remove fanotify mark for {:?}: {e}", device_id);
             }
 
-            // Evict all pre-validated cache entries that belonged to this mount.
+            // Evict all pre-validated cache entries and blocked files for this mount.
             if let Some(mnt) = policy.device.mnt_point.as_ref() {
                 let prefix = PathBuf::from(mnt);
                 self.validated_files.retain(|p| !p.starts_with(&prefix));
-                info!("remove_usb: cache evicted for {:?}", mnt);
+                info!("remove_usb: validated_files cache evicted for {:?}", mnt);
             }
+            self.blocked_files.remove(&device_id.clone());
 
             info!("USB device {:?} removed (was mounted at {:?})",
                 device_id,
@@ -778,7 +784,7 @@ impl ServiceController {
     ///
     /// * `path` - Path to the file
     /// * `write` - If write access is requested
-    pub fn authorize_file(&self, file: &FilteredFile, _write: bool) -> Result<bool, anyhow::Error> {
+    pub fn authorize_file(&mut self, file: &FilteredFile, _write: bool) -> Result<bool, anyhow::Error> {
         let file_path = match &file.path {
             Some(p) => {
                 let mut pb = PathBuf::new();
@@ -833,14 +839,21 @@ impl ServiceController {
         }
 
         // File was not certified at mount time.
-        // If allow_user_file_read is disabled, block without prompting the user.
-        if !self.policy.allow_user_file_read {
-            info!("authorize_file: file not in cache and allow_user_file_read=false — blocking {:?}", file_path);
-            return Ok(false);
+        // If allow_user_file_read is enabled, queue the file for tray-based
+        // authorization (non-blocking).  The tray-app polls `get_blocked_files`
+        // and shows an "Autoriser" button per file.  On next open after the user
+        // authorizes, the file will be in `validated_files` → allowed.
+        if self.policy.allow_user_file_read {
+            if let Some(device_id) = self.device_id_for_path(&file_path) {
+                let list = self.blocked_files.entry(device_id).or_default();
+                if !list.contains(&file_path) {
+                    list.push(file_path.clone());
+                }
+            }
         }
 
-        // Ask the user to decide.
-        self.user_authorize_file(file_path.as_path())
+        info!("authorize_file: blocking {:?} (not certified)", file_path);
+        Ok(false)
     }
 
     fn validate_usb_signature(
@@ -1029,6 +1042,56 @@ impl ServiceController {
         };
 
         self.gui.request_file_auth(&req)
+    }
+
+    /// Return the device_id of the mounted USB device whose mount point is a
+    /// prefix of `path`, or `None` if no such device is found.
+    fn device_id_for_path(&self, path: &Path) -> Option<OsString> {
+        self.mounted_usb
+            .iter()
+            .find(|(_, policy)| {
+                policy
+                    .device
+                    .mnt_point
+                    .as_ref()
+                    .map(|mnt| path.starts_with(Path::new(mnt)))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Return the list of blocked (non-certified) file paths for `device_id`.
+    /// Used by the D-Bus `get_blocked_files` method so the tray-app can show
+    /// per-file authorization buttons.
+    pub fn list_blocked_files(&self, device_id: &str) -> Vec<String> {
+        let key = OsString::from(device_id);
+        self.blocked_files
+            .get(&key)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Move a previously blocked file into `validated_files` so that the next
+    /// open attempt succeeds.  Called when the user clicks "Autoriser" in the
+    /// tray for a specific file.
+    pub fn authorize_blocked_file(
+        &mut self,
+        device_id: &str,
+        path: &str,
+    ) -> Result<(), anyhow::Error> {
+        let key = OsString::from(device_id);
+        let file_path = PathBuf::from(path);
+        if let Some(list) = self.blocked_files.get_mut(&key) {
+            list.retain(|p| p != &file_path);
+        }
+        self.validated_files.insert(file_path);
+        info!("authorize_blocked_file: authorized {:?} on {:?}", path, device_id);
+        Ok(())
     }
 
     /// Get the authorization status for a filesystem on a USB device

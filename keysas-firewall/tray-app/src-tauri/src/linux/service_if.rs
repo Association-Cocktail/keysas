@@ -22,7 +22,9 @@ use anyhow::anyhow;
 use std::sync::Arc;
 
 use crate::app_controller::AppController;
-use crate::service_if::{FileUpdateMessage, ServiceInterface, UsbAuthorization, UsbUpdateMessage};
+use crate::service_if::{
+    FileUpdateMessage, ServiceInterface, UsbAuthorization, UsbUpdateMessage,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D-Bus proxy — fr.asso_cocktail.keysas.Firewall1 (system bus, blocking)
@@ -38,6 +40,8 @@ trait Firewall1 {
     fn update_usb_authorization(&self, device: &str, auth: u8) -> zbus::Result<()>;
     fn get_usb_list(&self) -> zbus::Result<String>;
     fn override_usb_authorization(&self, device: &str) -> zbus::Result<()>;
+    fn get_blocked_files(&self, device: &str) -> zbus::Result<String>;
+    fn authorize_blocked_file(&self, device: &str, path: &str) -> zbus::Result<()>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +88,32 @@ impl ServiceInterface for LinuxServiceInterface {
                                         })
                                         .collect();
 
+                                    // Fetch blocked files for each device and
+                                    // store them before rebuilding the tray.
+                                    let device_ids: Vec<String> = updates
+                                        .iter()
+                                        .map(|u| u.device.clone())
+                                        .collect();
                                     ctrl_hdl.set_usb_list(updates);
+                                    for device_id in &device_ids {
+                                        match proxy.get_blocked_files(device_id) {
+                                            Ok(json) => {
+                                                if let Ok(files) =
+                                                    serde_json::from_str::<Vec<String>>(&json)
+                                                {
+                                                    ctrl_hdl.set_blocked_files(
+                                                        device_id,
+                                                        files,
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::warn!(
+                                                    "get_blocked_files({device_id}): {e}"
+                                                );
+                                            }
+                                        }
+                                    }
                                     crate::tray_menu::rebuild_tray_menu(&app, &ctrl_hdl);
                                 }
                                 Err(e) => {
@@ -131,5 +160,27 @@ impl ServiceInterface for LinuxServiceInterface {
             .update_usb_authorization(device_path, 3)
             .map_err(|e| anyhow!("update_usb_authorization(AllowRW) failed: {e}"))?;
         Ok(())
+    }
+
+    fn get_blocked_files(&self, device_id: &str) -> Result<Vec<String>, anyhow::Error> {
+        let conn = zbus::blocking::Connection::system()
+            .map_err(|e| anyhow!("System bus connection failed: {e}"))?;
+        let proxy = Firewall1ProxyBlocking::new(&conn)
+            .map_err(|e| anyhow!("Firewall1 proxy error: {e}"))?;
+        let json = proxy
+            .get_blocked_files(device_id)
+            .map_err(|e| anyhow!("get_blocked_files failed: {e}"))?;
+        serde_json::from_str::<Vec<String>>(&json)
+            .map_err(|e| anyhow!("Failed to parse blocked files JSON: {e}"))
+    }
+
+    fn authorize_blocked_file(&self, device_id: &str, path: &str) -> Result<(), anyhow::Error> {
+        let conn = zbus::blocking::Connection::system()
+            .map_err(|e| anyhow!("System bus connection failed: {e}"))?;
+        let proxy = Firewall1ProxyBlocking::new(&conn)
+            .map_err(|e| anyhow!("Firewall1 proxy error: {e}"))?;
+        proxy
+            .authorize_blocked_file(device_id, path)
+            .map_err(|e| anyhow!("authorize_blocked_file failed: {e}"))
     }
 }

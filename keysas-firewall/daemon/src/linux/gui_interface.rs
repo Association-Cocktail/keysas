@@ -123,6 +123,28 @@ impl FirewallService {
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
 
+    /// Return the list of blocked (non-certified) file paths for a device as a
+    /// JSON array of strings.  Used by the tray-app polling loop.
+    fn get_blocked_files(&self, device: String) -> zbus::fdo::Result<String> {
+        let files = self.ctrl.lock().unwrap().list_blocked_files(&device);
+        serde_json::to_string(&files)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
+    /// Move a blocked file into the pre-validated cache so the next open
+    /// attempt succeeds.  Called when the user clicks "Autoriser" in the tray.
+    fn authorize_blocked_file(
+        &self,
+        device: String,
+        path: String,
+    ) -> zbus::fdo::Result<()> {
+        self.ctrl
+            .lock()
+            .unwrap()
+            .authorize_blocked_file(&device, &path)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+
     /// Change the authorization of a USB device.
     ///
     /// `auth` encodes UsbAuthorization:

@@ -126,4 +126,12 @@ impl ServiceInterface for WindowsServiceInterface {
         libmailslot::write_mailslot(TRAY_PIPE, &json)
             .map_err(|e| anyhow!("Failed to send USB write elevation to daemon: {e}"))
     }
+
+    fn get_blocked_files(&self, _device_id: &str) -> Result<Vec<String>, anyhow::Error> {
+        Ok(Vec::new())
+    }
+
+    fn authorize_blocked_file(&self, _device_id: &str, _path: &str) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
 }

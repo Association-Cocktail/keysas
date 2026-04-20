@@ -131,6 +131,34 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         return;
     }
 
+    // "authorize_file:{device_id}:{index}" — authorize a blocked (non-certified) file.
+    // device_id may contain '/' but not ':', so rfind(':') reliably finds the index.
+    if id.starts_with("authorize_file:") {
+        if let Some(rest) = id.strip_prefix("authorize_file:") {
+            if let Some(colon) = rest.rfind(':') {
+                let device_id = &rest[..colon];
+                if let Ok(idx) = rest[colon + 1..].parse::<usize>() {
+                    if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+                        let path = ctrl
+                            .store
+                            .read()
+                            .ok()
+                            .and_then(|s| {
+                                s.get_device(device_id)?.blocked_files.get(idx).cloned()
+                            });
+                        if let Some(path) = path {
+                            match ctrl.authorize_blocked_file(device_id, &path) {
+                                Ok(()) => tray_menu::rebuild_tray_menu(app, &ctrl),
+                                Err(e) => log::error!("on_menu_event authorize_file: {e}"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     // "device:{device_id}" — open the file-details window for this device.
     if let Some(device_id) = id.strip_prefix("device:") {
         let device_id = device_id.to_string();

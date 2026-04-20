@@ -118,6 +118,7 @@ impl AppController {
                 name: u.name,
                 path: u.path,
                 authorization: u.authorization.as_u8(),
+                blocked_files: Vec::new(),
             })
             .collect();
 
@@ -150,6 +151,7 @@ impl AppController {
                         name: update.name.clone(),
                         path: update.path.clone(),
                         authorization: update.authorization.as_u8(),
+                        blocked_files: Vec::new(),
                     });
                 }
             }
@@ -174,6 +176,34 @@ impl AppController {
     /// Ask the daemon to elevate a read-only USB device to read-write access.
     pub fn allow_write_usb(&self, device_path: &str) -> Result<(), anyhow::Error> {
         self.comm.allow_write_usb(device_path)
+    }
+
+    /// Store the blocked-files list for a device (called after each poll cycle).
+    pub fn set_blocked_files(&self, device_id: &str, files: Vec<String>) {
+        match self.store.write() {
+            Ok(mut store) => store.set_device_blocked_files(device_id, files),
+            Err(e) => log::error!("set_blocked_files: store lock error: {e}"),
+        }
+    }
+
+    /// Ask the daemon to authorize a previously blocked file, then remove it
+    /// from the local store so the tray menu refreshes.
+    pub fn authorize_blocked_file(
+        &self,
+        device_id: &str,
+        path: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.comm.authorize_blocked_file(device_id, path)?;
+        // Remove from local store immediately so the tray menu item disappears.
+        match self.store.write() {
+            Ok(mut store) => {
+                if let Some(dev) = store.get_device_mut(device_id) {
+                    dev.blocked_files.retain(|p| p != path);
+                }
+            }
+            Err(e) => log::error!("authorize_blocked_file: store lock error: {e}"),
+        }
+        Ok(())
     }
 
     /// Return the list of files in the datastore

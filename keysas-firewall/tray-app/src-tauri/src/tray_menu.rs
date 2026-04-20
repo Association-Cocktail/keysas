@@ -56,6 +56,28 @@ pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tau
                     .build(app)?,
                 );
             }
+
+            // Non-certified files blocked at open time (allow_user_file_read=true).
+            // The user can authorize them one by one here.
+            // ID format: "authorize_file:{device_id}:{index}" — index into blocked_files.
+            for (idx, path) in dev.blocked_files.iter().enumerate() {
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
+                builder = builder.item(
+                    &MenuItemBuilder::new(format!("  ⚠ {filename}"))
+                        .enabled(false)
+                        .build(app)?,
+                );
+                builder = builder.item(
+                    &MenuItemBuilder::with_id(
+                        format!("authorize_file:{}:{}", dev.id, idx),
+                        "      Autoriser la lecture",
+                    )
+                    .build(app)?,
+                );
+            }
         }
     }
 
