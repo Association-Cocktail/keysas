@@ -20,6 +20,14 @@
     "@rollup/plugin-alias": "^4.0.2",
     "@vitejs/plugin-vue": "^6.0.1",
     "sass": "^1.56.2",
-    "vite": "^7.0.6"
+    "vite": "^7.3.2"
+  },
+  "overrides": {
+    "micromatch": {
+      "picomatch": "^2.3.2"
+    },
+    "tinyglobby": {
+      "picomatch": "^4.0.4"
+    }
   }
 }
