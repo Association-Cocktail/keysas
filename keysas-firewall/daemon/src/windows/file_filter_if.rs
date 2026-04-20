@@ -254,7 +254,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                         ));
 
                         let result = {
-                            let ctrl = ctrl_hdl.lock().unwrap();
+                            let mut ctrl = ctrl_hdl.lock().unwrap();
                             match ctrl.authorize_file(&file, true) {
                                 Ok(true) => FileAuthorization::AllowRead,
                                 Ok(false) => FileAuthorization::Block,

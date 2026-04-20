@@ -83,6 +83,7 @@ libmailslot = {path = "../libmailslot"}
 windows-service = "0.6"
 eventlog = "0.2"
 registry = "1.2"
+simple_logger = "4.1"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.52"
