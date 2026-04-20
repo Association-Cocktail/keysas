@@ -137,16 +137,16 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         .ok_or_else(|| anyhow!("Devnode not found"))?;
 
     let vendor = device
-        .property_value(OsStr::new("ID_VENDOR_ID"))
-        .ok_or_else(|| anyhow!("Vendor ID not found"))?;
+        .property_value(OsStr::new("ID_VENDOR"))
+        .ok_or_else(|| anyhow!("Vendor not found"))?;
     let model = device
-        .property_value(OsStr::new("ID_MODEL_ID"))
-        .ok_or_else(|| anyhow!("Model ID not found"))?;
+        .property_value(OsStr::new("ID_MODEL"))
+        .ok_or_else(|| anyhow!("Model not found"))?;
     let revision = device
         .property_value(OsStr::new("ID_REVISION"))
         .ok_or_else(|| anyhow!("Revision not found"))?;
     let serial = device
-        .property_value(OsStr::new("ID_SERIAL"))
+        .property_value(OsStr::new("ID_SERIAL_SHORT"))
         .ok_or_else(|| anyhow!("Serial number not found"))?;
 
     // Walk up the sysfs tree to the parent USB device node.
