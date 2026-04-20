@@ -14,36 +14,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Vérification des prérequis ────────────────────────────────────────────────
+# ── Vérification des outils essentiels ───────────────────────────────────────
 
-check_deps() {
-    local missing_pkgs=()
-    local missing_tools=()
-
-    command -v pkg-config >/dev/null 2>&1 || missing_tools+=("pkg-config")
-    command -v npm        >/dev/null 2>&1 || missing_tools+=("npm (nodejs >= 18)")
-    command -v rustc      >/dev/null 2>&1 || missing_tools+=("rustc (rustup)")
-
-    pkg-config --exists webkit2gtk-4.1            2>/dev/null || missing_pkgs+=("libwebkit2gtk-4.1-dev")
-    pkg-config --exists gtk+-3.0                  2>/dev/null || missing_pkgs+=("libgtk-3-dev")
-    pkg-config --exists ayatana-appindicator3-0.1 2>/dev/null || missing_pkgs+=("libayatana-appindicator3-dev")
-
-    if [[ ${#missing_pkgs[@]} -gt 0 || ${#missing_tools[@]} -gt 0 ]]; then
-        echo "Erreur : prérequis manquants."
-        if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
-            echo ""
-            echo "  Installer les bibliothèques (Ubuntu 22.04+) :"
-            echo "    sudo apt install -y ${missing_pkgs[*]}"
-        fi
-        if [[ ${#missing_tools[@]} -gt 0 ]]; then
-            echo ""
-            echo "  Outils manquants : ${missing_tools[*]}"
-        fi
-        exit 1
-    fi
-}
-
-check_deps
+for tool in npm rustc; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Erreur : '$tool' introuvable."; exit 1; }
+done
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
