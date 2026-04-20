@@ -820,29 +820,26 @@ impl ServiceController {
             return Ok(true);
         }
 
-        // Fast path: file was pre-validated during mount (before fanotify mark was
-        // placed).  No further file I/O needed — safe to answer from within the handler.
+        // Cache lookup: was this file certified during the pre-scan that ran
+        // BEFORE the fanotify mark was placed?
+        //
+        // IMPORTANT: do NOT call validate_file() here.  validate_file() calls
+        // parse_report() which opens files on the watched mount, generating new
+        // FAN_OPEN_PERM events.  The single-threaded fanotify event loop cannot
+        // process those events while it is already blocked handling this one →
+        // deadlock.  The pre-scan is the only safe validation path.
         if self.validated_files.contains(&file_path) {
             return Ok(true);
         }
 
-        // Try to validate the file from the station report
-        match self.validate_file(file_path.as_path()) {
-            Ok(true) => {
-                return Ok(true);
-            }
-            _ => {
-                info!("File not validated by station");
-            }
-        }
-
-        // If allow_user_file_read is disabled, block without prompting the user
+        // File was not certified at mount time.
+        // If allow_user_file_read is disabled, block without prompting the user.
         if !self.policy.allow_user_file_read {
-            info!("authorize_file: file not validated and allow_user_file_read=false — blocking {:?}", file_path);
+            info!("authorize_file: file not in cache and allow_user_file_read=false — blocking {:?}", file_path);
             return Ok(false);
         }
 
-        // If the validation fails, ask the user authorization
+        // Ask the user to decide.
         self.user_authorize_file(file_path.as_path())
     }
 
