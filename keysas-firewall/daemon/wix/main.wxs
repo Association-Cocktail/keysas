@@ -264,6 +264,19 @@
       <ComponentRef Id='comp_minifilter_reg'/>
     </Feature>
 
+    <!-- ──────────────────────────────────────────────────── reboot -->
+    <!--
+      The minifilter driver service is registered via direct registry writes
+      (WiX 3 ServiceInstall does not support Type=2 / SERVICE_FILE_SYSTEM_DRIVER).
+      The SCM rebuilds its service database from the registry only at boot time,
+      so a reboot is required for KeysasMinifilter to become visible to the SCM.
+      ScheduleReboot prompts the user at the end of installation.
+      For silent installs (/quiet) the reboot is deferred — caller must reboot.
+    -->
+    <InstallExecuteSequence>
+      <ScheduleReboot After='InstallFinalize'/>
+    </InstallExecuteSequence>
+
     <!-- ──────────────────────────────────────────────────── UI -->
     <!--
       Silent/unattended install: msiexec /i keysas-firewall.msi /quiet
