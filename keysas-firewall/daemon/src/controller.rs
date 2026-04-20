@@ -586,6 +586,55 @@ impl ServiceController {
         self.policy.allow_user_usb_authorization
     }
 
+    /// Walk `mount_point` recursively and validate every regular file using
+    /// `validate_file()`.  All files that pass are inserted into
+    /// `self.validated_files` so that the fanotify event handler can answer
+    /// FAN_OPEN_PERM requests with a simple cache lookup — without performing
+    /// any further file I/O from within the handler.
+    ///
+    /// This must be called **before** `file_filter.update_usb_auth()` places the
+    /// fanotify mount mark, otherwise the directory walk would itself generate
+    /// FAN_OPEN_PERM events that the (still-single-threaded) event loop could not
+    /// process → deadlock.
+    fn pre_validate_mount(&mut self, mount_point: &Path) {
+        let walker = match std::fs::read_dir(mount_point) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("pre_validate_mount: cannot read {:?}: {e}", mount_point);
+                return;
+            }
+        };
+        self.walk_and_validate(walker);
+    }
+
+    fn walk_and_validate(&mut self, dir: std::fs::ReadDir) {
+        for entry in dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&path) {
+                    self.walk_and_validate(sub);
+                }
+                continue;
+            }
+            // .krp files are always allowed; no need to cache them.
+            if path.extension().map_or(false, |e| e.eq_ignore_ascii_case("krp")) {
+                continue;
+            }
+            match self.validate_file(&path) {
+                Ok(true) => {
+                    info!("pre_validate_mount: certified {:?}", path);
+                    self.validated_files.insert(path);
+                }
+                Ok(false) => {
+                    info!("pre_validate_mount: not certified {:?}", path);
+                }
+                Err(e) => {
+                    info!("pre_validate_mount: error validating {:?}: {e}", path);
+                }
+            }
+        }
+    }
+
     /// Update information about a USB device once it is mounted.
     ///
     /// Moves the device from `unmounted_usb` to `mounted_usb` with the mount point set.
@@ -606,8 +655,14 @@ impl ServiceController {
         policy.device.mnt_point = device.mnt_point.clone();
         self.mounted_usb.insert(device.device_id.clone(), policy);
 
-        // Notify the file filter immediately so it can place its mark on the
-        // mount point as soon as the device is mounted.
+        // Pre-validate all files on the mount BEFORE placing the fanotify mark.
+        // This avoids any re-entrant FAN_OPEN_PERM events from within validate_file().
+        if let Some(mnt) = device.mnt_point.as_ref() {
+            self.pre_validate_mount(Path::new(mnt));
+        }
+
+        // Notify the file filter — this places the fanotify mount mark.
+        // All subsequent file opens will block until the event handler responds.
         if let Some(p) = self.mounted_usb.get(&device.device_id) {
             if let Err(e) = self.file_filter.update_usb_auth(p) {
                 warn!("update_usb: file filter mark failed: {e}");
@@ -680,6 +735,14 @@ impl ServiceController {
             if let Err(e) = self.file_filter.update_usb_auth(&block_policy) {
                 warn!("remove_usb: failed to remove fanotify mark for {:?}: {e}", device_id);
             }
+
+            // Evict all pre-validated cache entries that belonged to this mount.
+            if let Some(mnt) = policy.device.mnt_point.as_ref() {
+                let prefix = PathBuf::from(mnt);
+                self.validated_files.retain(|p| !p.starts_with(&prefix));
+                info!("remove_usb: cache evicted for {:?}", mnt);
+            }
+
             info!("USB device {:?} removed (was mounted at {:?})",
                 device_id,
                 policy.device.mnt_point);
@@ -754,6 +817,12 @@ impl ServiceController {
         // fanotify event loop cannot process while it is already handling this event
         // → deadlock.  .krp files contain only signatures/digests, not user data.
         if file_path.extension().map_or(false, |e| e.eq_ignore_ascii_case("krp")) {
+            return Ok(true);
+        }
+
+        // Fast path: file was pre-validated during mount (before fanotify mark was
+        // placed).  No further file I/O needed — safe to answer from within the handler.
+        if self.validated_files.contains(&file_path) {
             return Ok(true);
         }
 
@@ -1098,6 +1167,9 @@ impl ServiceController {
                 usb_syspath: None,
             };
             let policy = UsbDevicePolicy { device, auth };
+
+            // Pre-validate all files before placing the fanotify mark.
+            self.pre_validate_mount(std::path::Path::new(&mnt_point));
 
             // Re-apply the fanotify mount mark.
             if let Err(e) = self.file_filter.update_usb_auth(&policy) {
