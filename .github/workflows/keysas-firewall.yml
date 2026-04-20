@@ -260,34 +260,6 @@ jobs:
           key: win-msi-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
           restore-keys: win-msi-
 
-      # ── Windows Driver Kit ─────────────────────────────────────────────────
-      # WDK is pre-installed on windows-2025 as VS2022 component
-      # Component.Microsoft.Windows.DriverKit 10.0.26100.16.
-      # That component installs the MSBuild integration (props/targets) but
-      # kernel headers (fltKernel.h …) may live at a VS-relative path that
-      # is invisible to a filesystem scan — msbuild resolves them itself.
-      # We only verify that WindowsDriverKit.props is in place; if kernel
-      # headers are missing the "Build minifilter" step will say so exactly.
-      - name: Verify WDK MSBuild integration
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found" }
-          $vsDir = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          if (-not $vsDir) { throw "Visual Studio with MSBuild not found" }
-          Write-Host "VS install dir: $vsDir"
-          # WindowsDriverKit.props is placed here by the old-model standalone WDK
-          # installer.  With the modern VS2022 WDK component (Component.Microsoft.
-          # Windows.DriverKit) the toolset WindowsKernelModeDriver10.0 is used
-          # directly and this file may be absent — the import in the vcxproj is
-          # conditional, so this is not a build error.
-          $props = Join-Path $vsDir "MSBuild\Microsoft\VC\v170\BuildCustomizations\WindowsDriverKit.props"
-          if (Test-Path $props) {
-            Write-Host "WDK MSBuild integration (classic): $props"
-          } else {
-            Write-Host "WindowsDriverKit.props absent — WDK component uses WindowsKernelModeDriver10.0 toolset (OK)"
-          }
-
       # ── Minifilter ─────────────────────────────────────────────────────────
       # When the WDK is installed as a VS2022 component (Component.Microsoft.
       # Windows.DriverKit), the WindowsKernelModeDriver10.0 toolset is present
@@ -297,6 +269,13 @@ jobs:
       #   Microsoft.Windows.WDK.x64  — km\ headers + km\x64 libs
       # We install the package, locate the key files, and export the paths so
       # the MSBuild step can pass them as /p: overrides.
+      - name: Cache WDK NuGet package
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\wdk-packages
+          key: wdk-nuget-${{ hashFiles('keysas-firewall/minifilter/KeysasMinifilter.vcxproj') }}
+          restore-keys: wdk-nuget-
+
       - name: Install WDK kernel headers (NuGet)
         shell: pwsh
         run: |
@@ -356,12 +335,6 @@ jobs:
             /p:WDKSharedInclude="$env:WDK_SHARED_INCLUDE" `
             /p:DDK_LIB_PATH="$env:DDK_LIB_PATH" `
             /v:normal
-
-      - name: List minifilter build output
-        shell: pwsh
-        run: |
-          Get-ChildItem -Path "D:\a" -Recurse -Filter "KeysasMinifilter.sys" -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty FullName
 
       - name: Generate catalog file
         shell: pwsh
@@ -430,6 +403,12 @@ jobs:
           path: keysas-firewall/tray-app/src-tauri/target/x86_64-pc-windows-msvc/release
 
       # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
+      - name: Cache cargo-wix binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-wix.exe
+          key: cargo-wix-${{ runner.os }}-0.3
+
       - name: Install cargo-wix
         run: cargo install --locked cargo-wix
 
