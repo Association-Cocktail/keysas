@@ -404,12 +404,14 @@ jobs:
 
       # ── MSI packaging (WiX v3, pre-installed on windows-latest) ───────────
       - name: Cache cargo-wix binary
+        id: cache-cargo-wix
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-wix.exe
           key: cargo-wix-${{ runner.os }}-0.3
 
       - name: Install cargo-wix
+        if: steps.cache-cargo-wix.outputs.cache-hit != 'true'
         run: cargo install --locked cargo-wix
 
       - name: Package MSI (cargo wix)
