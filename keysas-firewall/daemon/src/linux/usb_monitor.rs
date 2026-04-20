@@ -87,8 +87,10 @@ fn get_logged_in_username() -> Option<String> {
     let entries = std::fs::read_dir("/run/user").ok()?;
     for entry in entries.flatten() {
         let uid_str = entry.file_name().to_string_lossy().to_string();
-        if uid_str == "0" {
-            continue; // skip root
+        // Skip root and system accounts (uid < 1000 on Linux — e.g. gdm uid=120).
+        let uid: u32 = match uid_str.parse() { Ok(u) => u, Err(_) => continue };
+        if uid < 1000 {
+            continue;
         }
         if !entry.path().join("bus").exists() {
             continue; // no active session bus
