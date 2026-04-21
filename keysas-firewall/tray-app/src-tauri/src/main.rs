@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_controller::AppController;
-use crate::service_if::FileAuthorization;
+use crate::service_if::{FileAuthorization, PolicySettings};
 
 #[cfg(target_os = "windows")]
 pub mod windows;
@@ -77,7 +77,9 @@ fn init_tauri() -> Result<(), anyhow::Error> {
             get_file_list,
             get_usb_list,
             toggle_file_auth,
-            override_usb
+            override_usb,
+            get_policy_settings,
+            set_policy_settings,
         ])
         .build(tauri::generate_context!())?;
 
@@ -99,6 +101,16 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
 
     if id == "quit" {
         app.exit(0);
+        return;
+    }
+
+    if id == "settings" {
+        let app2 = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            open_settings_view(&app2);
+        }) {
+            log::error!("on_menu_event settings: run_on_main_thread failed: {e}");
+        }
         return;
     }
 
@@ -174,6 +186,31 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
 // ─────────────────────────────────────────────────────────────────────────────
 // File-details window
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Open (or show) the settings window and emit `show_settings`.
+fn open_settings_view(app: &AppHandle) {
+    use tauri::Emitter;
+    match app.get_webview_window("main") {
+        Some(w) => {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        None => {
+            if let Ok(w) = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .decorations(false)
+            .focused(true)
+            .build()
+            {
+                let _ = w;
+            }
+        }
+    }
+    let _ = app.emit("show_settings", ());
+}
 
 /// Open (or show) the file-details window for the given device ID and emit
 /// a `show_device` event so the Vue frontend navigates to the details view.
@@ -260,6 +297,27 @@ async fn toggle_file_auth(
             log::error!("toggle_file_auth: {e}");
             e.to_string()
         })
+}
+
+/// Return the current daemon policy settings as a JSON string.
+#[tauri::command]
+async fn get_policy_settings(
+    app_ctrl: State<'_, Arc<AppController>>,
+) -> Result<String, String> {
+    app_ctrl
+        .get_policy_settings()
+        .and_then(|s| serde_json::to_string(&s).map_err(|e| anyhow::anyhow!(e)))
+        .map_err(|e| e.to_string())
+}
+
+/// Ask the daemon to persist new policy settings.
+#[tauri::command]
+async fn set_policy_settings(
+    settings: String,
+    app_ctrl: State<'_, Arc<AppController>>,
+) -> Result<(), String> {
+    let s: PolicySettings = serde_json::from_str(&settings).map_err(|e| e.to_string())?;
+    app_ctrl.set_policy_settings(s).map_err(|e| e.to_string())
 }
 
 /// Manually authorize a blocked (non-certified) USB device.

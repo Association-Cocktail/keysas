@@ -162,6 +162,24 @@ pub fn load_security_policy(_config: &Config) -> Result<SecurityPolicy, anyhow::
     Ok(policy)
 }
 
+/// Persist the four policy flags to the registry.
+/// The daemon runs as SYSTEM so it can write HKLM without UAC.
+pub fn write_policy_settings(policy: &SecurityPolicy) -> Result<(), anyhow::Error> {
+    let regkey = Hive::LocalMachine
+        .open(
+            r"SYSTEM\CurrentControlSet\Services\Keysas Service\config",
+            Security::Write,
+        )
+        .map_err(|e| anyhow!("Failed to open registry key for write: {e}"))?;
+
+    regkey.set_value("DisableUnsignedUsb",       &Data::U32(policy.disable_unsigned_usb as u32))?;
+    regkey.set_value("AllowUserUsbAuthorization", &Data::U32(policy.allow_user_usb_authorization as u32))?;
+    regkey.set_value("AllowUserFileRead",         &Data::U32(policy.allow_user_file_read as u32))?;
+    regkey.set_value("AllowUserFileWrite",        &Data::U32(policy.allow_user_file_write as u32))?;
+
+    Ok(())
+}
+
 pub fn load_certificates(
     _config: &Config,
 ) -> Result<(KeysasHybridPubKeys, KeysasHybridPubKeys, Certificate, Certificate), anyhow::Error> {

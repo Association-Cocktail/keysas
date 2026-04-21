@@ -107,8 +107,8 @@ use std::{
 
 use crate::file_filter_if::{FileFilterInterface, FileFilterInterfaceBuilder};
 use crate::gui_interface::{
-    FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, UsbUpdateMessage,
-    GuiMessageCode
+    FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, PolicyUpdateMessage,
+    UsbUpdateMessage, GuiMessageCode
 };
 use crate::usb_monitor::{UsbMonitor, UsbMonitorBuilder};
 use crate::Config;
@@ -119,7 +119,7 @@ use keysas_lib::{
 use x509_cert::Certificate;
 
 #[cfg(target_os = "windows")]
-use crate::windows::service::{load_certificates, load_security_policy};
+use crate::windows::service::{load_certificates, load_security_policy, write_policy_settings};
 
 #[cfg(target_os = "linux")]
 use crate::linux::service::{load_certificates, load_security_policy};
@@ -1285,6 +1285,21 @@ impl ServiceController {
             let _ = self.gui.send_usb_update(&update);
         }
 
+        Ok(())
+    }
+
+    /// Apply new policy settings: update the in-memory policy and persist to
+    /// the registry (Windows only — the daemon runs as SYSTEM).
+    pub fn update_policy(&mut self, msg: &PolicyUpdateMessage) -> Result<(), anyhow::Error> {
+        let new_policy = SecurityPolicy {
+            disable_unsigned_usb:       msg.disable_unsigned_usb,
+            allow_user_usb_authorization: msg.allow_user_usb_authorization,
+            allow_user_file_read:       msg.allow_user_file_read,
+            allow_user_file_write:      msg.allow_user_file_write,
+        };
+        #[cfg(target_os = "windows")]
+        write_policy_settings(&new_policy)?;
+        self.policy = new_policy;
         Ok(())
     }
 }

@@ -27,8 +27,8 @@ use std::sync::{Arc, RwLock};
 
 use crate::app_controller::AppController;
 use crate::service_if::{
-    FileUpdateMessage, GuiMessageCode, ServiceInterface, UsbAuthorization, UsbUpdateMessage,
-    UsbFileListRequest,
+    FileUpdateMessage, GuiMessageCode, PolicySettings, PolicyUpdateMessage, ServiceInterface,
+    UsbAuthorization, UsbFileListRequest, UsbUpdateMessage,
 };
 
 /// Handle to the service interface client and server
@@ -86,11 +86,11 @@ impl ServiceInterface for WindowsServiceInterface {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         });
-        // Demande l'état courant au daemon : les clefs déjà branchées avant
-        // le démarrage de la tray-app sont ainsi affichées immédiatement.
+        // Request the current device list from the daemon so that USB keys
+        // already connected before the tray-app started are shown immediately.
         if let Ok(req) = serde_json::to_string(&UsbFileListRequest::new()) {
             if let Err(e) = libmailslot::write_mailslot(TRAY_PIPE, &req) {
-                log::warn!("Windows tray: impossible d'envoyer UsbFileListRequest: {e}");
+                log::warn!("Windows tray: failed to send UsbFileListRequest: {e}");
             }
         }
 
@@ -142,5 +142,32 @@ impl ServiceInterface for WindowsServiceInterface {
 
     fn authorize_blocked_file(&self, _device_id: &str, _path: &str) -> Result<(), anyhow::Error> {
         Ok(())
+    }
+
+    fn get_policy_settings(&self) -> Result<PolicySettings, anyhow::Error> {
+        use registry::{Data, Hive, Security};
+        let key = Hive::LocalMachine
+            .open(r"SYSTEM\CurrentControlSet\Services\Keysas Service\config", Security::Read)
+            .map_err(|e| anyhow::anyhow!("Cannot open policy registry key: {e}"))?;
+        Ok(PolicySettings {
+            disable_unsigned_usb: matches!(key.value("DisableUnsignedUsb"), Ok(Data::U32(1))),
+            allow_user_usb_authorization: matches!(key.value("AllowUserUsbAuthorization"), Ok(Data::U32(1))),
+            allow_user_file_read: matches!(key.value("AllowUserFileRead"), Ok(Data::U32(1))),
+            allow_user_file_write: matches!(key.value("AllowUserFileWrite"), Ok(Data::U32(1))),
+        })
+    }
+
+    fn set_policy_settings(&self, settings: PolicySettings) -> Result<(), anyhow::Error> {
+        let msg = PolicyUpdateMessage {
+            code: GuiMessageCode::PolicyUpdate,
+            disable_unsigned_usb: settings.disable_unsigned_usb,
+            allow_user_usb_authorization: settings.allow_user_usb_authorization,
+            allow_user_file_read: settings.allow_user_file_read,
+            allow_user_file_write: settings.allow_user_file_write,
+        };
+        let json = serde_json::to_string(&msg)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize PolicyUpdateMessage: {e}"))?;
+        libmailslot::write_mailslot(TRAY_PIPE, &json)
+            .map_err(|e| anyhow::anyhow!("Failed to send PolicyUpdateMessage to daemon: {e}"))
     }
 }

@@ -23,7 +23,7 @@
 #![warn(unused_imports)]
 
 use crate::filter_store::{FileAuth, FilterStore, UsbDevice};
-use crate::service_if::{FileUpdateMessage, FileAuthorization, ServiceInterface,
+use crate::service_if::{FileUpdateMessage, FileAuthorization, PolicySettings, ServiceInterface,
     ServiceInterfaceBuilder, UsbUpdateMessage};
 
 use anyhow::anyhow;
@@ -204,6 +204,16 @@ impl AppController {
             Err(e) => log::error!("authorize_blocked_file: store lock error: {e}"),
         }
         Ok(())
+    }
+
+    /// Read the current policy settings from the daemon.
+    pub fn get_policy_settings(&self) -> Result<PolicySettings, anyhow::Error> {
+        self.comm.get_policy_settings()
+    }
+
+    /// Ask the daemon to persist new policy settings.
+    pub fn set_policy_settings(&self, settings: PolicySettings) -> Result<(), anyhow::Error> {
+        self.comm.set_policy_settings(settings)
     }
 
     /// Return the list of files in the datastore

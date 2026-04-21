@@ -44,6 +44,18 @@
 
     <Property Id='MSIUSEREALADMINDETECTION' Value='1'/>
 
+    <!--
+      Policy properties — default to 0 (most restrictive).
+      Override at install time via command line for silent/automated deployments:
+        msiexec /i keysas-firewall.msi /quiet DISABLE_UNSIGNED_USB=1
+        msiexec /i keysas-firewall.msi /quiet ALLOW_USER_USB_AUTH=1 ALLOW_USER_FILE_READ=1
+      All four can be changed at runtime via the tray-app Settings menu.
+    -->
+    <Property Id='DISABLE_UNSIGNED_USB'  Value='0'/>
+    <Property Id='ALLOW_USER_USB_AUTH'   Value='0'/>
+    <Property Id='ALLOW_USER_FILE_READ'  Value='0'/>
+    <Property Id='ALLOW_USER_FILE_WRITE' Value='0'/>
+
     <!-- ───────────────────────────────────────────────── directory tree -->
     <Directory Id='TARGETDIR' Name='SourceDir'>
 
@@ -120,10 +132,10 @@
             <RegistryKey
               Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'>
-              <RegistryValue Type='integer' Name='DisableUnsignedUsb'       Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization' Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserFileRead'         Value='0'/>
-              <RegistryValue Type='integer' Name='AllowUserFileWrite'        Value='0'/>
+              <RegistryValue Type='integer' Name='DisableUnsignedUsb'       Value='[DISABLE_UNSIGNED_USB]'/>
+              <RegistryValue Type='integer' Name='AllowUserUsbAuthorization' Value='[ALLOW_USER_USB_AUTH]'/>
+              <RegistryValue Type='integer' Name='AllowUserFileRead'         Value='[ALLOW_USER_FILE_READ]'/>
+              <RegistryValue Type='integer' Name='AllowUserFileWrite'        Value='[ALLOW_USER_FILE_WRITE]'/>
               <RegistryValue Type='string'  Name='StCaClCert'
                 Value='C:\ProgramData\Keysas\Firewall\st-ca-cl.pem'/>
               <RegistryValue Type='string'  Name='StCaPqCert'
@@ -308,11 +320,82 @@
 
     <!-- ──────────────────────────────────────────────────── UI -->
     <!--
-      Silent/unattended install: msiexec /i keysas-firewall.msi /quiet
-      To add an interactive UI on a Windows build host:
-        <UIRef Id='WixUI_Minimal'/>
-        <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf'/>
+      Interactive install shows a Welcome screen followed by the policy
+      settings dialog, then the progress bar.
+      Silent/unattended install bypasses all dialogs:
+        msiexec /i keysas-firewall.msi /quiet
+        msiexec /i keysas-firewall.msi /quiet DISABLE_UNSIGNED_USB=1
     -->
+    <UIRef Id='WixUI_Minimal'/>
+    <UI>
+      <!--
+        Insert the policy settings dialog between WelcomeDlg and installation.
+        Order=0 fires before the built-in Order=1 EndDialog on Next, so this
+        NewDialog event takes precedence and WelcomeDlg navigates here instead
+        of starting the install immediately.
+      -->
+      <Publish Dialog='WelcomeDlg' Control='Next'
+               Event='NewDialog' Value='PolicySettingsDlg' Order='0'/>
+
+      <Dialog Id='PolicySettingsDlg' Width='370' Height='270'
+              Title='[ProductName]' NoMinimize='yes'>
+
+        <Control Id='BannerBitmap' Type='Bitmap'
+                 X='0' Y='0' Width='370' Height='44'
+                 TabSkip='no' Text='WixUI_Bmp_Banner'/>
+        <Control Id='BannerLine' Type='Line'
+                 X='0' Y='44' Width='370' Height='0'/>
+        <Control Id='BottomLine' Type='Line'
+                 X='0' Y='234' Width='370' Height='0'/>
+
+        <Control Id='Title' Type='Text'
+                 X='15' Y='6' Width='200' Height='15'
+                 Transparent='yes' NoPrefix='yes'>
+          <Text>{\WixUI_Font_Title}Policy Settings</Text>
+        </Control>
+        <Control Id='Description' Type='Text'
+                 X='25' Y='23' Width='320' Height='15'
+                 Transparent='yes' NoPrefix='yes'>
+          <Text>Configure the USB device policy for this installation.</Text>
+        </Control>
+
+        <Control Id='chkDisableUnsignedUsb' Type='CheckBox'
+                 X='20' Y='65' Width='340' Height='15'
+                 Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
+          <Text>Block USB devices that do not have a Keysas certificate</Text>
+        </Control>
+        <Control Id='chkAllowUserUsbAuth' Type='CheckBox'
+                 X='20' Y='95' Width='340' Height='15'
+                 Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
+          <Text>Allow users to manually authorize unrecognised USB devices</Text>
+        </Control>
+        <Control Id='chkAllowUserFileRead' Type='CheckBox'
+                 X='20' Y='125' Width='340' Height='15'
+                 Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
+          <Text>Allow users to grant read access to uncertified files</Text>
+        </Control>
+        <Control Id='chkAllowUserFileWrite' Type='CheckBox'
+                 X='20' Y='155' Width='340' Height='15'
+                 Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
+          <Text>Allow users to grant write access to files</Text>
+        </Control>
+
+        <Control Id='Back' Type='PushButton'
+                 X='180' Y='243' Width='56' Height='17' Text='&#38;Back'>
+          <Publish Event='NewDialog' Value='WelcomeDlg'>1</Publish>
+        </Control>
+        <Control Id='Install' Type='PushButton'
+                 X='236' Y='243' Width='56' Height='17'
+                 Default='yes' Text='&#38;Install'>
+          <Publish Event='EndDialog' Value='Return'>1</Publish>
+        </Control>
+        <Control Id='Cancel' Type='PushButton'
+                 X='296' Y='243' Width='56' Height='17'
+                 Cancel='yes' Text='Cancel'>
+          <Publish Event='SpawnDialog' Value='CancelDlg'>1</Publish>
+        </Control>
+      </Dialog>
+    </UI>
 
   </Product>
 </Wix>

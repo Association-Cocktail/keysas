@@ -31,7 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::controller::{ServiceController, FileAuthorization, UsbAuthorization};
 use crate::gui_interface::{
-    GuiInterface, UsbUpdateMessage, FileUpdateMessage, UsbFileListRequest
+    GuiInterface, PolicyUpdateMessage, UsbUpdateMessage, FileUpdateMessage, UsbFileListRequest
 };
 
 /// Name of the communication pipe
@@ -95,6 +95,12 @@ impl GuiInterface for WindowsGuiInterface {
                             error!("Failed to send usb and file listt: {e}");
                         }
                     }
+                    else if let Ok(req) = serde_json::from_slice::<PolicyUpdateMessage>(msg.as_bytes()) {
+                        let mut controller = ctrl_hdl.lock().unwrap();
+                        if let Err(e) = controller.update_policy(&req) {
+                            error!("Failed to update policy settings: {e}");
+                        }
+                    }
                     else {
                         warn!("Message from tray app not recognized");
                     }
@@ -103,8 +109,8 @@ impl GuiInterface for WindowsGuiInterface {
                 // Test if the process is still alive
                 {
                     let must_stop = stop.read().unwrap();
-                    if *must_stop {
-                        return ;
+                    if !*must_stop {
+                        return;
                     }
                 }
 

@@ -117,7 +117,20 @@ use crate::linux::gui_interface::LinuxGuiInterface;
 pub enum GuiMessageCode {
     UsbUpdateMessage,
     FileUpdateMessage,
-    UsbFileListRequest
+    UsbFileListRequest,
+    PolicyUpdate,
+}
+
+/// Request from the tray-app to update the security policy.
+/// The daemon (SYSTEM) writes the new values to the registry so no UAC
+/// elevation is required in the tray-app.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct PolicyUpdateMessage {
+    pub code: GuiMessageCode,
+    pub disable_unsigned_usb: bool,
+    pub allow_user_usb_authorization: bool,
+    pub allow_user_file_read: bool,
+    pub allow_user_file_write: bool,
 }
 
 /// Message for a USB status notification
