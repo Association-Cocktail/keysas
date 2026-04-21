@@ -3,8 +3,28 @@ name: Rust build and test
 on:
   push:
     branches: ["main", "develop"]
+    paths:
+      - "keysas-core/**"
+      - "keysas-io/**"
+      - "keysas-backend/**"
+      - "keysas-sign/**"
+      - "keysas-fido/**"
+      - "keysas_lib/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-build.yml"
   pull_request:
     branches: ["main", "develop"]
+    paths:
+      - "keysas-core/**"
+      - "keysas-io/**"
+      - "keysas-backend/**"
+      - "keysas-sign/**"
+      - "keysas-fido/**"
+      - "keysas_lib/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-build.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +43,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust with Clippy
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           components: clippy
@@ -47,7 +67,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           components: cargo
@@ -101,7 +121,7 @@ jobs:
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Set up Rust with formatter
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
           components: rustfmt

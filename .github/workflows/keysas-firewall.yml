@@ -76,6 +76,9 @@ jobs:
     name: cargo check — daemon (Linux)
     runs-on: ubuntu-latest
     needs: build-ebpf
+    if: >-
+      !contains(github.event.head_commit.message, '[skip linux]') &&
+      !contains(github.event.pull_request.title,  '[skip linux]')
 
     steps:
       - name: Checkout
@@ -108,8 +111,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: daemon-${{ runner.os }}-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
-          restore-keys: daemon-${{ runner.os }}-
+          key: daemon-linux-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: daemon-linux-
 
       - name: cargo check
         working-directory: keysas-firewall/daemon
@@ -436,9 +439,8 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # 6. Build tray-app .deb (Linux / Ubuntu 22.04)
-  #    Tauri 1.x requires webkit2gtk-4.0, which was dropped in Ubuntu 24.04,
-  #    so the job is pinned to ubuntu-22.04.
+  # 6. Build tray-app .deb (Linux)
+  #    Tauri 2 requires webkit2gtk-4.1 (disponible sur ubuntu-latest / 24.04).
   #    The autostart entry (/etc/xdg/autostart/keysas-tray-app.desktop) is
   #    injected via bundle.deb.files in tauri.conf.json.
   # ─────────────────────────────────────────────────────────────────────────────
@@ -500,7 +502,7 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # 7. Build daemon release binary (Linux)
+  # 8. Build daemon release binary (Linux)
   #    Compiles the daemon in release mode and uploads the binary so the
   #    packaging job can create the .deb without a second compile step.
   # ─────────────────────────────────────────────────────────────────────────────
@@ -540,8 +542,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: daemon-release-${{ runner.os }}-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
-          restore-keys: daemon-release-${{ runner.os }}-
+          key: daemon-linux-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: daemon-linux-
 
       - name: cargo build --release
         working-directory: keysas-firewall/daemon
@@ -555,7 +557,7 @@ jobs:
           retention-days: 1
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # 7. Package .deb (Linux)
+  # 9. Package .deb (Linux)
   #    Uses the pre-built release binary from build-daemon (--no-build skips
   #    recompilation entirely — only packaging metadata and pkg/ assets are read).
   #    Output: keysas-firewall_<version>_amd64.deb
@@ -589,7 +591,16 @@ jobs:
           sudo apt-get update -yq
           sudo apt-get install -y libudev-dev pkg-config
 
+      - name: Cache cargo-deb binary
+        id: cache-cargo-deb
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deb
+          key: cargo-deb-${{ runner.os }}-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
+          restore-keys: cargo-deb-${{ runner.os }}-
+
       - name: Install cargo-deb
+        if: steps.cache-cargo-deb.outputs.cache-hit != 'true'
         run: cargo install cargo-deb
 
       - name: Compress man page
