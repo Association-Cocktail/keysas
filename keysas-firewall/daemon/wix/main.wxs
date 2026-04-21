@@ -332,6 +332,25 @@
       Impersonate='no'
       Return='ignore'/>
 
+    <!--
+      Delete the Firewall registry key and its parent Keysas key.
+      These are left empty after RemoveRegistryValues removes individual
+      values, so we clean them up explicitly here.
+    -->
+    <CustomAction Id='CA_DeleteFirewallRegKey'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe delete "HKLM\SOFTWARE\Keysas\Firewall" /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_DeleteKeysasRegKey'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe delete "HKLM\SOFTWARE\Keysas" /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
     <!-- ──────────────────────────────────────────────────── reboot -->
     <!--
       The minifilter driver service is registered via direct registry writes
@@ -350,6 +369,11 @@
            may have skipped if a stop timed out. -->
       <Custom Action='CA_DeleteDaemonSvc'      After='DeleteServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_DeleteMinifilterSvc'  After='DeleteServices'>REMOVE="ALL"</Custom>
+      <!-- Clean up empty Firewall and Keysas registry keys left behind by
+           RemoveRegistryValues. These are removed after DeleteServices so that
+           any service registry cleanup happens first. -->
+      <Custom Action='CA_DeleteFirewallRegKey' After='DeleteServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_DeleteKeysasRegKey'   After='DeleteServices'>REMOVE="ALL"</Custom>
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 
