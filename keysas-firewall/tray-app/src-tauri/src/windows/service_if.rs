@@ -28,6 +28,7 @@ use std::sync::{Arc, RwLock};
 use crate::app_controller::AppController;
 use crate::service_if::{
     FileUpdateMessage, GuiMessageCode, ServiceInterface, UsbAuthorization, UsbUpdateMessage,
+    UsbFileListRequest,
 };
 
 /// Handle to the service interface client and server
@@ -85,6 +86,14 @@ impl ServiceInterface for WindowsServiceInterface {
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         });
+        // Demande l'état courant au daemon : les clefs déjà branchées avant
+        // le démarrage de la tray-app sont ainsi affichées immédiatement.
+        if let Ok(req) = serde_json::to_string(&UsbFileListRequest::new()) {
+            if let Err(e) = libmailslot::write_mailslot(TRAY_PIPE, &req) {
+                log::warn!("Windows tray: impossible d'envoyer UsbFileListRequest: {e}");
+            }
+        }
+
         Ok(())
     }
 

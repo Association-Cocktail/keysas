@@ -146,6 +146,17 @@ pub struct UsbUpdateMessage {
     pub authorization: UsbAuthorization,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct UsbFileListRequest {
+    pub code: GuiMessageCode,
+}
+
+impl UsbFileListRequest {
+    pub fn new() -> Self {
+        UsbFileListRequest { code: GuiMessageCode::UsbFileListRequest }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct ServiceInterfaceBuilder {}
 

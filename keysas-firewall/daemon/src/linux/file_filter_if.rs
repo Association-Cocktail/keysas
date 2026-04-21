@@ -28,6 +28,7 @@ use log::*;
 use std::ffi::{CString, OsString};
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -151,6 +152,25 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                                 .map(|mut g| g.authorize_file(&file, false).unwrap_or(false))
                                 .unwrap_or(false)
                         };
+
+                        // FAN_DENY on a O_CREAT open leaves an empty inode on the
+                        // filesystem (the inode is allocated before file_open fires).
+                        // Delete GIO atomic-write temp files to avoid orphans on the key.
+                        if !allow {
+                            if let Some(ref p) = file.path {
+                                let name = Path::new(p)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("");
+                                if name.starts_with(".goutputstream-") {
+                                    if let Err(e) = std::fs::remove_file(p) {
+                                        debug!("fanotify: could not remove orphan {p:?}: {e}");
+                                    } else {
+                                        debug!("fanotify: removed orphan temp file {p:?}");
+                                    }
+                                }
+                            }
+                        }
 
                         let response = libc::fanotify_response {
                             fd: event.fd,

@@ -100,7 +100,7 @@
               Name='Keysas Service'
               DisplayName='Keysas USB Firewall'
               Description='Verifies USB key certificates and blocks uncertified devices.'
-              Start='demand'
+              Start='auto'
               Account='LocalSystem'
               ErrorControl='normal'>
               <!-- Daemon must not start before the minifilter is running -->
