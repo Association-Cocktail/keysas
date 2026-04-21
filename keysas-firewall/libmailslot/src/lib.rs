@@ -35,7 +35,7 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
 };
 use windows::Win32::System::Mailslots::{CreateMailslotW, GetMailslotInfo};
-use windows::Win32::System::SystemInformation::GetComputerNameW;
+use windows::Win32::System::WindowsProgramming::GetComputerNameW;
 use windows::Win32::System::SystemServices::MAILSLOT_WAIT_FOREVER;
 use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 
