@@ -35,6 +35,7 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
 };
 use windows::Win32::System::Mailslots::{CreateMailslotW, GetMailslotInfo};
+use windows::Win32::System::SystemInformation::GetComputerNameW;
 use windows::Win32::System::SystemServices::MAILSLOT_WAIT_FOREVER;
 use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 
@@ -201,10 +202,25 @@ pub fn write_mailslot(name: &str, message: &str) -> Result<(), anyhow::Error> {
         return Err(anyhow!("write_mailslot: message too long"));
     }
 
+    // "\\." resolves within the caller's session only.  A daemon running in
+    // Session 0 cannot reach a mailslot created by a user-session process
+    // (Session 1+) via "\\.".  Using the computer name makes the path
+    // session-agnostic and reachable from any local session.
+    let resolved_name = if name.starts_with("\\\\.\\mailslot\\") {
+        let mut buf = [0u16; 256];
+        let mut len = buf.len() as u32;
+        unsafe {
+            GetComputerNameW(windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+        }
+        let computer_name = String::from_utf16_lossy(&buf[..len as usize]);
+        name.replacen("\\\\.", &format!("\\\\{}", computer_name), 1)
+    } else {
+        name.to_owned()
+    };
+
     // The mailslot is accessed like a file
     // Create a handle to the file
-    //let slot_name = PCSTR::from_raw(name.as_ptr() as *const u8);
-    let slot_name: Vec<u16> = OsStr::new(name).encode_wide().chain(once(0)).collect();
+    let slot_name: Vec<u16> = OsStr::new(&resolved_name).encode_wide().chain(once(0)).collect();
     let pslot_name = PCWSTR::from_raw(slot_name.as_ptr());
 
     let tmp_handle = HANDLE::default();
