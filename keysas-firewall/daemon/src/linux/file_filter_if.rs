@@ -132,22 +132,24 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                     }
 
                     if (event.mask & libc::FAN_OPEN_PERM) != 0 && event.fd >= 0 {
+                        // Resolve the path before deciding; needed both for authorization
+                        // and for orphan cleanup of .goutputstream-* files.
+                        let file_path = if event.pid == daemon_pid {
+                            None
+                        } else {
+                            let proc_link = format!("/proc/self/fd/{}", event.fd);
+                            std::fs::read_link(&proc_link).ok().map(OsString::from)
+                        };
+
                         // Events from the daemon itself are auto-allowed to prevent deadlocks
                         // when authorize_file() accesses files on the watched mount.
                         let allow = if event.pid == daemon_pid {
                             true
                         } else {
-                            // Resolve the path of the file being opened
-                            let proc_link = format!("/proc/self/fd/{}", event.fd);
-                            let file_path = std::fs::read_link(&proc_link)
-                                .ok()
-                                .map(OsString::from);
-
                             let file = FilteredFile {
-                                path: file_path,
+                                path: file_path.clone(),
                                 id: [0u8; 32],
                             };
-
                             ctrl.lock()
                                 .map(|mut g| g.authorize_file(&file, false).unwrap_or(false))
                                 .unwrap_or(false)
@@ -157,12 +159,12 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                         // filesystem (the inode is allocated before file_open fires).
                         // Delete GIO atomic-write temp files to avoid orphans on the key.
                         if !allow {
-                            if let Some(ref p) = file.path {
-                                let name = Path::new(p)
+                            if let Some(ref p) = file_path {
+                                let fname = Path::new(p)
                                     .file_name()
                                     .and_then(|n| n.to_str())
                                     .unwrap_or("");
-                                if name.starts_with(".goutputstream-") {
+                                if fname.starts_with(".goutputstream-") {
                                     if let Err(e) = std::fs::remove_file(p) {
                                         debug!("fanotify: could not remove orphan {p:?}: {e}");
                                     } else {
