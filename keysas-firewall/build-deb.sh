@@ -4,10 +4,9 @@
 #   - keysas-tray-app_*.deb       (interface graphique + autostart)
 #
 # Prérequis communs :
-#   rustup toolchain install nightly stable
-#   rustup component add rust-src --toolchain nightly
-#   cargo install bpf-linker cargo-deb
-#   apt install -y libudev-dev clang llvm pkg-config
+#   rustup toolchain install stable
+#   cargo install cargo-deb
+#   apt install -y libudev-dev pkg-config
 #
 # Prérequis tray-app (Tauri 2, Ubuntu 22.04+) :
 #   apt install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
@@ -20,7 +19,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EBPF_DIR="$SCRIPT_DIR/ebpfilter"
 DAEMON_DIR="$SCRIPT_DIR/daemon"
 TRAY_DIR="$SCRIPT_DIR/tray-app"
 
@@ -29,7 +27,7 @@ for arg in "$@"; do
     [[ "$arg" == "--no-tray" ]] && BUILD_TRAY=false
 done
 
-# ── Vérification des prérequis ────────────────────────────────────────────────
+# ── Prérequis ─────────────────────────────────────────────────────────────────
 
 check_tray_deps() {
     local missing_pkgs=()
@@ -66,22 +64,16 @@ check_tray_deps() {
 
 # ── Daemon ────────────────────────────────────────────────────────────────────
 
-echo "==> [1/4] Compilation du programme eBPF..."
-(
-    cd "$EBPF_DIR"
-    cargo xtask build-ebpf --release
-)
-
-echo "==> [2/4] Compilation du daemon (release)..."
+echo "==> [1/3] Compilation du daemon (release)..."
 (
     cd "$DAEMON_DIR"
     cargo build --release
 )
 
-echo "==> [3/4] Compression de la page de manuel..."
+echo "==> [2/3] Compression de la page de manuel..."
 gzip -k -f "$DAEMON_DIR/pkg/keysas-usbfilter-daemon.8"
 
-echo "==> [4/4] Génération du paquet .deb (daemon)..."
+echo "==> [3/3] Génération du paquet .deb (daemon)..."
 (
     cd "$DAEMON_DIR"
     cargo deb --no-build
@@ -95,13 +87,13 @@ if $BUILD_TRAY; then
     check_tray_deps
 
     echo ""
-    echo "==> [5/6] Installation des dépendances frontend..."
+    echo "==> [4/5] Installation des dépendances frontend..."
     (
         cd "$TRAY_DIR"
         npm ci
     )
 
-    echo "==> [6/6] Génération du paquet .deb (tray-app)..."
+    echo "==> [5/5] Génération du paquet .deb (tray-app)..."
     (
         cd "$TRAY_DIR"
         npm run tauri build -- --bundles deb
