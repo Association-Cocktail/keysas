@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Vérification des outils essentiels ───────────────────────────────────────
 
-for tool in npm rustc; do
+for tool in npm rustc fakeroot; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Erreur : '$tool' introuvable."; exit 1; }
 done
 
@@ -31,12 +31,12 @@ echo "==> [1/2] Installation des dépendances frontend..."
 echo "==> [2/2] Génération du paquet .deb (Tauri)..."
 (
     cd "$SCRIPT_DIR"
-    npm run tauri build -- --bundles deb
+    fakeroot npx tauri build --bundles deb
 )
 
-# ── Résumé ───────────────────────────────────────────────────────────────────
-
 DEB=$(find "$SCRIPT_DIR/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)
+
+# ── Résumé ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "Paquet généré :"
