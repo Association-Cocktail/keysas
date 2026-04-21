@@ -137,25 +137,6 @@ pub enum GuiMessageCode {
     PolicyUpdate,
 }
 
-/// Current values of the four daemon policy settings.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub struct PolicySettings {
-    pub disable_unsigned_usb: bool,
-    pub allow_user_usb_authorization: bool,
-    pub allow_user_file_read: bool,
-    pub allow_user_file_write: bool,
-}
-
-/// Sent by the tray-app to ask the daemon to persist new policy settings.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-pub struct PolicyUpdateMessage {
-    pub code: GuiMessageCode,
-    pub disable_unsigned_usb: bool,
-    pub allow_user_usb_authorization: bool,
-    pub allow_user_file_read: bool,
-    pub allow_user_file_write: bool,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UsbUpdateMessage {
     /// Discriminator required by the daemon's deserializer
@@ -217,15 +198,4 @@ pub trait ServiceInterface {
 
     /// Move a blocked file into the pre-validated cache so the next open succeeds.
     fn authorize_blocked_file(&self, device_id: &str, path: &str) -> Result<(), anyhow::Error>;
-
-    /// Read the current policy settings from the daemon configuration store.
-    fn get_policy_settings(&self) -> Result<PolicySettings, anyhow::Error> {
-        Err(anyhow::anyhow!("Policy settings not supported on this platform"))
-    }
-
-    /// Ask the daemon to persist new policy settings.
-    /// The daemon runs as SYSTEM and writes directly to HKLM — no UAC needed.
-    fn set_policy_settings(&self, _settings: PolicySettings) -> Result<(), anyhow::Error> {
-        Err(anyhow::anyhow!("Policy settings not supported on this platform"))
-    }
 }

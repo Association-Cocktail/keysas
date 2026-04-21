@@ -13,37 +13,12 @@ import {listen} from '@tauri-apps/api/event'
         </tr>
       </thead>
     </table>
-    <!-- Settings view -->
-    <div v-if="currentView === 'settings'" class="settings-view">
-      <h3>Policy Settings</h3>
-      <label class="setting-row">
-        <input type="checkbox" v-model="policy.disable_unsigned_usb"/>
-        Block USB devices without a Keysas certificate
-      </label>
-      <label class="setting-row">
-        <input type="checkbox" v-model="policy.allow_user_usb_authorization"/>
-        Allow users to authorize unrecognised USB devices
-      </label>
-      <label class="setting-row">
-        <input type="checkbox" v-model="policy.allow_user_file_read"/>
-        Allow users to grant read access to uncertified files
-      </label>
-      <label class="setting-row">
-        <input type="checkbox" v-model="policy.allow_user_file_write"/>
-        Allow users to grant write access to files
-      </label>
-      <div class="settings-actions">
-        <button @click="saveSettings()">Apply</button>
-        <button @click="currentView = 'home'">Cancel</button>
-      </div>
-      <div v-if="settingsError" class="settings-error">{{ settingsError }}</div>
-    </div>
     <!-- Placeholder: shown when no device is selected from the tray menu -->
-    <div v-if="currentView === 'home'" class="placeholder">
+    <div v-if="!showUsbDetails" class="placeholder">
       Select a device from the system tray menu.
     </div>
     <!-- File details view -->
-    <table v-if="currentView === 'device'">
+    <table v-if="showUsbDetails">
       <thead>
         <tr>
           <th style="width:85%">{{ usb_device.name }}</th>
@@ -67,9 +42,6 @@ import {listen} from '@tauri-apps/api/event'
         </tr>
       </tbody>
     </table>
-    <!-- Back button shown in device or settings view -->
-    <div v-if="currentView !== 'home'" style="margin-top:8px;text-align:right;padding-right:8px;">
-    </div>
   </div>
 </template>
 
@@ -105,23 +77,20 @@ export default {
   components: {},
   data() {
     return {
-      currentView: 'home' as 'home' | 'device' | 'settings',
+      showUsbDetails: false,
       file_list: [] as File[],
       usb_device: {} as UsbDevice,
-      policy: { disable_unsigned_usb: false, allow_user_usb_authorization: false,
-                 allow_user_file_read: false, allow_user_file_write: false },
-      settingsError: '' as string,
     }
   },
   async mounted() {
+    // Open the file-details view when the user clicks a device in the tray menu.
     await listen('show_device', (event) => {
-      this.showUsbDevice(event.payload as UsbDevice);
+      const device = event.payload as UsbDevice;
+      this.showUsbDevice(device);
     });
+    // Keep the file list up to date as files are scanned.
     await listen('file_update', (event) => {
       this.refreshFileList(event.payload as string);
-    });
-    await listen('show_settings', () => {
-      this.openSettings();
     });
   },
   methods: {
@@ -143,26 +112,7 @@ export default {
       this.usb_device = usb_device;
       this.file_list = [];
       this.refreshFileList(usb_device.path);
-      this.currentView = 'device';
-    },
-    async openSettings() {
-      this.settingsError = '';
-      try {
-        const raw = await invoke('get_policy_settings') as string;
-        this.policy = JSON.parse(raw);
-      } catch (e) {
-        this.settingsError = String(e);
-      }
-      this.currentView = 'settings';
-    },
-    async saveSettings() {
-      this.settingsError = '';
-      try {
-        await invoke('set_policy_settings', { settings: JSON.stringify(this.policy) });
-        this.currentView = 'home';
-      } catch (e) {
-        this.settingsError = String(e);
-      }
+      this.showUsbDetails = true;
     },
     async toggleFileAuth(file: File, new_mode: AuthorizationMode) {
       let auth = 0;
@@ -178,8 +128,9 @@ export default {
         .catch(() => alert("Toggle file authorization failed"));
     },
     async backToUsbList() {
-      this.currentView = 'home';
+      this.showUsbDetails = false;
       this.file_list = [];
+      // The USB list lives in the native tray menu; just hide the window.
       const win = getCurrentWebviewWindow();
       await win.hide();
     }
@@ -217,48 +168,6 @@ export default {
   font-size: 13px;
   color: #666;
   text-align: center;
-}
-
-.settings-view {
-  padding: 12px 16px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  font-size: 13px;
-}
-
-.settings-view h3 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  border-bottom: 1px solid lightgray;
-  padding-bottom: 6px;
-}
-
-.setting-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  cursor: pointer;
-}
-
-.settings-actions {
-  margin-top: 14px;
-  display: flex;
-  gap: 8px;
-}
-
-.settings-actions button {
-  padding: 4px 14px;
-  font-size: 12px;
-  background: #e0e0e0;
-  border: 1px solid #bbb;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.settings-error {
-  margin-top: 8px;
-  color: red;
-  font-size: 12px;
 }
 
 button {

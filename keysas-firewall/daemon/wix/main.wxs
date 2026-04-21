@@ -49,7 +49,7 @@
       Override at install time via command line for silent/automated deployments:
         msiexec /i keysas-firewall.msi /quiet DISABLE_UNSIGNED_USB=1
         msiexec /i keysas-firewall.msi /quiet ALLOW_USER_USB_AUTH=1 ALLOW_USER_FILE_READ=1
-      All four can be changed at runtime via the tray-app Settings menu.
+      All four can be changed after install by re-running msiexec with new values.
     -->
     <Property Id='DISABLE_UNSIGNED_USB'  Value='0'/>
     <Property Id='ALLOW_USER_USB_AUTH'   Value='0'/>
@@ -64,7 +64,7 @@
         <Directory Id='APPLICATIONFOLDER' Name='Keysas Firewall'>
 
           <!--
-            Tray application: launched at user login via HKCU Run key.
+            Tray application: launched at user login via HKLM Run key.
             Must be installed before starting the daemon so the mailslot
             server (SERVICE_PIPE) is available.
           -->
@@ -79,13 +79,16 @@
           </Component>
 
           <!--
-            Per-user component: HKCU Run key so the tray-app launches at login.
-            ICE57 forbids mixing a per-machine KeyPath (File) with per-user data
-            (HKCU registry) in the same component — hence the split.
+            Per-machine Run key: launches the tray-app at logon for all users.
+            Using HKLM (not HKCU) ensures that uninstall — which runs as SYSTEM
+            and therefore has a different HKCU hive — can clean up this entry.
+            ICE57 requires the File and the Run key to remain in separate
+            components because File uses Win64='yes' KeyPath while the registry
+            value is the KeyPath here.
           -->
-          <Component Id='comp_trayapp_run' Guid='A1D3F582-C6E4-4B9A-8D2E-3F7A1C0B5D92' Win64='yes'>
+          <Component Id='comp_trayapp_run' Guid='B4E2A917-D3C5-4F8B-A7E1-2D9C0F6B3A74' Win64='yes'>
             <RegistryValue
-              Root='HKCU'
+              Root='HKLM'
               Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
               Name='KeysasFirewallTray'
               Type='string'
@@ -296,9 +299,35 @@
       Impersonate='no'
       Return='ignore'/>
 
+    <!--
+      Unload the minifilter kernel driver BEFORE StopServices so the daemon
+      (which depends on KeysasMinifilter) can be stopped cleanly by the SCM.
+      If the driver is still loaded when StopServices runs, the daemon stop
+      may time out and DeleteServices may skip the daemon entry.
+    -->
     <CustomAction Id='CA_UnloadMinifilter'
       Directory='TARGETDIR'
       ExeCommand='[System64Folder]fltMC.exe unload KeysasMinifilter'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <!--
+      Fallback service deletion: if DeleteServices did not fully remove the
+      service entries (e.g. because a stop timed out), sc.exe delete forces
+      the removal from the registry.  Return='ignore' is safe — sc reports
+      "service not found" when the entry is already gone.
+    -->
+    <CustomAction Id='CA_DeleteDaemonSvc'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]sc.exe delete "Keysas Service"'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_DeleteMinifilterSvc'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]sc.exe delete KeysasMinifilter'
       Execute='deferred'
       Impersonate='no'
       Return='ignore'/>
@@ -313,8 +342,14 @@
       For silent installs (/quiet) the reboot is deferred — caller must reboot.
     -->
     <InstallExecuteSequence>
-      <Custom Action='CA_KillTrayApp'      Before='StopServices'>REMOVE="ALL"</Custom>
-      <Custom Action='CA_UnloadMinifilter'  After='StopServices'>REMOVE="ALL"</Custom>
+      <!-- Kill tray-app and unload minifilter BEFORE StopServices so that
+           the daemon (which depends on KeysasMinifilter) can be stopped. -->
+      <Custom Action='CA_KillTrayApp'         Before='StopServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_UnloadMinifilter'     Before='StopServices'>REMOVE="ALL"</Custom>
+      <!-- Fallback: force-delete service registry entries that DeleteServices
+           may have skipped if a stop timed out. -->
+      <Custom Action='CA_DeleteDaemonSvc'      After='DeleteServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_DeleteMinifilterSvc'  After='DeleteServices'>REMOVE="ALL"</Custom>
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 

@@ -83,7 +83,6 @@ pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tau
 
     builder = builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "Settings").build(app)?)
         .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?);
 
     Ok(builder.build()?)
