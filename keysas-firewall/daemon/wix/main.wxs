@@ -266,21 +266,29 @@
 
     <!-- ──────────────────────────────────────────── force-stop before remove -->
     <!--
-      Custom action: stop the daemon and the minifilter explicitly before the
-      standard MSI StopServices action runs.  This is necessary because:
-        - The kernel minifilter (.sys) file cannot be deleted while the driver
-          is loaded; a prior explicit stop gives the SCM time to unload it.
-        - The daemon holds the FilterConnectCommunicationPort open; stopping it
-          first lets the minifilter detach cleanly.
-      Return='ignore' ensures a stuck or already-stopped service does not abort
-      the uninstall.  Both commands are chained in one cmd.exe invocation so
-      the action completes in a single process.
+      CA_KillTrayApp      : kill the tray-app process (user session, Run key)
+                            before StopServices tries to delete its locked EXE.
+      CA_UnloadMinifilter : unload the minifilter via fltMC before RemoveFiles;
+                            without this, KeysasMinifilter.sys stays locked in
+                            memory and its deletion fails.
+      Both actions use Execute='deferred' + Impersonate='no' to run as SYSTEM.
+      Return='ignore' prevents the uninstall from aborting if the process or
+      driver is already gone.
+      The existing ServiceControl elements (Wait='yes' on the daemon,
+      Wait='no' on the minifilter) handle clean service stop via the SCM.
     -->
-    <Property Id='CmdExe' Value='[System64Folder]cmd.exe'/>
-    <CustomAction Id='CA_StopKeysasServices'
-      Property='CmdExe'
-      ExeCommand='/c sc.exe stop "Keysas Service" &amp; sc.exe stop KeysasMinifilter'
-      Execute='immediate'
+    <CustomAction Id='CA_KillTrayApp'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]taskkill.exe /F /IM keysas-usbfilter-trayapp.exe /T'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_UnloadMinifilter'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]fltMC.exe unload KeysasMinifilter'
+      Execute='deferred'
+      Impersonate='no'
       Return='ignore'/>
 
     <!-- ──────────────────────────────────────────────────── reboot -->
@@ -293,7 +301,8 @@
       For silent installs (/quiet) the reboot is deferred — caller must reboot.
     -->
     <InstallExecuteSequence>
-      <Custom Action='CA_StopKeysasServices' Before='StopServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_KillTrayApp'      Before='StopServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_UnloadMinifilter'  After='StopServices'>REMOVE="ALL"</Custom>
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 
