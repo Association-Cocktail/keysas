@@ -76,6 +76,13 @@
               DiskId='1'
               Source='$(var.TrayAppBinDir)/keysas-usbfilter-trayapp.exe'
               KeyPath='yes'/>
+            <!--
+              RemoveFolder tells MSI to delete APPLICATIONFOLDER on uninstall.
+              MSI only removes it when empty; CA_RemoveAppFolder below handles
+              the non-empty case (WebView2 user-data, logs, or any other runtime
+              files that were created after installation).
+            -->
+            <RemoveFolder Id='rm_appfolder' Directory='APPLICATIONFOLDER' On='uninstall'/>
           </Component>
 
           <!--
@@ -292,9 +299,30 @@
       The existing ServiceControl elements (Wait='yes' on the daemon,
       Wait='no' on the minifilter) handle clean service stop via the SCM.
     -->
+    <!--
+      Kill the tray-app and all its child processes (/T) including any
+      WebView2 (msedgewebview2.exe) sub-processes that Tauri spawns.
+      Two separate calls: one by image name, one by window title, so that
+      even if the binary was renamed the process is terminated.
+    -->
     <CustomAction Id='CA_KillTrayApp'
       Directory='TARGETDIR'
       ExeCommand='[System64Folder]taskkill.exe /F /IM keysas-usbfilter-trayapp.exe /T'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <!--
+      Kill any surviving WebView2 renderer/broker processes.
+      CA_KillTrayApp /T already terminates the tray-app and its process tree,
+      but WebView2 children can outlive their parent for a short window.
+      Killing all msedgewebview2.exe instances here is intentional: they are
+      stateless renderer processes that restart automatically, so briefly
+      terminating them on a security-product uninstall is acceptable.
+    -->
+    <CustomAction Id='CA_KillWebView2'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]taskkill.exe /F /IM msedgewebview2.exe'
       Execute='deferred'
       Impersonate='no'
       Return='ignore'/>
@@ -333,6 +361,27 @@
       Return='ignore'/>
 
     <!--
+      Force-remove the application folder and everything in it.
+      Step 1 (immediate): capture APPLICATIONFOLDER into CustomActionData
+        while the property table is still available.
+      Step 2 (deferred/SYSTEM): rmdir /S /Q on the captured path.
+      The trailing "." in "[CustomActionData]." avoids the cmd.exe quoting
+      issue caused by a trailing backslash before the closing quote.
+      Return='ignore' is safe: if the folder is already gone, rmdir exits
+      with a non-zero code that we discard.
+    -->
+    <CustomAction Id='CA_SetAppFolderData'
+      Property='CA_RemoveAppFolder'
+      Value='[APPLICATIONFOLDER]'/>
+
+    <CustomAction Id='CA_RemoveAppFolder'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]cmd.exe /C rmdir /S /Q "[CustomActionData]."'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <!--
       Delete the Firewall registry key and its parent Keysas key.
       These are left empty after RemoveRegistryValues removes individual
       values, so we clean them up explicitly here.
@@ -361,40 +410,65 @@
       For silent installs (/quiet) the reboot is deferred — caller must reboot.
     -->
     <InstallExecuteSequence>
-      <!-- Kill tray-app and unload minifilter BEFORE StopServices so that
-           the daemon (which depends on KeysasMinifilter) can be stopped. -->
-      <Custom Action='CA_KillTrayApp'         Before='StopServices'>REMOVE="ALL"</Custom>
+      <!-- Capture APPLICATIONFOLDER before the transaction starts so that the
+           deferred CA_RemoveAppFolder can read it via CustomActionData. -->
+      <Custom Action='CA_SetAppFolderData'     Before='InstallInitialize'>REMOVE="ALL"</Custom>
+      <!-- Kill tray-app (and its WebView2 children) and unload the minifilter
+           BEFORE StopServices so that the daemon can be stopped cleanly. -->
+      <Custom Action='CA_KillTrayApp'          Before='StopServices'>REMOVE="ALL"</Custom>
+      <Custom Action='CA_KillWebView2'         Before='StopServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_UnloadMinifilter'     Before='StopServices'>REMOVE="ALL"</Custom>
       <!-- Fallback: force-delete service registry entries that DeleteServices
            may have skipped if a stop timed out. -->
       <Custom Action='CA_DeleteDaemonSvc'      After='DeleteServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_DeleteMinifilterSvc'  After='DeleteServices'>REMOVE="ALL"</Custom>
-      <!-- Clean up empty Firewall and Keysas registry keys left behind by
-           RemoveRegistryValues. These are removed after DeleteServices so that
-           any service registry cleanup happens first. -->
+      <!-- Clean up empty Firewall and Keysas registry keys. -->
       <Custom Action='CA_DeleteFirewallRegKey' After='DeleteServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_DeleteKeysasRegKey'   After='DeleteServices'>REMOVE="ALL"</Custom>
+      <!-- Force-remove the application folder after RemoveFiles has released
+           all file handles. Handles WebView2 runtime data and any other
+           runtime artefacts that MSI did not install. -->
+      <Custom Action='CA_RemoveAppFolder'      After='RemoveFiles'>REMOVE="ALL"</Custom>
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 
     <!-- ──────────────────────────────────────────────────── UI -->
     <!--
-      Interactive install shows a Welcome screen followed by the policy
-      settings dialog, then the progress bar.
-      Silent/unattended install bypasses all dialogs:
+      WixUI_Minimal provides infrastructure: ProgressDlg, ExitDlg, ErrorDlg,
+      FatalError, UserExit, FilesInUse, bitmap properties (WixUI_Bmp_Banner),
+      and text styles.  Its default first dialog is WelcomeEulaDlg (welcome +
+      EULA on a single screen).  We replace it with PolicySettingsDlg so the
+      install starts directly with the policy settings — no EULA, no welcome.
+
+      Silent install bypasses all dialogs:
         msiexec /i keysas-firewall.msi /quiet
         msiexec /i keysas-firewall.msi /quiet DISABLE_UNSIGNED_USB=1
     -->
     <UIRef Id='WixUI_Minimal'/>
     <UI>
       <!--
-        Insert the policy settings dialog between WelcomeDlg and installation.
-        Order=0 fires before the built-in Order=1 EndDialog on Next, so this
-        NewDialog event takes precedence and WelcomeDlg navigates here instead
-        of starting the install immediately.
+        Override the InstallUISequence entries added by WixUI_Minimal.
+        WelcomeEulaDlg (the WixUI_Minimal default first dialog) is suppressed
+        with condition "0" (always false).  PolicySettingsDlg takes its place
+        at the same sequence position (After='PrepareDlg').
+        WixUI_Minimal marks its entries Overridable='yes', so this override
+        is valid and will not cause a duplicate-sequence linker error.
       -->
-      <Publish Dialog='WelcomeDlg' Control='Next'
-               Event='NewDialog' Value='PolicySettingsDlg' Order='0'/>
+      <InstallUISequence>
+        <Show Dialog='WelcomeEulaDlg'    After='PrepareDlg'>0</Show>
+        <Show Dialog='PolicySettingsDlg' After='PrepareDlg'>NOT Installed AND NOT PATCH</Show>
+      </InstallUISequence>
+
+      <!--
+        Dialog flow: PolicySettingsDlg → ProgressDlg → ExitDlg.
+        NewDialog ProgressDlg on Install triggers the execute sequence and
+        shows the progress bar.  ExitDlg is shown automatically when the
+        install completes; its Finish button ends the installer.
+      -->
+      <Publish Dialog='PolicySettingsDlg' Control='Install'
+               Event='NewDialog' Value='ProgressDlg'>1</Publish>
+      <Publish Dialog='ExitDlg' Control='Finish'
+               Event='EndDialog' Value='Return' Order='999'>1</Publish>
 
       <Dialog Id='PolicySettingsDlg' Width='370' Height='270'
               Title='[ProductName]' NoMinimize='yes'>
@@ -439,14 +513,11 @@
           <Text>Allow users to grant write access to files</Text>
         </Control>
 
-        <Control Id='Back' Type='PushButton'
-                 X='180' Y='243' Width='56' Height='17' Text='&#38;Back'>
-          <Publish Event='NewDialog' Value='WelcomeDlg'>1</Publish>
-        </Control>
+        <!-- No Back button: WelcomeEulaDlg is suppressed, nothing to go back to. -->
         <Control Id='Install' Type='PushButton'
                  X='236' Y='243' Width='56' Height='17'
                  Default='yes' Text='&#38;Install'>
-          <Publish Event='EndDialog' Value='Return'>1</Publish>
+          <Publish Event='NewDialog' Value='ProgressDlg'>1</Publish>
         </Control>
         <Control Id='Cancel' Type='PushButton'
                  X='296' Y='243' Width='56' Height='17'
