@@ -43,6 +43,7 @@ use crate::windows::service;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
+#[cfg(target_os = "linux")]
 use anyhow::anyhow;
 use clap::{crate_version, Arg, ArgAction, Command};
 use log::*;

@@ -113,4 +113,5 @@ features = [
 upgrade-guid = "37C429B0-B7F9-47C6-B840-D55BD5024EE8"
 path-guid    = "083D9238-6965-4411-90DA-DCA99FEA26C5"
 eula         = false
+extensions   = ["WixUIExtension"]
 # wix/main.wxs is used instead of the auto-generated template
