@@ -701,7 +701,7 @@ impl ServiceController {
     /// devices belong to a USB parent that is being physically unplugged.
     pub fn unmounted_usb_ids_with_syspath_prefix(
         &self,
-        prefix: &std::path::Path,
+        prefix: &Path,
     ) -> Vec<OsString> {
         self.unmounted_usb
             .iter()
@@ -709,7 +709,7 @@ impl ServiceController {
                 p.device
                     .usb_syspath
                     .as_deref()
-                    .map(|sp| std::path::Path::new(sp).starts_with(prefix))
+                    .map(|sp| Path::new(sp).starts_with(prefix))
                     .unwrap_or(false)
             })
             .map(|(id, _)| id.clone())

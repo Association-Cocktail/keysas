@@ -447,6 +447,14 @@
     <UIRef Id='WixUI_Minimal'/>
     <UI>
       <!--
+        WiX only includes dialog definitions from WixUIExtension.wixlib when
+        they are explicitly referenced by a DialogRef.  WixUI_Minimal already
+        pulls in ErrorDlg, FilesInUse, FatalError and UserExit.  ExitDlg is
+        referenced by a Publish below, so it must also be declared here.
+      -->
+      <DialogRef Id='ExitDlg'/>
+
+      <!--
         Override the InstallUISequence entries added by WixUI_Minimal.
         WelcomeEulaDlg (the WixUI_Minimal default first dialog) is suppressed
         with condition "0" (always false).  PolicySettingsDlg takes its place
@@ -455,16 +463,24 @@
         is valid and will not cause a duplicate-sequence linker error.
       -->
       <InstallUISequence>
+        <!-- Suppress WelcomeEulaDlg at its original sequence position. -->
         <Show Dialog='WelcomeEulaDlg'    After='PrepareDlg'>0</Show>
-        <Show Dialog='PolicySettingsDlg' After='PrepareDlg'>NOT Installed AND NOT PATCH</Show>
+        <!--
+          Place PolicySettingsDlg AFTER WelcomeEulaDlg (not After='PrepareDlg')
+          to avoid two entries competing for the same sequence number, which
+          would cause linker error LGHT0130 (duplicate sequence entry).
+          WelcomeEulaDlg is suppressed (condition=0), so PolicySettingsDlg
+          effectively becomes the first visible dialog on a fresh install.
+        -->
+        <Show Dialog='PolicySettingsDlg' After='WelcomeEulaDlg'>NOT Installed AND NOT PATCH</Show>
       </InstallUISequence>
 
       <!--
         Dialog flow: PolicySettingsDlg → ProgressDlg → ExitDlg.
         The Install button publish is declared inline in the Control element
-        below (not here) to avoid a duplicate ControlEvent symbol error.
-        ExitDlg Finish is defined here because ExitDlg is provided by
-        WixUI_Minimal and has no inline Control definition in this file.
+        below to avoid a duplicate ControlEvent symbol error.
+        ExitDlg Finish is defined here because ExitDlg has no inline Control
+        definition in this file.
       -->
       <Publish Dialog='ExitDlg' Control='Finish'
                Event='EndDialog' Value='Return' Order='999'>1</Publish>

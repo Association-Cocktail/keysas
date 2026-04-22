@@ -411,7 +411,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
     /// Close the communication with the driver
     fn stop(self: Box<Self>) {
         unsafe {
-            CloseHandle::<HANDLE>(self.handle);
+            let _ = CloseHandle::<HANDLE>(self.handle);
         }
     }
 }

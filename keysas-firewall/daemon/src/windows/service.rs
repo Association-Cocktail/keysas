@@ -34,7 +34,7 @@ fn run_service() {
 
         // Put the service in sleep until it receives request from the driver or the HMI
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(10));
+            thread::sleep(Duration::from_secs(10));
         }
     })
     .join();
@@ -78,9 +78,9 @@ fn keysas_service_main(_args: Vec<OsString>) {
     // entry point (running under LocalSystem, HKLM write is guaranteed).
     // Non-fatal: if eventlog fails we fall back to a no-op logger so the
     // service still starts.
-    if eventlog::init("Keysas Service", log::Level::Info).is_err() {
+    if eventlog::init("Keysas Service", Level::Info).is_err() {
         let _ = simple_logger::SimpleLogger::new()
-            .with_level(log::LevelFilter::Info)
+            .with_level(LevelFilter::Info)
             .init();
     }
 

@@ -115,7 +115,7 @@ fn hide_krp_files(root: &str) {
                     .collect();
                 unsafe {
                     if let Err(e) = SetFileAttributesW(
-                        windows::core::PCWSTR(wide.as_ptr()),
+                        PCWSTR(wide.as_ptr()),
                         FILE_ATTRIBUTE_HIDDEN,
                     ) {
                         log::warn!("hide_krp_files: SetFileAttributesW({:?}) failed: {e}", path);

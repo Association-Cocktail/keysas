@@ -89,7 +89,7 @@ impl GuiInterface for WindowsGuiInterface {
                         }
                     } 
                     // Try to read Usb and Files list request
-                    else if let Ok(req) = serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes()) {
+                    else if let Ok(_req) = serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes()) {
                         let controller = ctrl_hdl.lock().unwrap();
                         if let Err(e) = controller.send_usb_file_list() {
                             error!("Failed to send usb and file listt: {e}");
