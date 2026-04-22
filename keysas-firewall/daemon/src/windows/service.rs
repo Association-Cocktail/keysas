@@ -1,15 +1,15 @@
-use std::{ffi::OsString, thread, time::Duration};
 use anyhow::anyhow;
 use log::*;
 use registry::{Data, Hive, Security};
-use x509_cert::Certificate;
-use x509_cert::der::DecodePem;
+use std::{ffi::OsString, thread, time::Duration};
 use windows_service::define_windows_service;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::service_dispatcher;
+use x509_cert::der::DecodePem;
+use x509_cert::Certificate;
 
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, PublicKeys};
 
@@ -42,7 +42,7 @@ fn run_service() {
     match result {
         Ok(Ok(())) => info!("run_service: thread exited normally"),
         Ok(Err(e)) => error!("run_service: thread exited with error: {e:#}"),
-        Err(_)     => error!("run_service: thread panicked"),
+        Err(_) => error!("run_service: thread panicked"),
     }
 }
 
@@ -128,7 +128,7 @@ pub fn start_windows_service(debug: bool) -> Result<(), anyhow::Error> {
     } else {
         service_dispatcher::start("Keysas Service", ffi_keysas_service)?;
     }
-    
+
     Ok(())
 }
 
@@ -172,17 +172,37 @@ pub fn write_policy_settings(policy: &SecurityPolicy) -> Result<(), anyhow::Erro
         )
         .map_err(|e| anyhow!("Failed to open registry key for write: {e}"))?;
 
-    regkey.set_value("DisableUnsignedUsb",       &Data::U32(policy.disable_unsigned_usb as u32))?;
-    regkey.set_value("AllowUserUsbAuthorization", &Data::U32(policy.allow_user_usb_authorization as u32))?;
-    regkey.set_value("AllowUserFileRead",         &Data::U32(policy.allow_user_file_read as u32))?;
-    regkey.set_value("AllowUserFileWrite",        &Data::U32(policy.allow_user_file_write as u32))?;
+    regkey.set_value(
+        "DisableUnsignedUsb",
+        &Data::U32(policy.disable_unsigned_usb as u32),
+    )?;
+    regkey.set_value(
+        "AllowUserUsbAuthorization",
+        &Data::U32(policy.allow_user_usb_authorization as u32),
+    )?;
+    regkey.set_value(
+        "AllowUserFileRead",
+        &Data::U32(policy.allow_user_file_read as u32),
+    )?;
+    regkey.set_value(
+        "AllowUserFileWrite",
+        &Data::U32(policy.allow_user_file_write as u32),
+    )?;
 
     Ok(())
 }
 
 pub fn load_certificates(
     _config: &Config,
-) -> Result<(KeysasHybridPubKeys, KeysasHybridPubKeys, Certificate, Certificate), anyhow::Error> {
+) -> Result<
+    (
+        KeysasHybridPubKeys,
+        KeysasHybridPubKeys,
+        Certificate,
+        Certificate,
+    ),
+    anyhow::Error,
+> {
     let regkey = match Hive::LocalMachine.open(
         r"SYSTEM\CurrentControlSet\Services\Keysas Service\config",
         Security::Read,

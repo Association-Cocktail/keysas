@@ -44,9 +44,7 @@ use std::{
 };
 
 use crate::controller::{ServiceController, UsbAuthorization};
-use crate::gui_interface::{
-    FileUpdateMessage, GuiInterface, GuiMessageCode, UsbUpdateMessage,
-};
+use crate::gui_interface::{FileUpdateMessage, GuiInterface, GuiMessageCode, UsbUpdateMessage};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D-Bus proxy — org.freedesktop.Notifications (client, session bus)
@@ -107,8 +105,7 @@ impl FirewallService {
     /// The tray-app calls this periodically to sync its state.
     fn get_usb_list(&self) -> zbus::fdo::Result<String> {
         let entries = self.ctrl.lock().unwrap().list_usb_devices();
-        serde_json::to_string(&entries)
-            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+        serde_json::to_string(&entries).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
 
     /// Manually authorize a previously blocked (non-certified) USB device.
@@ -127,17 +124,12 @@ impl FirewallService {
     /// JSON array of strings.  Used by the tray-app polling loop.
     fn get_blocked_files(&self, device: String) -> zbus::fdo::Result<String> {
         let files = self.ctrl.lock().unwrap().list_blocked_files(&device);
-        serde_json::to_string(&files)
-            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+        serde_json::to_string(&files).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
 
     /// Move a blocked file into the pre-validated cache so the next open
     /// attempt succeeds.  Called when the user clicks "Autoriser" in the tray.
-    fn authorize_blocked_file(
-        &self,
-        device: String,
-        path: String,
-    ) -> zbus::fdo::Result<()> {
+    fn authorize_blocked_file(&self, device: String, path: String) -> zbus::fdo::Result<()> {
         self.ctrl
             .lock()
             .unwrap()
@@ -149,21 +141,13 @@ impl FirewallService {
     ///
     /// `auth` encodes UsbAuthorization:
     ///   1 = Block | 2 = AllowRead | 3 = AllowRW | 4 = AllowAll
-    fn update_usb_authorization(
-        &self,
-        device: String,
-        auth: u8,
-    ) -> zbus::fdo::Result<()> {
+    fn update_usb_authorization(&self, device: String, auth: u8) -> zbus::fdo::Result<()> {
         let authorization = match auth {
             1 => UsbAuthorization::Block,
             2 => UsbAuthorization::AllowRead,
             3 => UsbAuthorization::AllowRW,
             4 => UsbAuthorization::AllowAll,
-            _ => {
-                return Err(zbus::fdo::Error::InvalidArgs(
-                    "auth must be 1..4".into(),
-                ))
-            }
+            _ => return Err(zbus::fdo::Error::InvalidArgs("auth must be 1..4".into())),
         };
         let msg = UsbUpdateMessage {
             code: GuiMessageCode::UsbUpdateMessage,
@@ -198,8 +182,8 @@ impl LinuxGuiInterface {
     /// Discover the D-Bus session bus socket of the first non-root user logged
     /// in, by scanning `/run/user/*/bus`.
     fn session_bus_address() -> Result<String, anyhow::Error> {
-        let entries = std::fs::read_dir("/run/user")
-            .map_err(|e| anyhow!("Cannot scan /run/user: {e}"))?;
+        let entries =
+            std::fs::read_dir("/run/user").map_err(|e| anyhow!("Cannot scan /run/user: {e}"))?;
 
         for entry in entries.flatten() {
             let uid = entry.file_name().to_string_lossy().to_string();
@@ -225,25 +209,23 @@ impl LinuxGuiInterface {
     /// Fire-and-forget desktop notification.
     fn notify_desktop(summary: &str, body: &str, icon: &str) {
         match Self::session_conn() {
-            Ok(conn) => {
-                match NotificationsProxyBlocking::new(&conn) {
-                    Ok(proxy) => {
-                        if let Err(e) = proxy.notify(
-                            "Keysas Firewall",
-                            0,
-                            icon,
-                            summary,
-                            body,
-                            &[],
-                            HashMap::new(),
-                            5000,
-                        ) {
-                            warn!("Notification send error: {e}");
-                        }
+            Ok(conn) => match NotificationsProxyBlocking::new(&conn) {
+                Ok(proxy) => {
+                    if let Err(e) = proxy.notify(
+                        "Keysas Firewall",
+                        0,
+                        icon,
+                        summary,
+                        body,
+                        &[],
+                        HashMap::new(),
+                        5000,
+                    ) {
+                        warn!("Notification send error: {e}");
                     }
-                    Err(e) => warn!("Notifications proxy error: {e}"),
                 }
-            }
+                Err(e) => warn!("Notifications proxy error: {e}"),
+            },
             Err(e) => warn!("Desktop notification skipped: {e}"),
         }
     }
@@ -344,10 +326,7 @@ impl LinuxGuiInterface {
 impl GuiInterface for LinuxGuiInterface {
     /// Start the D-Bus server on the system bus and begin listening for
     /// method calls from the tray-app.
-    fn start(
-        &mut self,
-        ctrl: &Arc<Mutex<ServiceController>>,
-    ) -> Result<(), anyhow::Error> {
+    fn start(&mut self, ctrl: &Arc<Mutex<ServiceController>>) -> Result<(), anyhow::Error> {
         let ctrl_hdl = ctrl.clone();
         let stop_flag = self.stop_flag.clone();
 
@@ -356,9 +335,7 @@ impl GuiInterface for LinuxGuiInterface {
 
             let conn = match zbus::blocking::ConnectionBuilder::system()
                 .and_then(|b| b.name("fr.asso_cocktail.keysas.Firewall1"))
-                .and_then(|b| {
-                    b.serve_at("/fr/asso_cocktail/keysas/Firewall", service)
-                })
+                .and_then(|b| b.serve_at("/fr/asso_cocktail/keysas/Firewall", service))
                 .and_then(|b| b.build())
             {
                 Ok(c) => c,

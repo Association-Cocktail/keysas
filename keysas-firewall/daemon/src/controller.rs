@@ -107,8 +107,8 @@ use std::{
 
 use crate::file_filter_if::{FileFilterInterface, FileFilterInterfaceBuilder};
 use crate::gui_interface::{
-    FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, PolicyUpdateMessage,
-    UsbUpdateMessage, GuiMessageCode
+    FileUpdateMessage, GuiInterface, GuiInterfaceBuilder, GuiMessageCode, PolicyUpdateMessage,
+    UsbUpdateMessage,
 };
 use crate::usb_monitor::{UsbMonitor, UsbMonitorBuilder};
 use crate::Config;
@@ -240,7 +240,8 @@ pub struct UsbDevice {
 
 impl UsbDevice {
     fn get_name(&self) -> String {
-        format!("{}-{}-{}-{}",
+        format!(
+            "{}-{}-{}-{}",
             self.vendor.to_string_lossy(),
             self.model.to_string_lossy(),
             self.revision.to_string_lossy(),
@@ -285,8 +286,14 @@ fn find_mount_point(device: &OsString) -> Option<String> {
     for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
         // /proc/mounts columns: <device> <mountpoint> <fstype> <options> <dump> <pass>
         let mut cols = line.splitn(3, ' ');
-        let dev = match cols.next() { Some(d) => d, None => continue };
-        let mnt = match cols.next() { Some(m) => m, None => continue };
+        let dev = match cols.next() {
+            Some(d) => d,
+            None => continue,
+        };
+        let mnt = match cols.next() {
+            Some(m) => m,
+            None => continue,
+        };
         if dev == dev_str.as_ref() {
             return Some(mnt.to_string());
         }
@@ -308,7 +315,8 @@ impl ServiceController {
         log::info!("Policy loaded");
 
         // Load local certificates for the CA
-        let (_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq) = match load_certificates(config) {
+        let (_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq) = match load_certificates(config)
+        {
             Ok(c) => c,
             Err(e) => {
                 return Err(anyhow!(
@@ -364,8 +372,10 @@ impl ServiceController {
     /// * `update` - Contains the device ID and new authorization status
     pub fn request_usb_update(&mut self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
         // Enforce write policy: reject AllowRW if the admin disabled it.
-        if matches!(update.authorization, UsbAuthorization::AllowRW | UsbAuthorization::AllowAll)
-            && !self.policy.allow_user_file_write
+        if matches!(
+            update.authorization,
+            UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
+        ) && !self.policy.allow_user_file_write
         {
             return Err(anyhow!(
                 "request_usb_update: elevation to {:?} refused — allow_user_file_write=false",
@@ -385,7 +395,9 @@ impl ServiceController {
         } else if self.unmounted_usb.contains_key(&device_key)
             && matches!(
                 update.authorization,
-                UsbAuthorization::AllowRead | UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
+                UsbAuthorization::AllowRead
+                    | UsbAuthorization::AllowRW
+                    | UsbAuthorization::AllowAll
             )
         {
             // Blocked but not yet mounted: this is a user override request.
@@ -622,7 +634,10 @@ impl ServiceController {
                 continue;
             }
             // .krp files are always allowed; no need to cache them.
-            if path.extension().map_or(false, |e| e.eq_ignore_ascii_case("krp")) {
+            if path
+                .extension()
+                .map_or(false, |e| e.eq_ignore_ascii_case("krp"))
+            {
                 continue;
             }
             match self.validate_file(&path) {
@@ -679,7 +694,10 @@ impl ServiceController {
             let update = UsbUpdateMessage {
                 code: GuiMessageCode::UsbUpdateMessage,
                 device: device.device_id.to_string_lossy().into_owned(),
-                path: p.device.mnt_point.as_ref()
+                path: p
+                    .device
+                    .mnt_point
+                    .as_ref()
                     .map(|m| m.to_string_lossy().into_owned())
                     .unwrap_or_default(),
                 name: p.device.get_name(),
@@ -699,10 +717,7 @@ impl ServiceController {
     /// Return the device IDs of all entries in `unmounted_usb` whose
     /// `usb_syspath` starts with `prefix`.  Used to find which tracked blocked
     /// devices belong to a USB parent that is being physically unplugged.
-    pub fn unmounted_usb_ids_with_syspath_prefix(
-        &self,
-        prefix: &Path,
-    ) -> Vec<OsString> {
+    pub fn unmounted_usb_ids_with_syspath_prefix(&self, prefix: &Path) -> Vec<OsString> {
         self.unmounted_usb
             .iter()
             .filter(|(_, p)| {
@@ -720,7 +735,10 @@ impl ServiceController {
     /// Used when a physical unplug is detected for a previously deauthorized device.
     pub fn force_remove_usb(&mut self, device_id: &OsString) {
         if self.unmounted_usb.remove(device_id).is_some() {
-            info!("force_remove_usb: removed {:?} after physical unplug", device_id);
+            info!(
+                "force_remove_usb: removed {:?} after physical unplug",
+                device_id
+            );
         }
     }
 
@@ -738,7 +756,10 @@ impl ServiceController {
                 auth: UsbAuthorization::Block,
             };
             if let Err(e) = self.file_filter.update_usb_auth(&block_policy) {
-                warn!("remove_usb: failed to remove fanotify mark for {:?}: {e}", device_id);
+                warn!(
+                    "remove_usb: failed to remove fanotify mark for {:?}: {e}",
+                    device_id
+                );
             }
 
             // Evict all pre-validated cache entries and blocked files for this mount.
@@ -749,9 +770,10 @@ impl ServiceController {
             }
             self.blocked_files.remove(&device_id.clone());
 
-            info!("USB device {:?} removed (was mounted at {:?})",
-                device_id,
-                policy.device.mnt_point);
+            info!(
+                "USB device {:?} removed (was mounted at {:?})",
+                device_id, policy.device.mnt_point
+            );
         } else if let Some(policy) = self.unmounted_usb.get(device_id) {
             if policy.auth == UsbAuthorization::Block {
                 // This remove event was triggered by our own kernel-level
@@ -784,13 +806,17 @@ impl ServiceController {
     ///
     /// * `path` - Path to the file
     /// * `write` - If write access is requested
-    pub fn authorize_file(&mut self, file: &FilteredFile, _write: bool) -> Result<bool, anyhow::Error> {
+    pub fn authorize_file(
+        &mut self,
+        file: &FilteredFile,
+        _write: bool,
+    ) -> Result<bool, anyhow::Error> {
         let file_path = match &file.path {
             Some(p) => {
                 let mut pb = PathBuf::new();
                 pb.push(&p);
                 pb
-            },
+            }
             None => {
                 return Err(anyhow!("Invalid file"));
             }
@@ -822,7 +848,10 @@ impl ServiceController {
         // file, which generates a new FAN_OPEN_PERM event that the single-threaded
         // fanotify event loop cannot process while it is already handling this event
         // → deadlock.  .krp files contain only signatures/digests, not user data.
-        if file_path.extension().map_or(false, |e| e.eq_ignore_ascii_case("krp")) {
+        if file_path
+            .extension()
+            .map_or(false, |e| e.eq_ignore_ascii_case("krp"))
+        {
             return Ok(true);
         }
 
@@ -945,7 +974,7 @@ impl ServiceController {
     }
 
     /// Check a file
-    /// 
+    ///
     /// # Return value
     ///  - If it is a normal file, try to find the corresponding station report
     ///     - If there is none, return False
@@ -1079,7 +1108,10 @@ impl ServiceController {
             list.retain(|p| p != &file_path);
         }
         self.validated_files.insert(file_path);
-        info!("authorize_blocked_file: authorized {:?} on {:?}", path, device_id);
+        info!(
+            "authorize_blocked_file: authorized {:?} on {:?}",
+            path, device_id
+        );
         Ok(())
     }
 
@@ -1098,7 +1130,7 @@ impl ServiceController {
             Some(dev_policy) => {
                 // Return the authorization status for the device
                 Ok(dev_policy.auth)
-            },
+            }
             None => {
                 // no mounted device exists, return an error
                 Err(anyhow!("No device found"))
@@ -1111,7 +1143,8 @@ impl ServiceController {
     /// Used on Windows to answer `SCAN_USB` requests from the minifilter,
     /// after the NT volume path has been reverse-resolved to a DOS drive letter.
     pub fn get_usb_auth_by_mount(&self, mnt_point: &OsString) -> Option<UsbAuthorization> {
-        self.mounted_usb.values()
+        self.mounted_usb
+            .values()
             .find(|p| p.device.mnt_point.as_ref() == Some(mnt_point))
             .map(|p| p.auth)
     }
@@ -1252,7 +1285,7 @@ impl ServiceController {
                 device: String::from(usb.device.device_id.to_string_lossy()),
                 path: String::default(),
                 name: usb.device.get_name(),
-                authorization: usb.auth
+                authorization: usb.auth,
             };
 
             let _ = self.gui.send_usb_update(&update);
@@ -1264,7 +1297,7 @@ impl ServiceController {
                 device: String::from(usb.device.device_id.to_string_lossy()),
                 path: String::default(),
                 name: usb.device.get_name(),
-                authorization: usb.auth
+                authorization: usb.auth,
             };
 
             let _ = self.gui.send_usb_update(&update);
@@ -1277,10 +1310,10 @@ impl ServiceController {
     /// the registry (Windows only — the daemon runs as SYSTEM).
     pub fn update_policy(&mut self, msg: &PolicyUpdateMessage) -> Result<(), anyhow::Error> {
         let new_policy = SecurityPolicy {
-            disable_unsigned_usb:       msg.disable_unsigned_usb,
+            disable_unsigned_usb: msg.disable_unsigned_usb,
             allow_user_usb_authorization: msg.allow_user_usb_authorization,
-            allow_user_file_read:       msg.allow_user_file_read,
-            allow_user_file_write:      msg.allow_user_file_write,
+            allow_user_file_read: msg.allow_user_file_read,
+            allow_user_file_write: msg.allow_user_file_write,
         };
         #[cfg(target_os = "windows")]
         write_policy_settings(&new_policy)?;

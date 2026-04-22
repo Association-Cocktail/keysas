@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use std::fs;
-use x509_cert::Certificate;
 use x509_cert::der::DecodePem;
+use x509_cert::Certificate;
 
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, PublicKeys};
 
@@ -43,7 +43,15 @@ pub fn load_security_policy(config: &Config) -> Result<SecurityPolicy, anyhow::E
 
 pub fn load_certificates(
     config: &Config,
-) -> Result<(KeysasHybridPubKeys, KeysasHybridPubKeys, Certificate, Certificate), anyhow::Error> {
+) -> Result<
+    (
+        KeysasHybridPubKeys,
+        KeysasHybridPubKeys,
+        Certificate,
+        Certificate,
+    ),
+    anyhow::Error,
+> {
     let st_ca_pub =
         match KeysasHybridPubKeys::get_pubkeys_from_certs(&config.ca_cert_cl, &config.ca_cert_pq) {
             Ok(Some(pk)) => pk,
@@ -67,13 +75,21 @@ pub fn load_certificates(
         };
 
     // Load the raw station CA certificates for file-report signature validation.
-    let st_cl_bytes = fs::read(&config.ca_cert_cl)
-        .map_err(|e| anyhow!("Cannot read station CA ED25519 certificate {:?}: {e}", &config.ca_cert_cl))?;
+    let st_cl_bytes = fs::read(&config.ca_cert_cl).map_err(|e| {
+        anyhow!(
+            "Cannot read station CA ED25519 certificate {:?}: {e}",
+            &config.ca_cert_cl
+        )
+    })?;
     let st_ca_cert_cl = Certificate::from_pem(&st_cl_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ED25519 certificate: {e}"))?;
 
-    let st_pq_bytes = fs::read(&config.ca_cert_pq)
-        .map_err(|e| anyhow!("Cannot read station CA ML-DSA87 certificate {:?}: {e}", &config.ca_cert_pq))?;
+    let st_pq_bytes = fs::read(&config.ca_cert_pq).map_err(|e| {
+        anyhow!(
+            "Cannot read station CA ML-DSA87 certificate {:?}: {e}",
+            &config.ca_cert_pq
+        )
+    })?;
     let st_ca_cert_pq = Certificate::from_pem(&st_pq_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ML-DSA87 certificate: {e}"))?;
 

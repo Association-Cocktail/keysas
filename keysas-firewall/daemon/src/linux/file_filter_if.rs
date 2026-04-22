@@ -32,7 +32,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::controller::{FilePolicy, FilteredFile, ServiceController, UsbAuthorization, UsbDevicePolicy};
+use crate::controller::{
+    FilePolicy, FilteredFile, ServiceController, UsbAuthorization, UsbDevicePolicy,
+};
 use crate::file_filter_if::FileFilterInterface;
 
 #[derive(Debug, Clone)]
@@ -96,13 +98,8 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                     break;
                 }
 
-                let ret = unsafe {
-                    libc::read(
-                        fan_fd,
-                        buf.as_mut_ptr() as *mut libc::c_void,
-                        buf.len(),
-                    )
-                };
+                let ret =
+                    unsafe { libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
 
                 if ret < 0 {
                     let err = std::io::Error::last_os_error();
@@ -121,7 +118,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                     // SAFETY: buffer is large enough and properly aligned via read_unaligned
                     let event: libc::fanotify_event_metadata = unsafe {
                         std::ptr::read_unaligned(
-                            buf.as_ptr().add(offset) as *const libc::fanotify_event_metadata,
+                            buf.as_ptr().add(offset) as *const libc::fanotify_event_metadata
                         )
                     };
 
@@ -175,7 +172,11 @@ impl FileFilterInterface for LinuxFileFilterInterface {
 
                         let response = libc::fanotify_response {
                             fd: event.fd,
-                            response: if allow { libc::FAN_ALLOW } else { libc::FAN_DENY },
+                            response: if allow {
+                                libc::FAN_ALLOW
+                            } else {
+                                libc::FAN_DENY
+                            },
                         };
 
                         let fan_fd_now = fd_arc.load(Ordering::Relaxed);
@@ -224,9 +225,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
 
         let add_mark = matches!(
             update.auth,
-            UsbAuthorization::AllowRead
-                | UsbAuthorization::AllowRW
-                | UsbAuthorization::AllowAll
+            UsbAuthorization::AllowRead | UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
         );
 
         let path_cstr = CString::new(mnt_point.as_os_str().as_bytes())

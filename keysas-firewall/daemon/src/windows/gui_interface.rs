@@ -21,17 +21,17 @@
 #![warn(deprecated)]
 #![warn(unused_imports)]
 
-use std::sync::{Arc, Mutex, RwLock};
 use anyhow::anyhow;
 use log::*;
 use rust_i18n::t;
+use std::sync::{Arc, Mutex, RwLock};
 
 use windows::core::PCSTR;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::controller::{ServiceController, FileAuthorization, UsbAuthorization};
+use crate::controller::{FileAuthorization, ServiceController, UsbAuthorization};
 use crate::gui_interface::{
-    GuiInterface, PolicyUpdateMessage, UsbUpdateMessage, FileUpdateMessage, UsbFileListRequest
+    FileUpdateMessage, GuiInterface, PolicyUpdateMessage, UsbFileListRequest, UsbUpdateMessage,
 };
 
 /// Name of the communication pipe
@@ -40,13 +40,13 @@ const TRAY_PIPE: &str = r"\\.\mailslot\keysas\app-to-service";
 
 #[derive(Debug)]
 pub struct WindowsGuiInterface {
-    is_running: Arc<RwLock<bool>>
+    is_running: Arc<RwLock<bool>>,
 }
 
 impl WindowsGuiInterface {
     pub fn init() -> Result<WindowsGuiInterface, anyhow::Error> {
         Ok(WindowsGuiInterface {
-            is_running: Arc::new(RwLock::new(false))
+            is_running: Arc::new(RwLock::new(false)),
         })
     }
 }
@@ -72,7 +72,8 @@ impl GuiInterface for WindowsGuiInterface {
             loop {
                 while let Ok(Some(msg)) = libmailslot::read_mailslot(&server) {
                     // Try to read a file update message
-                    if let Ok(update) = serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes()) {
+                    if let Ok(update) = serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
+                    {
                         {
                             let controller = ctrl_hdl.lock().unwrap();
                             if let Err(e) = controller.request_file_update(&update) {
@@ -81,27 +82,31 @@ impl GuiInterface for WindowsGuiInterface {
                         }
                     }
                     // Try to read a usb update message
-                    else if let Ok(update) = serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes()) {
+                    else if let Ok(update) =
+                        serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
+                    {
                         {
                             if let Err(e) = ctrl_hdl.lock().unwrap().request_usb_update(&update) {
                                 error!("Failed to handle usb update request: {e}");
                             }
                         }
-                    } 
+                    }
                     // Try to read Usb and Files list request
-                    else if let Ok(_req) = serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes()) {
+                    else if let Ok(_req) =
+                        serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes())
+                    {
                         let controller = ctrl_hdl.lock().unwrap();
                         if let Err(e) = controller.send_usb_file_list() {
                             error!("Failed to send usb and file listt: {e}");
                         }
-                    }
-                    else if let Ok(req) = serde_json::from_slice::<PolicyUpdateMessage>(msg.as_bytes()) {
+                    } else if let Ok(req) =
+                        serde_json::from_slice::<PolicyUpdateMessage>(msg.as_bytes())
+                    {
                         let mut controller = ctrl_hdl.lock().unwrap();
                         if let Err(e) = controller.update_policy(&req) {
                             error!("Failed to update policy settings: {e}");
                         }
-                    }
-                    else {
+                    } else {
                         warn!("Message from tray app not recognized");
                     }
                 }
@@ -131,7 +136,7 @@ impl GuiInterface for WindowsGuiInterface {
             Ok(m) => m,
             Err(e) => return Err(anyhow!("Failed to serialize message: {e}")),
         };
-    
+
         if let Err(e) = libmailslot::write_mailslot(SERVICE_PIPE, &msg_vec) {
             return Err(anyhow!("Failed to post message to the mailslot: {e}"));
         }
@@ -149,7 +154,7 @@ impl GuiInterface for WindowsGuiInterface {
             Ok(m) => m,
             Err(e) => return Err(anyhow!("Failed to serialize message: {e}")),
         };
-    
+
         if let Err(e) = libmailslot::write_mailslot(SERVICE_PIPE, &msg_vec) {
             return Err(anyhow!("Failed to post message to the mailslot: {e}"));
         }
@@ -166,7 +171,7 @@ impl GuiInterface for WindowsGuiInterface {
         let auth_request = match file.authorization {
             FileAuthorization::AllowRead => {
                 t!("user_file_auth_read_req", "path" => file.path, "usb" => file.device)
-            },
+            }
             FileAuthorization::AllowRW => {
                 t!("user_file_auth_write_req", "path" => file.path, "usb" => file.device)
             }
@@ -187,13 +192,13 @@ impl GuiInterface for WindowsGuiInterface {
         let auth_request = match usb.authorization {
             UsbAuthorization::AllowRead => {
                 t!("user_usb_auth_read_req", "mount" => usb.path, "usb" => usb.name)
-            },
+            }
             UsbAuthorization::AllowRW => {
                 t!("user_usb_auth_write_req", "mount" => usb.path, "usb" => usb.name)
-            },
+            }
             UsbAuthorization::AllowAll => {
                 t!("user_usb_auth_all_req", "mount" => usb.path, "usb" => usb.name)
-            },
+            }
             _ => {
                 return Err(anyhow!("Unvalid authorization request"));
             }
@@ -221,9 +226,6 @@ fn display_auth_request(request: PCSTR) -> Result<bool, anyhow::Error> {
     } {
         IDYES => Ok(true),
         IDNO => Ok(false),
-        status => Err(anyhow!(format!(
-            "Unknown Authorization: {:?}",
-            status
-        ))),
+        status => Err(anyhow!(format!("Unknown Authorization: {:?}", status))),
     }
 }

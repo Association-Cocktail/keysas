@@ -9,13 +9,13 @@
 //! It interfaces a minifilter that intercepts IRP_MJ_CREATE (file opent) and
 //!  IRP_MJ_WRITE (file modification) requests to the filesystem. The calls
 //!  between the minifilter and the interface are the following:
-//! 
+//!
 //! - When a new volume is detected and a new minifilter instance is created, the
 //!  minifilter requests the default authorization policiy for the volume
 //!
 //! ```text
 //!     Minifilter                      Filter IF                 Controller
-//!     ──────────                      ─────────                 ────────── 
+//!     ──────────                      ─────────                 ──────────
 //!         │      scan_usb(mnt_point)      │                          │
 //!         │ ────────────────────────────► │  get_usb_auth(mnt_point) │
 //!         │                               │ ───────────────────────► │
@@ -24,13 +24,13 @@
 //! ```
 //! The filter asks the controller for the default policy, if the Controller does
 //!  not have a policy for the volume it blocks it by default
-//! 
+//!
 //! - When a new file is detected on a volume in [AllowRead](crate::controller::UsbAuthorization)
 //!  and [AllowRW](crate::controller::UsbAuthorization), the minifilter asks the policy to apply for the file.
 //!
 //! ```text
 //!     Minifilter                      Filter IF                   Controller
-//!     ──────────                      ─────────                   ────────── 
+//!     ──────────                      ─────────                   ──────────
 //!         │   scan_file(path, file_id)  │                             │
 //!         │ ──────────────────────────► │ authorize_file(file, write) │
 //!         │                             │ ──────────────────────────► │
@@ -39,24 +39,24 @@
 //! ```
 //! The filter asks the controller for the policy to apply, if an error occur the
 //!  default policy is set to [Block](crate::controller::FileAuthorization)
-//! 
+//!
 //! - When the policy for a file is updated
 //!
 //! ```text
 //!     Controller                      Filter IF                 Minifilter
-//!     ──────────                      ─────────                 ────────── 
+//!     ──────────                      ─────────                 ──────────
 //!         │  update_file_auth(update)  │                            │
 //!         │ ─────────────────────────► │   update(file_id, auth)    │
 //!         │                            │ ─────────────────────────► │
 //!         │                            │ ◄─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
 //!         │ ◄─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │                            │
 //! ```
-//! 
+//!
 //! - When the policy is updated for a volume
-//! 
+//!
 //! ```text
 //!     Controller                      Filter IF                 Minifilter
-//!     ──────────                      ─────────                 ────────── 
+//!     ──────────                      ─────────                 ──────────
 //!         │  update_usb_auth(update)   │                            │
 //!         │ ─────────────────────────► │  update(mnt_point, auth)   │
 //!         │                            │ ─────────────────────────► │
@@ -79,21 +79,24 @@
 #![warn(unused_imports)]
 
 use anyhow::anyhow;
+use std::ffi::{c_void, OsString};
 use std::mem::size_of;
-use std::thread;
-use std::ffi::{OsString, c_void};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use widestring::U16CString;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::Storage::InstallableFileSystems::{
-    FilterConnectCommunicationPort, FilterGetMessage, FILTER_MESSAGE_HEADER, FILTER_REPLY_HEADER, FilterReplyMessage,
-    FilterSendMessage
-};
-use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
 use windows::Win32::Foundation::{GetLastError, STATUS_SUCCESS};
+use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
+use windows::Win32::Storage::InstallableFileSystems::{
+    FilterConnectCommunicationPort, FilterGetMessage, FilterReplyMessage, FilterSendMessage,
+    FILTER_MESSAGE_HEADER, FILTER_REPLY_HEADER,
+};
 
-use crate::controller::{FileAuthorization, FilteredFile, ServiceController, FilePolicy, UsbDevicePolicy, UsbAuthorization};
+use crate::controller::{
+    FileAuthorization, FilePolicy, FilteredFile, ServiceController, UsbAuthorization,
+    UsbDevicePolicy,
+};
 use crate::file_filter_if::FileFilterInterface;
 
 // C enum values from KEYSAS_FILTER_OPERATION in keysasCommunication.h
@@ -167,19 +170,17 @@ fn query_dos_device(drive: &str) -> Result<String, anyhow::Error> {
         .map_err(|e| anyhow!("Invalid drive name '{}': {}", drive, e))?;
     let mut buf = vec![0u16; 512];
 
-    let len = unsafe {
-        QueryDosDeviceW(
-            PCWSTR(drive_wide.as_ptr()),
-            Some(&mut buf),
-        )
-    };
+    let len = unsafe { QueryDosDeviceW(PCWSTR(drive_wide.as_ptr()), Some(&mut buf)) };
 
     if len == 0 {
         let err = unsafe { GetLastError() };
         return Err(anyhow!("QueryDosDeviceW failed for '{}': {:?}", drive, err));
     }
 
-    let end = buf[..len as usize].iter().position(|&c| c == 0).unwrap_or(len as usize);
+    let end = buf[..len as usize]
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(len as usize);
     String::from_utf16(&buf[..end]).map_err(|e| anyhow!("NT path encoding error: {e}"))
 }
 
@@ -214,8 +215,8 @@ impl FileFilterInterface for WindowsFileFilterInterface {
             // Pre-compute the request and response sizes.
             // UserReply.result is u8 (1 byte); the filter manager strips the header.
             let request_size = u32::try_from(size_of::<DriverRequest>())?;
-            let reply_size = u32::try_from(size_of::<FILTER_REPLY_HEADER>())?
-                + u32::try_from(size_of::<u8>())?;
+            let reply_size =
+                u32::try_from(size_of::<FILTER_REPLY_HEADER>())? + u32::try_from(size_of::<u8>())?;
 
             loop {
                 // Wait for a request from the driver.
@@ -249,9 +250,9 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                             .iter()
                             .position(|&c| c == 0)
                             .unwrap_or(request.content.len() - 16);
-                        file.path = Some(OsString::from(
-                            String::from_utf16_lossy(&request.content[16..16 + end])
-                        ));
+                        file.path = Some(OsString::from(String::from_utf16_lossy(
+                            &request.content[16..16 + end],
+                        )));
 
                         let result = {
                             let mut ctrl = ctrl_hdl.lock().unwrap();
@@ -264,14 +265,19 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                                 }
                             }
                         };
-                        println!("SCAN_FILE -> {:?} (kernel={})", result, result.to_kernel_u8());
+                        println!(
+                            "SCAN_FILE -> {:?} (kernel={})",
+                            result,
+                            result.to_kernel_u8()
+                        );
                         result.to_kernel_u8()
                     }
 
                     SCAN_USB => {
                         // content = [nt_volume_name (utf16, null-terminated)]
                         // e.g. "\Device\HarddiskVolume3"
-                        let end = request.content
+                        let end = request
+                            .content
                             .iter()
                             .position(|&c| c == 0)
                             .unwrap_or(request.content.len());
@@ -339,7 +345,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                 msg.len().try_into()?,
                 None,
                 0,
-                &mut nb_bytes_ret as *mut u32
+                &mut nb_bytes_ret as *mut u32,
             ) {
                 let err = GetLastError();
                 log::error!("update_file_auth FilterSendMessage failed: {:?}", err);
@@ -375,12 +381,20 @@ impl FileFilterInterface for WindowsFileFilterInterface {
         // Resolve "D:" -> "\Device\HarddiskVolume3"
         let nt_path = query_dos_device(drive)?;
 
-        log::info!("update_usb_auth: {} -> {} auth={}", drive, nt_path, update.auth.to_kernel_u8());
+        log::info!(
+            "update_usb_auth: {} -> {} auth={}",
+            drive,
+            nt_path,
+            update.auth.to_kernel_u8()
+        );
 
         // Build message: [0x02 | auth_u8 | nt_path_utf16_null_terminated]
         // auth_byte must use the kernel KEYSAS_AUTHORIZATION values.
         let auth_byte = update.auth.to_kernel_u8();
-        let nt_wide: Vec<u16> = nt_path.encode_utf16().chain(std::iter::once(0u16)).collect();
+        let nt_wide: Vec<u16> = nt_path
+            .encode_utf16()
+            .chain(std::iter::once(0u16))
+            .collect();
 
         let mut msg: Vec<u8> = Vec::with_capacity(2 + nt_wide.len() * 2);
         msg.push(MSG_USB_AUTH);
@@ -397,7 +411,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                 msg.len().try_into()?,
                 None,
                 0,
-                &mut nb_bytes_ret as *mut u32
+                &mut nb_bytes_ret as *mut u32,
             ) {
                 let err = GetLastError();
                 log::error!("update_usb_auth FilterSendMessage failed: {:?}", err);

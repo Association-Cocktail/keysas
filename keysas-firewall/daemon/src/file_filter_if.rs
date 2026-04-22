@@ -48,7 +48,7 @@
 //!              │            Auth_status/error           │ Check USB auth
 //!              │ ◄─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │
 //! ```
-//! The filter can request the authorization status for a USB device so that it 
+//! The filter can request the authorization status for a USB device so that it
 //! can set the default policy for all files on the device. The request is done
 //! with the mount point of the filesystem.
 
@@ -70,7 +70,7 @@ use cfg_if::cfg_if;
 use std::boxed::Box;
 use std::sync::{Arc, Mutex};
 
-use crate::controller::{ServiceController, FilePolicy, UsbDevicePolicy};
+use crate::controller::{FilePolicy, ServiceController, UsbDevicePolicy};
 
 #[cfg(target_os = "windows")]
 use crate::windows::file_filter_if::WindowsFileFilterInterface;

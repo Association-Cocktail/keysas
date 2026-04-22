@@ -453,6 +453,7 @@
         referenced in the sequence, so they must also be declared here.
       -->
       <DialogRef Id='ProgressDlg'/>
+      <DialogRef Id='ExitDlg'/>
 
       <!--
         Override the InstallUISequence entries added by WixUI_Minimal.

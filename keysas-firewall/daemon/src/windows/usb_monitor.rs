@@ -39,10 +39,10 @@
 #![warn(deprecated)]
 #![warn(unused_imports)]
 
+use anyhow::anyhow;
 use std::{
     collections::HashSet,
     ffi::OsString,
-    mem,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -50,22 +50,20 @@ use std::{
     thread,
     time::Duration,
 };
-use anyhow::anyhow;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetDriveTypeW, GetLogicalDrives, ReadFile, SetFileAttributesW,
-    SetFilePointerEx, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, GetDriveTypeW, GetLogicalDrives, ReadFile, SetFileAttributesW, SetFilePointerEx,
+    FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_BEGIN, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    OPEN_EXISTING,
+};
+use windows::Win32::System::Ioctl::{
+    PropertyStandardQuery, StorageDeviceProperty, FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME,
+    IOCTL_STORAGE_EJECT_MEDIA, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_DESCRIPTOR,
+    STORAGE_PROPERTY_QUERY, VOLUME_DISK_EXTENTS,
 };
 use windows::Win32::System::IO::DeviceIoControl;
-use windows::Win32::System::Ioctl::{
-    FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME, IOCTL_STORAGE_EJECT_MEDIA,
-    IOCTL_STORAGE_QUERY_PROPERTY,
-    STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, PropertyStandardQuery,
-    StorageDeviceProperty, VOLUME_DISK_EXTENTS,
-};
 
 // Raw constants not exposed by windows 0.52 under the expected module paths.
 // Values from the Windows SDK headers.
@@ -114,10 +112,8 @@ fn hide_krp_files(root: &str) {
                     .chain(std::iter::once(0u16))
                     .collect();
                 unsafe {
-                    if let Err(e) = SetFileAttributesW(
-                        PCWSTR(wide.as_ptr()),
-                        FILE_ATTRIBUTE_HIDDEN,
-                    ) {
+                    if let Err(e) = SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_HIDDEN)
+                    {
                         log::warn!("hide_krp_files: SetFileAttributesW({:?}) failed: {e}", path);
                     } else {
                         log::debug!("hide_krp_files: hid {:?}", path);
@@ -195,7 +191,9 @@ fn get_physical_drive_number(drive_letter: char) -> Result<u32, anyhow::Error> {
             None,
         )
     };
-    unsafe { let _ = CloseHandle(handle); }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
     result?;
 
     if vde.NumberOfDiskExtents == 0 {
@@ -208,9 +206,7 @@ fn get_physical_drive_number(drive_letter: char) -> Result<u32, anyhow::Error> {
 /// `IOCTL_STORAGE_QUERY_PROPERTY / StorageDeviceProperty`.
 ///
 /// Returns empty strings for fields the device does not expose.
-fn get_device_info(
-    drive_letter: char,
-) -> Result<(String, String, String, String), anyhow::Error> {
+fn get_device_info(drive_letter: char) -> Result<(String, String, String, String), anyhow::Error> {
     let path = to_wide(&format!("\\\\.\\{drive_letter}:"));
     let handle = unsafe {
         CreateFileW(
@@ -244,7 +240,9 @@ fn get_device_info(
             None,
         )
     };
-    unsafe { let _ = CloseHandle(handle); }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
     result?;
 
     if (bytes_returned as usize) < size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
@@ -303,14 +301,11 @@ fn read_signature(disk_number: u32) -> Result<Option<String>, anyhow::Error> {
 
     let result = unsafe {
         SetFilePointerEx(handle, 512i64, None, FILE_BEGIN)?;
-        ReadFile(
-            handle,
-            Some(&mut buf),
-            Some(&mut bytes_read),
-            None,
-        )
+        ReadFile(handle, Some(&mut buf), Some(&mut bytes_read), None)
     };
-    unsafe { let _ = CloseHandle(handle); }
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
     result?;
 
     if bytes_read < 4 {
@@ -320,9 +315,7 @@ fn read_signature(disk_number: u32) -> Result<Option<String>, anyhow::Error> {
     }
 
     let sig_size = u32::from_be_bytes(buf[0..4].try_into()?);
-    log::info!(
-        "Signature size read at offset 512 on PhysicalDrive{disk_number}: {sig_size} bytes"
-    );
+    log::info!("Signature size read at offset 512 on PhysicalDrive{disk_number}: {sig_size} bytes");
 
     // Size 0 → unsigned device; > 7684 → corrupt / not a Keysas device.
     if sig_size == 0 || sig_size > 7684 {
@@ -360,17 +353,38 @@ fn eject_volume(drive_letter: char) -> Result<(), anyhow::Error> {
     let mut returned = 0u32;
     unsafe {
         if let Err(e) = DeviceIoControl(
-            handle, FSCTL_LOCK_VOLUME, None, 0, None, 0, Some(&mut returned), None,
+            handle,
+            FSCTL_LOCK_VOLUME,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut returned),
+            None,
         ) {
             log::warn!("FSCTL_LOCK_VOLUME on {drive_letter}: {e} (continuing)");
         }
         if let Err(e) = DeviceIoControl(
-            handle, FSCTL_DISMOUNT_VOLUME, None, 0, None, 0, Some(&mut returned), None,
+            handle,
+            FSCTL_DISMOUNT_VOLUME,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut returned),
+            None,
         ) {
             log::warn!("FSCTL_DISMOUNT_VOLUME on {drive_letter}: {e} (continuing)");
         }
         if let Err(e) = DeviceIoControl(
-            handle, IOCTL_STORAGE_EJECT_MEDIA, None, 0, None, 0, Some(&mut returned), None,
+            handle,
+            IOCTL_STORAGE_EJECT_MEDIA,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut returned),
+            None,
         ) {
             log::warn!("IOCTL_STORAGE_EJECT_MEDIA on {drive_letter}: {e} (continuing)");
         }
@@ -407,9 +421,7 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
     let signature = match read_signature(disk_number) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!(
-                "Failed to read signature from PhysicalDrive{disk_number}: {e} — ejecting"
-            );
+            log::warn!("Failed to read signature from PhysicalDrive{disk_number}: {e} — ejecting");
             let _ = eject_volume(drive_letter);
             return;
         }
@@ -433,7 +445,11 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
          model={model:?} revision={revision:?}"
     );
 
-    let authorized = match ctrl.lock().unwrap().authorize_usb(&device, signature.as_deref()) {
+    let authorized = match ctrl
+        .lock()
+        .unwrap()
+        .authorize_usb(&device, signature.as_deref())
+    {
         Ok(auth) => auth,
         Err(e) => {
             log::warn!("Failed to authorize USB device: {e} — ejecting");
@@ -455,9 +471,7 @@ fn handle_new_drive(drive_letter: char, ctrl: &Arc<Mutex<ServiceController>>) {
             // invisible in Windows Explorer (FILE_ATTRIBUTE_HIDDEN), consistent
             // with the dot-prefix convention used on Linux.
             hide_krp_files(&format!("{drive_letter}:\\"));
-            log::info!(
-                "Certified USB PhysicalDrive{disk_number} accessible at {drive_letter}:\\"
-            );
+            log::info!("Certified USB PhysicalDrive{disk_number} accessible at {drive_letter}:\\");
         }
     } else {
         // When user override is allowed by policy, keep the drive accessible at

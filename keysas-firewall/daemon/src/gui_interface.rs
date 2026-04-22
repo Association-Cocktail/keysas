@@ -44,7 +44,7 @@
 //! current authorization status set to Pending. Also the request contains the
 //! new authorization status requested from the user. The users' response is a
 //! boolean indicating the approval state of the request.
-//! 
+//!
 //! - Request list of files and usb devices from GUI to the controller
 //!
 //! ```text
@@ -67,7 +67,7 @@
 //! ```
 //! On request for the list, the controller sends all the USB devices and files
 //!  in separate [UsbUpdateMessage] and [FileUpdateMessage].
-//! 
+//!
 //! - Authorization update from the user to the daemon
 //!
 //! ```text
@@ -167,12 +167,14 @@ pub struct FileUpdateMessage {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct UsbFileListRequest {
     /// Message code for the request, should be UsbFileListRequest
-    pub code: GuiMessageCode
+    pub code: GuiMessageCode,
 }
 
 impl Default for UsbFileListRequest {
     fn default() -> UsbFileListRequest {
-        UsbFileListRequest{code: GuiMessageCode::UsbFileListRequest}
+        UsbFileListRequest {
+            code: GuiMessageCode::UsbFileListRequest,
+        }
     }
 }
 

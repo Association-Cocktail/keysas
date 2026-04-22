@@ -88,7 +88,10 @@ fn get_logged_in_username() -> Option<String> {
     for entry in entries.flatten() {
         let uid_str = entry.file_name().to_string_lossy().to_string();
         // Skip root and system accounts (uid < 1000 on Linux — e.g. gdm uid=120).
-        let uid: u32 = match uid_str.parse() { Ok(u) => u, Err(_) => continue };
+        let uid: u32 = match uid_str.parse() {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
         if uid < 1000 {
             continue;
         }
@@ -181,7 +184,8 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
     };
     log::info!(
         "Reading signature from raw device {:?} (partition: {:?})",
-        raw_device, devnode
+        raw_device,
+        devnode
     );
     // Try to extract a signature
     let mut f = File::open(&raw_device)?;
@@ -216,10 +220,7 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
 ///  4. Call `udisksctl mount` as the logged-in user via `runuser`.
 ///
 /// Returns the mount point string on success.
-fn mount_certified_via_udisks(
-    devnode: &OsStr,
-    dev_name: &str,
-) -> Result<String, anyhow::Error> {
+fn mount_certified_via_udisks(devnode: &OsStr, dev_name: &str) -> Result<String, anyhow::Error> {
     // ── Phase 1: write sentinel and signal udev ──────────────────────────────
     let certified_dir = "/run/keysas/certified";
     let sentinel = format!("{}/{}", certified_dir, dev_name);
@@ -239,12 +240,13 @@ fn mount_certified_via_udisks(
         .status();
 
     // ── Phase 2: mount as logged-in user ─────────────────────────────────────
-    let username = get_logged_in_username()
-        .ok_or_else(|| anyhow!("No active user session found"))?;
+    let username =
+        get_logged_in_username().ok_or_else(|| anyhow!("No active user session found"))?;
 
     log::info!(
         "Mounting certified USB {:?} via udisks2 as user '{}'",
-        devnode, username
+        devnode,
+        username
     );
 
     let out = std::process::Command::new("runuser")
@@ -277,13 +279,9 @@ fn mount_certified_via_udisks(
 
 /// Fallback: mount directly at `/run/keysas/media/<devname>` for headless
 /// systems where no user session is available.
-fn mount_certified_headless(
-    devnode: &OsStr,
-    dev_name: &str,
-) -> Result<String, anyhow::Error> {
+fn mount_certified_headless(devnode: &OsStr, dev_name: &str) -> Result<String, anyhow::Error> {
     let mnt_point = format!("/run/keysas/media/{}", dev_name);
-    std::fs::create_dir_all(&mnt_point)
-        .map_err(|e| anyhow!("Cannot create {}: {e}", mnt_point))?;
+    std::fs::create_dir_all(&mnt_point).map_err(|e| anyhow!("Cannot create {}: {e}", mnt_point))?;
 
     let status = std::process::Command::new("mount")
         .args([
@@ -375,8 +373,7 @@ impl UsbMonitor for LinuxUsbMonitor {
                     .property_value(OsStr::new("DEVTYPE"))
                     .map(|v| v.to_os_string());
 
-                let is_partition =
-                    devtype.as_deref() == Some(OsStr::new("partition"));
+                let is_partition = devtype.as_deref() == Some(OsStr::new("partition"));
 
                 // ── Physical unplug of a deauthorized USB device ─────────────
                 // When the kernel deauthorizes a device (writes 0 to authorized),
@@ -404,7 +401,8 @@ impl UsbMonitor for LinuxUsbMonitor {
                         log::info!(
                             "Physical unplug detected for deauthorized device {:?} \
                              (USB parent: {:?})",
-                            id, syspath
+                            id,
+                            syspath
                         );
                         ctrl.force_remove_usb(&id);
                     }
@@ -413,20 +411,13 @@ impl UsbMonitor for LinuxUsbMonitor {
 
                 // ── Remove event: clean up sentinel and notify controller ────
                 if action == Some(OsStr::new("remove")) && is_partition {
-                    let dev_name = event
-                        .device()
-                        .sysname()
-                        .to_string_lossy()
-                        .into_owned();
+                    let dev_name = event.device().sysname().to_string_lossy().into_owned();
 
                     // Remove the certification sentinel (if present)
                     let sentinel = format!("/run/keysas/certified/{}", dev_name);
                     if std::path::Path::new(&sentinel).exists() {
                         let _ = std::fs::remove_file(&sentinel);
-                        log::info!(
-                            "Removed certification sentinel for {}",
-                            dev_name
-                        );
+                        log::info!("Removed certification sentinel for {}", dev_name);
                     }
 
                     // Notify the controller so it can remove the fanotify mark
@@ -468,8 +459,7 @@ impl UsbMonitor for LinuxUsbMonitor {
                         // and deauthorize the device to prevent any kernel-level access.
                         log::warn!("Failed to authorize USB device: {e} — deauthorizing");
                         if let Some(ref syspath) = device.usb_syspath {
-                            let auth_path =
-                                std::path::Path::new(syspath).join("authorized");
+                            let auth_path = std::path::Path::new(syspath).join("authorized");
                             let _ = std::fs::write(&auth_path, b"0\n");
                         }
                         continue;
@@ -490,16 +480,17 @@ impl UsbMonitor for LinuxUsbMonitor {
                     // UDISKS_IGNORE=1, so no automount can race this write.
                     match &device.usb_syspath {
                         Some(syspath) => {
-                            let auth_path =
-                                std::path::Path::new(syspath).join("authorized");
+                            let auth_path = std::path::Path::new(syspath).join("authorized");
                             match std::fs::write(&auth_path, b"0\n") {
                                 Ok(_) => log::info!(
                                     "USB device {:?} deauthorized via {:?}",
-                                    device.device_id, auth_path
+                                    device.device_id,
+                                    auth_path
                                 ),
                                 Err(e) => log::warn!(
                                     "Failed to deauthorize {:?} via {:?}: {e}",
-                                    device.device_id, auth_path
+                                    device.device_id,
+                                    auth_path
                                 ),
                             }
                         }
@@ -523,36 +514,34 @@ impl UsbMonitor for LinuxUsbMonitor {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| "usb".to_string());
 
-                    let mnt_result =
-                        match mount_certified_via_udisks(&device.device_id, &dev_name) {
-                            Ok(mnt) => Ok(mnt),
-                            Err(e) => {
-                                log::warn!(
-                                    "udisks2 mount failed for {:?}: {e} \
+                    let mnt_result = match mount_certified_via_udisks(&device.device_id, &dev_name)
+                    {
+                        Ok(mnt) => Ok(mnt),
+                        Err(e) => {
+                            log::warn!(
+                                "udisks2 mount failed for {:?}: {e} \
                                      — falling back to direct mount",
-                                    device.device_id
-                                );
-                                mount_certified_headless(&device.device_id, &dev_name)
-                            }
-                        };
+                                device.device_id
+                            );
+                            mount_certified_headless(&device.device_id, &dev_name)
+                        }
+                    };
 
                     match mnt_result {
                         Ok(mnt_point) => {
                             device.mnt_point = Some(OsString::from(&mnt_point));
                             log::info!(
                                 "Certified USB {:?} mounted at {}",
-                                device.device_id, mnt_point
+                                device.device_id,
+                                mnt_point
                             );
-                            if let Err(e) =
-                                ctrl_hdl.lock().unwrap().update_usb(&device)
-                            {
+                            if let Err(e) = ctrl_hdl.lock().unwrap().update_usb(&device) {
                                 log::warn!("Failed to update USB mount state: {e}");
                             }
                         }
-                        Err(e) => log::warn!(
-                            "All mount attempts failed for {:?}: {e}",
-                            device.device_id
-                        ),
+                        Err(e) => {
+                            log::warn!("All mount attempts failed for {:?}: {e}", device.device_id)
+                        }
                     }
                 }
             }
