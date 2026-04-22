@@ -360,19 +360,17 @@ jobs:
         if: steps.cache-cargo-wix.outputs.cache-hit != 'true'
         run: cargo install --locked cargo-wix
 
-      - name: Package MSI (cargo wix)
+      - name: Package MSI (custom WiX build)
         shell: pwsh
         working-directory: keysas-firewall/daemon
         run: |
           $minifilterDir = $env:MINIFILTER_PKG_DIR
           if (-not $minifilterDir) { throw "MINIFILTER_PKG_DIR not set — catalog step failed?" }
-          # cargo wix passes WiX preprocessor variables to candle.exe via -C "-dNAME=VALUE".
-          # $(var.Version) is injected automatically from Cargo.toml.
-          cargo wix `
-            -C "-dBinDir=target\x86_64-pc-windows-msvc\release" `
-            -C "-dMinifilterDir=$minifilterDir" `
-            -C "-dTrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release" `
-            --nocapture
+          # Use custom build-msi.ps1 script to properly link WixUIExtension
+          .\build-msi.ps1 `
+            -BinDir "target\x86_64-pc-windows-msvc\release" `
+            -MinifilterDir "$minifilterDir" `
+            -TrayAppBinDir "..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release"
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
