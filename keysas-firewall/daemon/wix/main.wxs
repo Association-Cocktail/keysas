@@ -449,10 +449,10 @@
       <!--
         WiX only includes dialog definitions from WixUIExtension.wixlib when
         they are explicitly referenced by a DialogRef.  WixUI_Minimal already
-        pulls in ErrorDlg, FilesInUse, FatalError and UserExit.  ExitDlg is
-        referenced by a Publish below, so it must also be declared here.
+        pulls in ErrorDlg, FilesInUse, FatalError and UserExit.  ProgressDlg and ExitDlg are
+        referenced in the sequence, so they must also be declared here.
       -->
-      <DialogRef Id='ExitDlg'/>
+      <DialogRef Id='ProgressDlg'/>
 
       <!--
         Override the InstallUISequence entries added by WixUI_Minimal.
@@ -473,6 +473,8 @@
           effectively becomes the first visible dialog on a fresh install.
         -->
         <Show Dialog='PolicySettingsDlg' After='WelcomeEulaDlg'>NOT Installed AND NOT PATCH</Show>
+        <Show Dialog='ProgressDlg' After='PolicySettingsDlg'>NOT Installed AND NOT PATCH</Show>
+        <Show Dialog='ExitDlg' After='ProgressDlg'>1</Show>
       </InstallUISequence>
 
       <!--

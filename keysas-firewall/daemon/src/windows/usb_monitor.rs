@@ -190,7 +190,7 @@ fn get_physical_drive_number(drive_letter: char) -> Result<u32, anyhow::Error> {
             None,
             0,
             Some(&mut vde as *mut _ as *mut std::ffi::c_void),
-            mem::size_of::<VOLUME_DISK_EXTENTS>() as u32,
+            size_of::<VOLUME_DISK_EXTENTS>() as u32,
             Some(&mut bytes_returned),
             None,
         )
@@ -237,7 +237,7 @@ fn get_device_info(
             handle,
             IOCTL_STORAGE_QUERY_PROPERTY,
             Some(&query as *const _ as *const std::ffi::c_void),
-            mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            size_of::<STORAGE_PROPERTY_QUERY>() as u32,
             Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
             buf.len() as u32,
             Some(&mut bytes_returned),
@@ -247,7 +247,7 @@ fn get_device_info(
     unsafe { let _ = CloseHandle(handle); }
     result?;
 
-    if (bytes_returned as usize) < mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
+    if (bytes_returned as usize) < size_of::<STORAGE_DEVICE_DESCRIPTOR>() {
         return Err(anyhow!(
             "STORAGE_DEVICE_DESCRIPTOR too small ({bytes_returned} bytes)"
         ));

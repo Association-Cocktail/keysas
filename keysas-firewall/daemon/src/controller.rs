@@ -553,7 +553,7 @@ impl ServiceController {
             let syspath = device
                 .usb_syspath
                 .ok_or_else(|| anyhow!("No sysfs path for device '{device_id}'"))?;
-            let auth_path = std::path::Path::new(&syspath).join("authorized");
+            let auth_path = Path::new(&syspath).join("authorized");
             std::fs::write(&auth_path, b"1\n").map_err(|e| {
                 anyhow!("Failed to re-authorize '{device_id}' via {auth_path:?}: {e}")
             })?;
@@ -1032,21 +1032,6 @@ impl ServiceController {
 
     /// Spawn a dialog box to ask the user to validate a file or not
     /// Return Ok(true) or Ok(false) accordingly
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Path to the file
-    fn user_authorize_file(&self, path: &Path) -> Result<bool, anyhow::Error> {
-        let req = FileUpdateMessage {
-            code: GuiMessageCode::FileUpdateMessage,
-            device: String::default(),
-            id: [0; 16],
-            path: String::from(path.to_string_lossy()),
-            authorization: FileAuthorization::AllowRead
-        };
-
-        self.gui.request_file_auth(&req)
-    }
 
     /// Return the device_id of the mounted USB device whose mount point is a
     /// prefix of `path`, or `None` if no such device is found.
@@ -1174,7 +1159,7 @@ impl ServiceController {
     /// up the restored devices on its next 5-second polling cycle.
     #[cfg(target_os = "linux")]
     fn recover_mounted_devices(&mut self) {
-        let certified_dir = std::path::Path::new("/run/keysas/certified");
+        let certified_dir = Path::new("/run/keysas/certified");
         if !certified_dir.exists() {
             return;
         }
@@ -1192,7 +1177,7 @@ impl ServiceController {
             let device_id = OsString::from(format!("/dev/{}", dev_name));
 
             // Device unplugged while the daemon was stopped — remove stale sentinel.
-            if !std::path::Path::new(&device_id).exists() {
+            if !Path::new(&device_id).exists() {
                 let _ = std::fs::remove_file(entry.path());
                 info!(
                     "recover_mounted_devices: /dev/{} gone, removed sentinel",
@@ -1233,7 +1218,7 @@ impl ServiceController {
             let policy = UsbDevicePolicy { device, auth };
 
             // Pre-validate all files before placing the fanotify mark.
-            self.pre_validate_mount(std::path::Path::new(&mnt_point));
+            self.pre_validate_mount(Path::new(&mnt_point));
 
             // Re-apply the fanotify mount mark.
             if let Err(e) = self.file_filter.update_usb_auth(&policy) {

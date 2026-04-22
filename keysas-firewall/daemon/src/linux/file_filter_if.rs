@@ -26,7 +26,6 @@
 use anyhow::anyhow;
 use log::*;
 use std::ffi::{CString, OsString};
-use std::mem;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -88,7 +87,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
         let daemon_pid = unsafe { libc::getpid() };
 
         thread::spawn(move || {
-            let event_size = mem::size_of::<libc::fanotify_event_metadata>();
+            let event_size = size_of::<libc::fanotify_event_metadata>();
             let mut buf = vec![0u8; 4096];
 
             loop {
@@ -186,7 +185,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
                                     fan_fd_now,
                                     &response as *const libc::fanotify_response
                                         as *const libc::c_void,
-                                    mem::size_of::<libc::fanotify_response>(),
+                                    size_of::<libc::fanotify_response>(),
                                 );
                             }
                         }
@@ -242,7 +241,7 @@ impl FileFilterInterface for LinuxFileFilterInterface {
         let ret = unsafe {
             libc::fanotify_mark(
                 fan_fd,
-                flags as libc::c_uint,
+                flags,
                 libc::FAN_OPEN_PERM,
                 libc::AT_FDCWD,
                 path_cstr.as_ptr(),
