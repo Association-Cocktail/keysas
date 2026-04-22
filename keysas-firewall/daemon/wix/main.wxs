@@ -461,12 +461,11 @@
 
       <!--
         Dialog flow: PolicySettingsDlg → ProgressDlg → ExitDlg.
-        NewDialog ProgressDlg on Install triggers the execute sequence and
-        shows the progress bar.  ExitDlg is shown automatically when the
-        install completes; its Finish button ends the installer.
+        The Install button publish is declared inline in the Control element
+        below (not here) to avoid a duplicate ControlEvent symbol error.
+        ExitDlg Finish is defined here because ExitDlg is provided by
+        WixUI_Minimal and has no inline Control definition in this file.
       -->
-      <Publish Dialog='PolicySettingsDlg' Control='Install'
-               Event='NewDialog' Value='ProgressDlg'>1</Publish>
       <Publish Dialog='ExitDlg' Control='Finish'
                Event='EndDialog' Value='Return' Order='999'>1</Publish>
 
