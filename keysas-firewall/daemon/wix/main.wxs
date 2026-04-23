@@ -149,9 +149,9 @@
               <RegistryValue Type='string'  Name='StCaPqCert'
                 Value='C:\ProgramData\Keysas\Firewall\st-ca-pq.pem'/>
               <RegistryValue Type='string'  Name='UsbCaClCert'
-                Value='C:\ProgramData\Keysas\Firewall\usb-ca-cl.pem'/>
+                Value='C:\ProgramData\Keysas\Firewall\usb-cl.pem'/>
               <RegistryValue Type='string'  Name='UsbCaPqCert'
-                Value='C:\ProgramData\Keysas\Firewall\usb-ca-pq.pem'/>
+                Value='C:\ProgramData\Keysas\Firewall\usb-pq.pem'/>
             </RegistryKey>
           </Component>
 
@@ -431,17 +431,175 @@
 
     <!-- ──────────────────────────────────────────────────── UI -->
     <!--
-      Silent MSI: No UI dialogs. This eliminates the dependency on
-      WixUIExtension and avoids the "Unresolved reference to ExitDlg" error.
-      
-      Installation modes:
-        msiexec /i keysas-firewall.msi          # GUI install (default)
-        msiexec /i keysas-firewall.msi /quiet   # Silent install
-      
-      Policy properties can be set at install time:
-        msiexec /i keysas-firewall.msi DISABLE_UNSIGNED_USB=1
+      GUI wizard: WelcomeDlg → PolicySettingsDlg → CertInfoDlg → install.
+      Silent install (no dialogs):
+        msiexec /i keysas-firewall.msi /quiet
+      Policy overrides via command line:
+        msiexec /i keysas-firewall.msi DISABLE_UNSIGNED_USB=1 ALLOW_USER_USB_AUTH=1
+      Requires WixUIExtension (passed via -C/-L flags in the pipeline).
     -->
-    <!-- No UI - using basic MSI without dialogs -->
+    <UI Id='WixUI_Keysas'>
+      <TextStyle Id='WixUI_Font_Normal' FaceName='Tahoma' Size='8'/>
+      <TextStyle Id='WixUI_Font_Bigger' FaceName='Tahoma' Size='12'/>
+      <TextStyle Id='WixUI_Font_Title'  FaceName='Tahoma' Size='9' Bold='yes'/>
+
+      <Property Id='DefaultUIFont' Value='WixUI_Font_Normal'/>
+      <Property Id='WixUI_Mode'    Value='Minimal'/>
+
+      <!-- Standard dialogs from WixUIExtension -->
+      <DialogRef Id='CancelDlg'/>
+      <DialogRef Id='ErrorDlg'/>
+      <DialogRef Id='ExitDlg'/>
+      <DialogRef Id='FatalError'/>
+      <DialogRef Id='FilesInUse'/>
+      <DialogRef Id='MsiRMFilesInUse'/>
+      <DialogRef Id='PrepareDlg'/>
+      <DialogRef Id='ProgressDlg'/>
+      <DialogRef Id='ResumeDlg'/>
+      <DialogRef Id='UserExit'/>
+
+      <!-- Step 1 — Welcome -->
+      <Dialog Id='WelcomeDlg' Width='370' Height='270' Title='[ProductName] Setup'>
+        <Control Id='Bitmap' Type='Bitmap' X='0' Y='0' Width='370' Height='234'
+          TabSkip='yes' Text='WixUI_Bmp_Dialog'/>
+        <Control Id='BottomLine' Type='Line' X='0' Y='234' Width='370' Height='0'/>
+        <Control Id='Title' Type='Text' X='135' Y='20' Width='220' Height='60'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>{\WixUI_Font_Bigger}Welcome to [ProductName] Setup</Text>
+        </Control>
+        <Control Id='Description' Type='Text' X='135' Y='80' Width='220' Height='60'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>This wizard installs the Keysas USB Firewall (minifilter driver, daemon service, and tray application). Click Next to configure the security policy.</Text>
+        </Control>
+        <Control Id='Next' Type='PushButton' X='236' Y='243' Width='56' Height='17'
+          Default='yes' Text='&amp;Next'>
+          <Publish Event='NewDialog' Value='PolicySettingsDlg'>1</Publish>
+        </Control>
+        <Control Id='Back' Type='PushButton' X='180' Y='243' Width='56' Height='17'
+          Disabled='yes' Text='&amp;Back'/>
+        <Control Id='Cancel' Type='PushButton' X='304' Y='243' Width='56' Height='17'
+          Cancel='yes' Text='Cancel'>
+          <Publish Event='SpawnDialog' Value='CancelDlg'>1</Publish>
+        </Control>
+      </Dialog>
+
+      <!-- Step 2 — Security policy checkboxes -->
+      <Dialog Id='PolicySettingsDlg' Width='370' Height='270'
+        Title='Security Policy — [ProductName]'>
+        <Control Id='BannerBitmap' Type='Bitmap' X='0' Y='0' Width='370' Height='44'
+          TabSkip='yes' Text='WixUI_Bmp_Banner'/>
+        <Control Id='BannerLine' Type='Line' X='0' Y='44' Width='370' Height='0'/>
+        <Control Id='BottomLine' Type='Line' X='0' Y='234' Width='370' Height='0'/>
+        <Control Id='Title' Type='Text' X='15' Y='6' Width='200' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>{\WixUI_Font_Title}Security Policy</Text>
+        </Control>
+        <Control Id='Description' Type='Text' X='25' Y='23' Width='300' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>Configure the USB firewall security policy.</Text>
+        </Control>
+        <Control Id='chk_disable_usb' Type='CheckBox'
+          X='20' Y='58' Width='340' Height='17'
+          Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
+          <Text>&amp;Block uncertified USB keys (recommended)</Text>
+        </Control>
+        <Control Id='chk_user_usb_auth' Type='CheckBox'
+          X='20' Y='80' Width='340' Height='17'
+          Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
+          <Text>Allow &amp;user to manually authorize blocked USB keys</Text>
+        </Control>
+        <Control Id='chk_user_file_read' Type='CheckBox'
+          X='20' Y='102' Width='340' Height='17'
+          Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
+          <Text>Allow user to authorize blocked files for &amp;reading</Text>
+        </Control>
+        <Control Id='chk_user_file_write' Type='CheckBox'
+          X='20' Y='124' Width='340' Height='17'
+          Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
+          <Text>Allow user to authorize blocked files for &amp;writing</Text>
+        </Control>
+        <Control Id='Note' Type='Text' X='20' Y='155' Width='340' Height='35'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>Note: these settings can also be passed via command line or changed after installation in the tray application.</Text>
+        </Control>
+        <Control Id='Next' Type='PushButton' X='236' Y='243' Width='56' Height='17'
+          Default='yes' Text='&amp;Next'>
+          <Publish Event='NewDialog' Value='CertInfoDlg'>1</Publish>
+        </Control>
+        <Control Id='Back' Type='PushButton' X='180' Y='243' Width='56' Height='17'
+          Text='&amp;Back'>
+          <Publish Event='NewDialog' Value='WelcomeDlg'>1</Publish>
+        </Control>
+        <Control Id='Cancel' Type='PushButton' X='304' Y='243' Width='56' Height='17'
+          Cancel='yes' Text='Cancel'>
+          <Publish Event='SpawnDialog' Value='CancelDlg'>1</Publish>
+        </Control>
+      </Dialog>
+
+      <!-- Step 3 — Certificate deposit instructions + Install button -->
+      <Dialog Id='CertInfoDlg' Width='370' Height='270'
+        Title='Certificates — [ProductName]'>
+        <Control Id='BannerBitmap' Type='Bitmap' X='0' Y='0' Width='370' Height='44'
+          TabSkip='yes' Text='WixUI_Bmp_Banner'/>
+        <Control Id='BannerLine' Type='Line' X='0' Y='44' Width='370' Height='0'/>
+        <Control Id='BottomLine' Type='Line' X='0' Y='234' Width='370' Height='0'/>
+        <Control Id='Title' Type='Text' X='15' Y='6' Width='200' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>{\WixUI_Font_Title}Certificates</Text>
+        </Control>
+        <Control Id='Description' Type='Text' X='25' Y='23' Width='300' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>CA certificate files required by the daemon.</Text>
+        </Control>
+        <Control Id='Info1' Type='Text' X='20' Y='55' Width='340' Height='25'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>After installation, copy the four CA certificate files generated by keysas-admin into:</Text>
+        </Control>
+        <Control Id='CertPath' Type='Text' X='30' Y='83' Width='320' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>C:\ProgramData\Keysas\Firewall\</Text>
+        </Control>
+        <Control Id='FileLabel' Type='Text' X='20' Y='105' Width='340' Height='15'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>Required files (as output by keysas-admin):</Text>
+        </Control>
+        <Control Id='File1' Type='Text' X='30' Y='123' Width='320' Height='13'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>st-ca-cl.pem   (station CA — ED25519)</Text>
+        </Control>
+        <Control Id='File2' Type='Text' X='30' Y='138' Width='320' Height='13'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>st-ca-pq.pem   (station CA — ML-DSA87)</Text>
+        </Control>
+        <Control Id='File3' Type='Text' X='30' Y='153' Width='320' Height='13'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>usb-cl.pem     (USB CA — ED25519)</Text>
+        </Control>
+        <Control Id='File4' Type='Text' X='30' Y='168' Width='320' Height='13'
+          Transparent='yes' NoPrefix='yes'>
+          <Text>usb-pq.pem     (USB CA — ML-DSA87)</Text>
+        </Control>
+        <Control Id='Install' Type='PushButton' X='236' Y='243' Width='56' Height='17'
+          Default='yes' Text='&amp;Install'>
+          <Publish Event='EndDialog' Value='Return'>1</Publish>
+        </Control>
+        <Control Id='Back' Type='PushButton' X='180' Y='243' Width='56' Height='17'
+          Text='&amp;Back'>
+          <Publish Event='NewDialog' Value='PolicySettingsDlg'>1</Publish>
+        </Control>
+        <Control Id='Cancel' Type='PushButton' X='304' Y='243' Width='56' Height='17'
+          Cancel='yes' Text='Cancel'>
+          <Publish Event='SpawnDialog' Value='CancelDlg'>1</Publish>
+        </Control>
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog='WelcomeDlg' Before='AppSearch'>1</Show>
+      </InstallUISequence>
+      <AdminUISequence>
+        <Show Dialog='WelcomeDlg' Before='AppSearch'>1</Show>
+      </AdminUISequence>
+    </UI>
 
   </Product>
 </Wix>

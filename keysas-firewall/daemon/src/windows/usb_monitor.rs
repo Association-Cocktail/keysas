@@ -510,7 +510,7 @@ impl UsbMonitor for WindowsUsbMonitor {
                     break;
                 }
 
-                thread::sleep(Duration::from_millis(500));
+                thread::sleep(Duration::from_millis(200));
 
                 let current_drives = get_removable_drives();
 
@@ -520,7 +520,7 @@ impl UsbMonitor for WindowsUsbMonitor {
                 for letter in new_drives {
                     // Brief grace period so Windows finishes populating the volume
                     // before we issue IOCTL calls.
-                    thread::sleep(Duration::from_millis(300));
+                    thread::sleep(Duration::from_millis(200));
                     handle_new_drive(letter, &ctrl_hdl);
                 }
 
