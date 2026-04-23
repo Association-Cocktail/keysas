@@ -37,11 +37,12 @@ if (-not $wixBin) {
 $candle = Join-Path $wixBin "candle.exe"
 $light = Join-Path $wixBin "light.exe"
 
-# Create output directory
-$outDir = "target\wix"
+# Create output directory (absolute path)
+$outDir = Join-Path $PWD "target\wix"
 if (-not (Test-Path $outDir)) {
-    New-Item -ItemType Directory -Path $outDir | Out-Null
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
+Write-Host "Output directory: $outDir"
 
 # Compile WiX source
 Write-Host "Compiling WiX source..."
@@ -50,7 +51,7 @@ Write-Host "Compiling WiX source..."
     "-dBinDir=$BinDir",
     "-dMinifilterDir=$MinifilterDir",
     "-dTrayAppBinDir=$TrayAppBinDir",
-    "-o$outDir\",
+    "-o$outDir",
     "wix\main.wxs",
     "wix\ui.wxs"
 )
@@ -62,12 +63,17 @@ if ($LASTEXITCODE -ne 0) {
 
 # Link with UI extension
 Write-Host "Linking MSI with UI extension..."
-$wixObjFiles = Get-ChildItem -Path "$outDir" -Filter "*.wxo" | ForEach-Object { $_.FullName }
+Write-Host "Looking for .wxo files in: $outDir"
+$wixObjFiles = @(Get-ChildItem -Path "$outDir" -Filter "*.wxo" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+Write-Host "Found $($wixObjFiles.Count) .wxo file(s)"
 if ($wixObjFiles.Count -eq 0) {
+    Write-Host "Directory contents:"
+    Get-ChildItem -Path "$outDir" | ForEach-Object { Write-Host "  - $($_.Name)" }
     Write-Error "No .wxo object files found in $outDir"
     exit 1
 }
-$lightArgs = @("-ext", "WixUIExtension", "-out$outDir\keysas-firewall-$version-x64.msi") + @($wixObjFiles)
+$msiOutput = Join-Path $outDir "keysas-firewall-$version-x64.msi"
+$lightArgs = @("-ext", "WixUIExtension", "-out$msiOutput") + @($wixObjFiles)
 & $light @($lightArgs)
 
 if ($LASTEXITCODE -ne 0) {
@@ -75,4 +81,4 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "MSI built successfully: $outDir\keysas-firewall-$version-x64.msi"
+Write-Host "MSI built successfully: $msiOutput"
