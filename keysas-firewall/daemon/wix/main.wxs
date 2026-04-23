@@ -77,10 +77,8 @@
               Source='$(var.TrayAppBinDir)/keysas-usbfilter-trayapp.exe'
               KeyPath='yes'/>
             <!--
-              RemoveFolder tells MSI to delete APPLICATIONFOLDER on uninstall.
-              MSI only removes it when empty; CA_RemoveAppFolder below handles
-              the non-empty case (WebView2 user-data, logs, or any other runtime
-              files that were created after installation).
+              RemoveFolder tells MSI to delete APPLICATIONFOLDER on uninstall
+              when empty. Remaining files are handled by the OS after reboot.
             -->
             <RemoveFolder Id='rm_appfolder' Directory='APPLICATIONFOLDER' On='uninstall'/>
           </Component>
@@ -377,25 +375,10 @@
       Return='ignore'/>
 
     <!--
-      Force-remove the application folder and everything in it.
-      Step 1 (immediate): capture APPLICATIONFOLDER into CustomActionData
-        while the property table is still available.
-      Step 2 (deferred/SYSTEM): rmdir /S /Q on the captured path.
-      The trailing "." in "[CustomActionData]." avoids the cmd.exe quoting
-      issue caused by a trailing backslash before the closing quote.
-      Return='ignore' is safe: if the folder is already gone, rmdir exits
-      with a non-zero code that we discard.
+      Folder cleanup: RemoveFolder in comp_trayapp handles the directory
+      removal. MSI's RemoveFiles step handles tracked files. Any remaining
+      files (WebView2 cache, logs) are cleaned up by the OS after reboot.
     -->
-    <CustomAction Id='CA_SetAppFolderData'
-      Property='CA_RemoveAppFolder'
-      Value='[APPLICATIONFOLDER]'/>
-
-    <CustomAction Id='CA_RemoveAppFolder'
-      Directory='TARGETDIR'
-      ExeCommand='[System64Folder]cmd.exe /C rmdir /S /Q "[CustomActionData]."'
-      Execute='deferred'
-      Impersonate='no'
-      Return='ignore'/>
 
     <!--
       Delete the Firewall registry key and its parent Keysas key.
@@ -426,9 +409,7 @@
       For silent installs (/quiet) the reboot is deferred — caller must reboot.
     -->
     <InstallExecuteSequence>
-      <!-- Capture APPLICATIONFOLDER before the transaction starts so that the
-           deferred CA_RemoveAppFolder can read it via CustomActionData. -->
-      <Custom Action='CA_SetAppFolderData'     Before='InstallInitialize'>REMOVE="ALL"</Custom>
+      <!-- Folder cleanup handled by RemoveFolder element -->
       <!-- Force-kill daemon and tray-app BEFORE StopServices so that
            all file handles are released and the SCM can cleanly remove
            the services.  Daemon is killed first so the minifilter handle
@@ -444,10 +425,7 @@
       <!-- Clean up empty Firewall and Keysas registry keys. -->
       <Custom Action='CA_DeleteFirewallRegKey' After='DeleteServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_DeleteKeysasRegKey'   After='DeleteServices'>REMOVE="ALL"</Custom>
-      <!-- Force-remove the application folder after RemoveFiles has released
-           all file handles. Handles WebView2 runtime data and any other
-           runtime artefacts that MSI did not install. -->
-      <Custom Action='CA_RemoveAppFolder'      After='RemoveFiles'>REMOVE="ALL"</Custom>
+      <!-- No additional folder cleanup needed -->
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 
