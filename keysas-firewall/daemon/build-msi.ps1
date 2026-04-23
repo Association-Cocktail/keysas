@@ -46,15 +46,18 @@ Write-Host "Output directory: $outDir"
 
 # Compile WiX source
 Write-Host "Compiling WiX source..."
-& $candle @(
+# Build argument list with -o as separate argument
+$candleArgs = @(
     "-dVersion=$version",
     "-dBinDir=$BinDir",
     "-dMinifilterDir=$MinifilterDir",
     "-dTrayAppBinDir=$TrayAppBinDir",
-    "-o$outDir",
+    "-o", $outDir,
     "wix\main.wxs",
     "wix\ui.wxs"
 )
+Write-Host "Candle args: $candleArgs"
+& $candle @($candleArgs)
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Candle compilation failed"
@@ -64,11 +67,18 @@ if ($LASTEXITCODE -ne 0) {
 # Link with UI extension
 Write-Host "Linking MSI with UI extension..."
 Write-Host "Looking for .wxo files in: $outDir"
+
+# Check if directory exists and list all contents
+if (Test-Path $outDir) {
+    Write-Host "Directory exists. Contents:"
+    Get-ChildItem -Path "$outDir" | ForEach-Object { Write-Host "  - $($_.Name) (type: $($_.Extension))" }
+} else {
+    Write-Host "Directory does NOT exist!"
+}
+
 $wixObjFiles = @(Get-ChildItem -Path "$outDir" -Filter "*.wxo" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 Write-Host "Found $($wixObjFiles.Count) .wxo file(s)"
 if ($wixObjFiles.Count -eq 0) {
-    Write-Host "Directory contents:"
-    Get-ChildItem -Path "$outDir" | ForEach-Object { Write-Host "  - $($_.Name)" }
     Write-Error "No .wxo object files found in $outDir"
     exit 1
 }

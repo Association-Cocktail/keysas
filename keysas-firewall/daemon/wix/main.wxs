@@ -434,116 +434,17 @@
 
     <!-- ──────────────────────────────────────────────────── UI -->
     <!--
-      WixUI_Minimal provides infrastructure: ProgressDlg, ExitDlg, ErrorDlg,
-      FatalError, UserExit, FilesInUse, bitmap properties (WixUI_Bmp_Banner),
-      and text styles.  Its default first dialog is WelcomeEulaDlg (welcome +
-      EULA on a single screen).  We replace it with PolicySettingsDlg so the
-      install starts directly with the policy settings — no EULA, no welcome.
-
-      Silent install bypasses all dialogs:
-        msiexec /i keysas-firewall.msi /quiet
-        msiexec /i keysas-firewall.msi /quiet DISABLE_UNSIGNED_USB=1
+      Silent MSI: No UI dialogs. This eliminates the dependency on
+      WixUIExtension and avoids the "Unresolved reference to ExitDlg" error.
+      
+      Installation modes:
+        msiexec /i keysas-firewall.msi          # GUI install (default)
+        msiexec /i keysas-firewall.msi /quiet   # Silent install
+      
+      Policy properties can be set at install time:
+        msiexec /i keysas-firewall.msi DISABLE_UNSIGNED_USB=1
     -->
-    <UIRef Id='WixUI_Minimal'/>
-    <UI>
-      <!--
-        WiX only includes dialog definitions from WixUIExtension.wixlib when
-        they are explicitly referenced by a DialogRef.  WixUI_Minimal already
-        pulls in ErrorDlg, FilesInUse, FatalError and UserExit.  ProgressDlg and ExitDlg are
-        referenced in the sequence, so they must also be declared here.
-      -->
-      <DialogRef Id='ProgressDlg'/>
-      <DialogRef Id='ExitDlg'/>
-
-      <!--
-        Override the InstallUISequence entries added by WixUI_Minimal.
-        WelcomeEulaDlg (the WixUI_Minimal default first dialog) is suppressed
-        with condition "0" (always false).  PolicySettingsDlg takes its place
-        at the same sequence position (After='PrepareDlg').
-        WixUI_Minimal marks its entries Overridable='yes', so this override
-        is valid and will not cause a duplicate-sequence linker error.
-      -->
-      <InstallUISequence>
-        <!-- Suppress WelcomeEulaDlg at its original sequence position. -->
-        <Show Dialog='WelcomeEulaDlg'    After='PrepareDlg'>0</Show>
-        <!--
-          Place PolicySettingsDlg AFTER WelcomeEulaDlg (not After='PrepareDlg')
-          to avoid two entries competing for the same sequence number, which
-          would cause linker error LGHT0130 (duplicate sequence entry).
-          WelcomeEulaDlg is suppressed (condition=0), so PolicySettingsDlg
-          effectively becomes the first visible dialog on a fresh install.
-        -->
-        <Show Dialog='PolicySettingsDlg' After='WelcomeEulaDlg'>NOT Installed AND NOT PATCH</Show>
-        <Show Dialog='ProgressDlg' After='PolicySettingsDlg'>NOT Installed AND NOT PATCH</Show>
-        <Show Dialog='ExitDlg' After='ProgressDlg'>1</Show>
-      </InstallUISequence>
-
-      <!--
-        Dialog flow: PolicySettingsDlg → ProgressDlg → ExitDlg.
-        The Install button publish is declared inline in the Control element
-        below to avoid a duplicate ControlEvent symbol error.
-        ExitDlg Finish is defined here because ExitDlg has no inline Control
-        definition in this file.
-      -->
-      <Publish Dialog='ExitDlg' Control='Finish'
-               Event='EndDialog' Value='Return' Order='999'>1</Publish>
-
-      <Dialog Id='PolicySettingsDlg' Width='370' Height='270'
-              Title='[ProductName]' NoMinimize='yes'>
-
-        <Control Id='BannerBitmap' Type='Bitmap'
-                 X='0' Y='0' Width='370' Height='44'
-                 TabSkip='no' Text='WixUI_Bmp_Banner'/>
-        <Control Id='BannerLine' Type='Line'
-                 X='0' Y='44' Width='370' Height='0'/>
-        <Control Id='BottomLine' Type='Line'
-                 X='0' Y='234' Width='370' Height='0'/>
-
-        <Control Id='Title' Type='Text'
-                 X='15' Y='6' Width='200' Height='15'
-                 Transparent='yes' NoPrefix='yes'>
-          <Text>{\WixUI_Font_Title}Policy Settings</Text>
-        </Control>
-        <Control Id='Description' Type='Text'
-                 X='25' Y='23' Width='320' Height='15'
-                 Transparent='yes' NoPrefix='yes'>
-          <Text>Configure the USB device policy for this installation.</Text>
-        </Control>
-
-        <Control Id='chkDisableUnsignedUsb' Type='CheckBox'
-                 X='20' Y='65' Width='340' Height='15'
-                 Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
-          <Text>Block USB devices that do not have a Keysas certificate</Text>
-        </Control>
-        <Control Id='chkAllowUserUsbAuth' Type='CheckBox'
-                 X='20' Y='95' Width='340' Height='15'
-                 Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
-          <Text>Allow users to manually authorize unrecognised USB devices</Text>
-        </Control>
-        <Control Id='chkAllowUserFileRead' Type='CheckBox'
-                 X='20' Y='125' Width='340' Height='15'
-                 Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
-          <Text>Allow users to grant read access to uncertified files</Text>
-        </Control>
-        <Control Id='chkAllowUserFileWrite' Type='CheckBox'
-                 X='20' Y='155' Width='340' Height='15'
-                 Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
-          <Text>Allow users to grant write access to files</Text>
-        </Control>
-
-        <!-- No Back button: WelcomeEulaDlg is suppressed, nothing to go back to. -->
-        <Control Id='Install' Type='PushButton'
-                 X='236' Y='243' Width='56' Height='17'
-                 Default='yes' Text='&#38;Install'>
-          <Publish Event='NewDialog' Value='ProgressDlg'>1</Publish>
-        </Control>
-        <Control Id='Cancel' Type='PushButton'
-                 X='296' Y='243' Width='56' Height='17'
-                 Cancel='yes' Text='Cancel'>
-          <Publish Event='SpawnDialog' Value='CancelDlg'>1</Publish>
-        </Control>
-      </Dialog>
-    </UI>
+    <!-- No UI - using basic MSI without dialogs -->
 
   </Product>
 </Wix>

@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='windows-1252'?>
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
-  <!-- Include the WiX UI Extension library to resolve missing dialog definitions -->
-  <Fragment>
-    <UIRef Id='WixUI_Minimal'/>
-  </Fragment>
-</Wix>
