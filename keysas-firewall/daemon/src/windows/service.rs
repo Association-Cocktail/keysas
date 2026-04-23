@@ -1,7 +1,12 @@
 use anyhow::anyhow;
 use log::*;
 use registry::{Data, Hive, Security};
-use std::{ffi::OsString, thread, time::Duration};
+use std::{
+    ffi::OsString,
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
+    thread,
+    time::Duration,
+};
 use windows_service::define_windows_service;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
@@ -18,7 +23,7 @@ use crate::Config;
 
 define_windows_service!(ffi_keysas_service, keysas_service_main);
 
-fn run_service() {
+fn run_service(stop: Arc<AtomicBool>) {
     let config = Config::default();
     let result = thread::spawn(move || -> Result<(), anyhow::Error> {
         info!("run_service: loading security policy...");
@@ -32,10 +37,11 @@ fn run_service() {
 
         info!("run_service: ServiceController started, entering main loop");
 
-        // Put the service in sleep until it receives request from the driver or the HMI
-        loop {
-            thread::sleep(Duration::from_secs(10));
+        while !stop.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(1));
         }
+        info!("run_service: stop signal received, exiting");
+        Ok(())
     })
     .join();
 
@@ -47,10 +53,15 @@ fn run_service() {
 }
 
 fn keysas_service_main(_args: Vec<OsString>) {
-    // Declare service event handler
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_handler = stop.clone();
+
     let event_handler = move |event| -> ServiceControlHandlerResult {
         match event {
-            ServiceControl::Stop => ServiceControlHandlerResult::NoError,
+            ServiceControl::Stop => {
+                stop_for_handler.store(true, Ordering::Relaxed);
+                ServiceControlHandlerResult::NoError
+            },
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
         }
@@ -103,7 +114,7 @@ fn keysas_service_main(_args: Vec<OsString>) {
     info!("Keysas service started");
 
     // Start the service
-    run_service();
+    run_service(stop);
 
     // If the thread exits stop the service
     if let Err(e) = status_handle.set_service_status(ServiceStatus {
@@ -124,7 +135,7 @@ fn keysas_service_main(_args: Vec<OsString>) {
 
 pub fn start_windows_service(debug: bool) -> Result<(), anyhow::Error> {
     if debug {
-        run_service();
+        run_service(Arc::new(AtomicBool::new(false)));
     } else {
         service_dispatcher::start("Keysas Service", ffi_keysas_service)?;
     }

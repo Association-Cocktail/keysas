@@ -300,6 +300,22 @@
       Wait='no' on the minifilter) handle clean service stop via the SCM.
     -->
     <!--
+      Kill the daemon process before StopServices.
+      The daemon service does not honour the SCM Stop signal (the service
+      event handler sets stop_signal but the service worker thread may take
+      up to 1 s to notice).  Taskkill /F forces the process to exit
+      immediately, releasing all open handles (minifilter device handle,
+      locked EXE file) so that StopServices, DeleteServices, and RemoveFiles
+      can complete cleanly.
+    -->
+    <CustomAction Id='CA_KillDaemon'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]taskkill.exe /F /IM keysas-usbfilter-daemon.exe /T'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <!--
       Kill the tray-app and all its child processes (/T) including any
       WebView2 (msedgewebview2.exe) sub-processes that Tauri spawns.
       Two separate calls: one by image name, one by window title, so that
@@ -413,8 +429,11 @@
       <!-- Capture APPLICATIONFOLDER before the transaction starts so that the
            deferred CA_RemoveAppFolder can read it via CustomActionData. -->
       <Custom Action='CA_SetAppFolderData'     Before='InstallInitialize'>REMOVE="ALL"</Custom>
-      <!-- Kill tray-app (and its WebView2 children) and unload the minifilter
-           BEFORE StopServices so that the daemon can be stopped cleanly. -->
+      <!-- Force-kill daemon and tray-app BEFORE StopServices so that
+           all file handles are released and the SCM can cleanly remove
+           the services.  Daemon is killed first so the minifilter handle
+           is freed before fltMC attempts the unload. -->
+      <Custom Action='CA_KillDaemon'           Before='StopServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_KillTrayApp'          Before='StopServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_KillWebView2'         Before='StopServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_UnloadMinifilter'     Before='StopServices'>REMOVE="ALL"</Custom>
