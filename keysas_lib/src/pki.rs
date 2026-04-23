@@ -26,8 +26,8 @@
 use anyhow::anyhow;
 use oqs::sig::Algorithm;
 use oqs::sig::Sig;
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 use x509_cert::certificate::Certificate;
 use x509_cert::der::Encode;
 use x509_cert::request::CertReq;

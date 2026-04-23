@@ -7,8 +7,8 @@ param(
     [string]$TrayAppBinDir = "..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release"
 )
 
-# Get version from Cargo.toml
-$version = (Get-Content "Cargo.toml" | Select-String 'version = "([^"]+)"' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+# Get version from Cargo.toml (first match only)
+$version = (Get-Content "Cargo.toml" | Select-String -First 1 'version = "([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value })
 Write-Host "Building Keysas USB Firewall Installer v$version"
 
 # Find WiX Toolset
@@ -44,14 +44,15 @@ if (-not (Test-Path $outDir)) {
 
 # Compile WiX source
 Write-Host "Compiling WiX source..."
-& $candle `
-    -d "Version=$version" `
-    -d "BinDir=$BinDir" `
-    -d "MinifilterDir=$MinifilterDir" `
-    -d "TrayAppBinDir=$TrayAppBinDir" `
-    -o "$outDir\" `
-    "wix\main.wxs" `
+& $candle @(
+    "-dVersion=$version",
+    "-dBinDir=$BinDir",
+    "-dMinifilterDir=$MinifilterDir",
+    "-dTrayAppBinDir=$TrayAppBinDir",
+    "-o$outDir\",
+    "wix\main.wxs",
     "wix\ui.wxs"
+)
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Candle compilation failed"
@@ -60,10 +61,11 @@ if ($LASTEXITCODE -ne 0) {
 
 # Link with UI extension
 Write-Host "Linking MSI with UI extension..."
-& $light `
-    -ext WixUIExtension `
-    -out "$outDir\keysas-firewall-$version-x64.msi" `
+& $light @(
+    "-extWixUIExtension",
+    "-out$outDir\keysas-firewall-$version-x64.msi",
     "$outDir\*.wxo"
+)
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Light linking failed"
