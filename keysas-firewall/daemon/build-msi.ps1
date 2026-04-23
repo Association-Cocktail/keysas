@@ -8,7 +8,8 @@ param(
 )
 
 # Get version from Cargo.toml (first match only)
-$version = (Get-Content "Cargo.toml" | Select-String -First 1 'version = "([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value })
+$versionMatch = Get-Content "Cargo.toml" | Select-String 'version = "([^"]+)"' | Select-Object -First 1
+$version = if ($versionMatch) { $versionMatch.Matches.Groups[1].Value } else { "0.0.0" }
 Write-Host "Building Keysas USB Firewall Installer v$version"
 
 # Find WiX Toolset
@@ -61,11 +62,13 @@ if ($LASTEXITCODE -ne 0) {
 
 # Link with UI extension
 Write-Host "Linking MSI with UI extension..."
-& $light @(
-    "-extWixUIExtension",
-    "-out$outDir\keysas-firewall-$version-x64.msi",
-    "$outDir\*.wxo"
-)
+$wixObjFiles = Get-ChildItem -Path "$outDir" -Filter "*.wxo" | ForEach-Object { $_.FullName }
+if ($wixObjFiles.Count -eq 0) {
+    Write-Error "No .wxo object files found in $outDir"
+    exit 1
+}
+$lightArgs = @("-ext", "WixUIExtension", "-out$outDir\keysas-firewall-$version-x64.msi") + @($wixObjFiles)
+& $light @($lightArgs)
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Light linking failed"
