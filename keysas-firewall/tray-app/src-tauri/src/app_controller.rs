@@ -25,6 +25,7 @@
 use crate::filter_store::{FileAuth, FilterStore, UsbDevice};
 use crate::service_if::{FileUpdateMessage, FileAuthorization, ServiceInterface,
     ServiceInterfaceBuilder, UsbUpdateMessage};
+use crate::tray_menu;
 
 use anyhow::anyhow;
 use std::sync::{Arc, RwLock};
@@ -127,9 +128,16 @@ impl AppController {
             Err(e) => log::error!("set_usb_list: failed to acquire store lock: {e}"),
         }
 
-        // Notify the UI to refresh the device list
-        if let Err(e) = self.view.emit("usb_update", ()) {
-            log::error!("set_usb_list: failed to emit usb_update event: {e}");
+        // Rebuild the tray menu on the main thread (run_on_main_thread is
+        // required for Win32 menu APIs; emit() alone does not reach Rust
+        // listeners in a tray-only app with no active webview window).
+        let app = self.view.clone();
+        if let Err(e) = self.view.run_on_main_thread(move || {
+            if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+                tray_menu::rebuild_tray_menu(&app, &ctrl);
+            }
+        }) {
+            log::error!("set_usb_list: run_on_main_thread failed: {e}");
         }
     }
 
@@ -158,8 +166,16 @@ impl AppController {
             Err(e) => log::error!("notify_usb_change: failed to acquire store lock: {e}"),
         }
 
-        if let Err(e) = self.view.emit("usb_update", &update.device) {
-            log::error!("notify_usb_change: failed to emit usb_update event: {e}");
+        // Keep emit() for any open webview window (file-detail panel).
+        let _ = self.view.emit("usb_update", &update.device);
+        // Rebuild the tray menu directly on the main thread.
+        let app = self.view.clone();
+        if let Err(e) = self.view.run_on_main_thread(move || {
+            if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+                tray_menu::rebuild_tray_menu(&app, &ctrl);
+            }
+        }) {
+            log::error!("notify_usb_change: run_on_main_thread failed: {e}");
         }
     }
 

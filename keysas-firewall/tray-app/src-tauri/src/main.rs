@@ -24,7 +24,7 @@ mod service_if;
 mod tray_menu;
 
 use std::sync::Arc;
-use tauri::{AppHandle, Listener, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_controller::AppController;
 use crate::service_if::FileAuthorization;
@@ -70,14 +70,6 @@ fn init_tauri() -> Result<(), anyhow::Error> {
                 .on_menu_event(on_menu_event)
                 .build(app)?;
             app.manage(tray);
-
-            // Rebuild the tray menu whenever the daemon notifies a USB change.
-            let app_hdl = app.handle().clone();
-            app.listen("usb_update", move |_event| {
-                if let Some(ctrl) = app_hdl.try_state::<Arc<AppController>>() {
-                    tray_menu::rebuild_tray_menu(&app_hdl, &ctrl);
-                }
-            });
 
             Ok(())
         })
