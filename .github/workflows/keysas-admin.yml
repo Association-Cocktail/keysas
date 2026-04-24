@@ -2,15 +2,15 @@ name: keysas-admin CI
 
 on:
   pull_request:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-admin/**"
-      - ".github/workflows/keysas-admin.yml"
+      - keysas-admin/**
+      - .github/workflows/keysas-admin.yml
   push:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-admin/**"
-      - ".github/workflows/keysas-admin.yml"
+      - keysas-admin/**
+      - .github/workflows/keysas-admin.yml
   workflow_dispatch:
 
 permissions:

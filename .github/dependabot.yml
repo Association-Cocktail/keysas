@@ -14,7 +14,7 @@ updates:
       patterns:
       - "*"
   commit-message:
-    prefix: "Github-Actions"
+    prefix: Github-Actions
 
 - package-ecosystem: npm
   directories:
@@ -25,13 +25,13 @@ updates:
     interval: daily
   ignore:
   - dependency-name: "*"
-    update-types: [ "version-update:semver-major" ]
+    update-types: [ version-update:semver-major ]
   groups:
     npm-updates:
       patterns:
       - "*"
   commit-message:
-    prefix: "NPM-dependencies"
+    prefix: NPM-dependencies
 
 - package-ecosystem: cargo
   directories:
@@ -53,6 +53,6 @@ updates:
       - "*"
   ignore:
   - dependency-name: "*"
-    update-types: [ "version-update:semver-major" ]
+    update-types: [ version-update:semver-major ]
   commit-message:
-    prefix: "Cargo-dependencies"
+    prefix: Cargo-dependencies

@@ -3,15 +3,15 @@ name: keysas-firewall CI
 # Triggered on PRs and pushes to main/develop when firewall sources change.
 on:
   pull_request:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-firewall/**"
-      - ".github/workflows/keysas-firewall.yml"
+      - keysas-firewall/**
+      - .github/workflows/keysas-firewall.yml
   push:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-firewall/**"
-      - ".github/workflows/keysas-firewall.yml"
+      - keysas-firewall/**
+      - .github/workflows/keysas-firewall.yml
   workflow_dispatch:
 
 permissions:

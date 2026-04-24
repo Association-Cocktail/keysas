@@ -2,29 +2,29 @@ name: Rust build and test
 
 on:
   push:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-core/**"
-      - "keysas-io/**"
-      - "keysas-backend/**"
-      - "keysas-sign/**"
-      - "keysas-fido/**"
-      - "keysas_lib/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/rust-build.yml"
+      - keysas-core/**
+      - keysas-io/**
+      - keysas-backend/**
+      - keysas-sign/**
+      - keysas-fido/**
+      - keysas_lib/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/rust-build.yml
   pull_request:
-    branches: ["main", "develop"]
+    branches: [main, develop]
     paths:
-      - "keysas-core/**"
-      - "keysas-io/**"
-      - "keysas-backend/**"
-      - "keysas-sign/**"
-      - "keysas-fido/**"
-      - "keysas_lib/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/rust-build.yml"
+      - keysas-core/**
+      - keysas-io/**
+      - keysas-backend/**
+      - keysas-sign/**
+      - keysas-fido/**
+      - keysas_lib/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/rust-build.yml
   workflow_dispatch:
 
 permissions:
