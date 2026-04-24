@@ -19,6 +19,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +41,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Install system dependencies (daemon)
         run: |
@@ -81,6 +85,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""  # Don't treat warnings as errors on the tray-app check
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Install system dependencies (tray-app / Tauri 2)
         run: |
@@ -128,6 +135,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""  # Don't treat warnings as errors on MSI build
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -193,6 +203,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -404,6 +417,9 @@ jobs:
           toolchain: stable
           rustflags: ""
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -462,6 +478,9 @@ jobs:
         with:
           toolchain: stable
           rustflags: ""
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.5
 
       - name: Install system dependencies
         run: |
