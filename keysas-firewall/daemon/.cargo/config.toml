@@ -1,4 +1,7 @@
 # Link the MSVC CRT statically so the binary has no dependency on
 # VCRUNTIME140.dll / MSVCP140.dll on the target machine.
+# lld-link (LLVM) is 2-3x faster than link.exe for large Rust binaries
+# and is pre-installed on the GitHub Actions windows-latest runner.
 [target.x86_64-pc-windows-msvc]
+linker = "lld-link"
 rustflags = ["-C", "target-feature=+crt-static"]

@@ -10,9 +10,8 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, Menu};
-use tauri::tray::TrayIcon;
 
 use crate::app_controller::AppController;
 use crate::filter_store::UsbDevice;
@@ -107,12 +106,12 @@ pub fn rebuild_tray_menu(app: &AppHandle, ctrl: &Arc<AppController>) {
         }
     };
 
-    match app.try_state::<TrayIcon<tauri::Wry>>() {
+    match app.tray_by_id("main-tray") {
         Some(tray) => {
             if let Err(e) = tray.set_menu(Some(menu)) {
                 log::warn!("rebuild_tray_menu: set_menu failed: {e}");
             }
         }
-        None => log::warn!("rebuild_tray_menu: TrayIcon not yet in managed state"),
+        None => log::warn!("rebuild_tray_menu: tray icon 'main-tray' not found"),
     }
 }

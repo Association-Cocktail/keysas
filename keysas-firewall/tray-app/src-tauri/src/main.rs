@@ -63,13 +63,12 @@ fn init_tauri() -> Result<(), anyhow::Error> {
             //    On Linux this goes through libayatana-appindicator (dbusmenu).
             //    On Windows this uses the Win32 NotifyIcon API.
             use tauri::tray::TrayIconBuilder;
-            let tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(tauri::include_image!("icons/logo-keysas-short-32.png"))
                 .tooltip("Keysas USB Firewall")
                 .menu(&initial_menu)
                 .on_menu_event(on_menu_event)
                 .build(app)?;
-            app.manage(tray);
 
             Ok(())
         })
