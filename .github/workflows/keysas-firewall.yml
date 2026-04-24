@@ -146,14 +146,15 @@ jobs:
           cache: npm
           cache-dependency-path: keysas-firewall/tray-app/package-lock.json
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      # Swatinem/rust-cache caches the compiled target/ directory (rlib, linker
+      # artifacts) between runs — complements sccache which only covers individual
+      # compilation units. Replaces the manual ~/.cargo cache step.
+      - name: Cache Rust target (tray-app)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: msi-${{ runner.os }}-${{ hashFiles('keysas-firewall/tray-app/src-tauri/Cargo.lock') }}
-          restore-keys: msi-${{ runner.os }}-
+          workspaces: keysas-firewall/tray-app/src-tauri -> target
+          shared-key: tray-windows-msi
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         working-directory: keysas-firewall/tray-app
@@ -210,14 +211,12 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust target (daemon)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: win-msi-${{ hashFiles('keysas-firewall/daemon/Cargo.lock') }}
-          restore-keys: win-msi-
+          workspaces: keysas-firewall/daemon -> target
+          shared-key: daemon-windows-msi
+          cache-on-failure: true
 
       # ── Minifilter ─────────────────────────────────────────────────────────
       # When the WDK is installed as a VS2022 component (Component.Microsoft.
