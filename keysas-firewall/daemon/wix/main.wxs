@@ -436,7 +436,7 @@
         msiexec /i keysas-firewall.msi /quiet
       Policy overrides via command line:
         msiexec /i keysas-firewall.msi DISABLE_UNSIGNED_USB=1 ALLOW_USER_USB_AUTH=1
-      Requires WixUIExtension (passed via -C/-L flags in the pipeline).
+      WixUIExtension is auto-loaded by cargo-wix via the DialogRef elements below.
     -->
     <UI Id='WixUI_Keysas'>
       <TextStyle Id='WixUI_Font_Normal' FaceName='Tahoma' Size='8'/>
