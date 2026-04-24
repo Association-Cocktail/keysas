@@ -29,7 +29,7 @@ use crate::tray_menu;
 
 use anyhow::anyhow;
 use std::sync::{Arc, RwLock};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Application controller object, it contains handle to the application main services
 pub struct AppController {
