@@ -446,10 +446,9 @@
       <Property Id='DefaultUIFont' Value='WixUI_Font_Normal'/>
       <Property Id='WixUI_Mode'    Value='Minimal'/>
 
-      <!-- Standard dialogs from WixUIExtension -->
+      <!-- Standard dialogs from WixUIExtension (auto-loaded by cargo-wix) -->
       <DialogRef Id='CancelDlg'/>
       <DialogRef Id='ErrorDlg'/>
-      <DialogRef Id='ExitDlg'/>
       <DialogRef Id='FatalError'/>
       <DialogRef Id='FilesInUse'/>
       <DialogRef Id='MsiRMFilesInUse'/>
@@ -596,9 +595,6 @@
       <InstallUISequence>
         <Show Dialog='KeysasWelcomeDlg' Before='AppSearch'>1</Show>
       </InstallUISequence>
-      <AdminUISequence>
-        <Show Dialog='KeysasWelcomeDlg' Before='AppSearch'>1</Show>
-      </AdminUISequence>
     </UI>
 
   </Product>
