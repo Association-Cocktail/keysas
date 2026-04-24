@@ -372,8 +372,8 @@ jobs:
             -C "-dBinDir=target\x86_64-pc-windows-msvc\release" `
             -C "-dMinifilterDir=$minifilterDir" `
             -C "-dTrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release" `
-            -C "-ext WixUIExtension" `
-            -L "-ext WixUIExtension" `
+            -C "-ext" -C "WixUIExtension" `
+            -L "-ext" -L "WixUIExtension" `
             --nocapture
 
       - name: Upload MSI artifact

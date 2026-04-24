@@ -459,7 +459,7 @@
       <DialogRef Id='UserExit'/>
 
       <!-- Step 1 — Welcome -->
-      <Dialog Id='WelcomeDlg' Width='370' Height='270' Title='[ProductName] Setup'>
+      <Dialog Id='KeysasWelcomeDlg' Width='370' Height='270' Title='[ProductName] Setup'>
         <Control Id='Bitmap' Type='Bitmap' X='0' Y='0' Width='370' Height='234'
           TabSkip='yes' Text='WixUI_Bmp_Dialog'/>
         <Control Id='BottomLine' Type='Line' X='0' Y='234' Width='370' Height='0'/>
@@ -528,7 +528,7 @@
         </Control>
         <Control Id='Back' Type='PushButton' X='180' Y='243' Width='56' Height='17'
           Text='&amp;Back'>
-          <Publish Event='NewDialog' Value='WelcomeDlg'>1</Publish>
+          <Publish Event='NewDialog' Value='KeysasWelcomeDlg'>1</Publish>
         </Control>
         <Control Id='Cancel' Type='PushButton' X='304' Y='243' Width='56' Height='17'
           Cancel='yes' Text='Cancel'>
@@ -594,10 +594,10 @@
       </Dialog>
 
       <InstallUISequence>
-        <Show Dialog='WelcomeDlg' Before='AppSearch'>1</Show>
+        <Show Dialog='KeysasWelcomeDlg' Before='AppSearch'>1</Show>
       </InstallUISequence>
       <AdminUISequence>
-        <Show Dialog='WelcomeDlg' Before='AppSearch'>1</Show>
+        <Show Dialog='KeysasWelcomeDlg' Before='AppSearch'>1</Show>
       </AdminUISequence>
     </UI>
 
