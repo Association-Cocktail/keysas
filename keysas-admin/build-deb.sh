@@ -17,30 +17,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Vérification des outils essentiels ───────────────────────────────────────
 
 for tool in npm rustc fakeroot; do
-    command -v "$tool" >/dev/null 2>&1 || { echo "Erreur : '$tool' introuvable."; exit 1; }
+    command -v "${tool}" >/dev/null 2>&1 || { echo "Erreur : '${tool}' introuvable."; exit 1; }
 done
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 echo "==> [1/2] Installation des dépendances frontend..."
 (
-    cd "$SCRIPT_DIR"
+    cd "${SCRIPT_DIR}"
     npm ci
 )
 
 echo "==> [2/2] Génération du paquet .deb (Tauri)..."
 (
-    cd "$SCRIPT_DIR"
+    cd "${SCRIPT_DIR}"
     fakeroot npx tauri build --bundles deb
 )
 
-DEB=$(find "$SCRIPT_DIR/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)
+DEB=$(find "${SCRIPT_DIR}/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)
 
 # ── Résumé ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "Paquet généré :"
-echo "  $DEB"
+echo "  ${DEB}"
 echo ""
 echo "Installation :"
-echo "  sudo apt install ./$DEB"
+echo "  sudo apt install ./${DEB}"

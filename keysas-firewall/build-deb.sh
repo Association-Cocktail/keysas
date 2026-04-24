@@ -19,12 +19,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DAEMON_DIR="$SCRIPT_DIR/daemon"
-TRAY_DIR="$SCRIPT_DIR/tray-app"
+DAEMON_DIR="${SCRIPT_DIR}/daemon"
+TRAY_DIR="${SCRIPT_DIR}/tray-app"
 
 BUILD_TRAY=true
 for arg in "$@"; do
-    [[ "$arg" == "--no-tray" ]] && BUILD_TRAY=false
+    [[ "${arg}" == "--no-tray" ]] && BUILD_TRAY=false
 done
 
 # ── Prérequis ─────────────────────────────────────────────────────────────────
@@ -66,52 +66,52 @@ check_tray_deps() {
 
 echo "==> [1/3] Compilation du daemon (release)..."
 (
-    cd "$DAEMON_DIR"
+    cd "${DAEMON_DIR}"
     cargo build --release
 )
 
 echo "==> [2/3] Compression de la page de manuel..."
-gzip -k -f "$DAEMON_DIR/pkg/keysas-usbfilter-daemon.8"
+gzip -k -f "${DAEMON_DIR}/pkg/keysas-usbfilter-daemon.8"
 
 echo "==> [3/3] Génération du paquet .deb (daemon)..."
 (
-    cd "$DAEMON_DIR"
+    cd "${DAEMON_DIR}"
     cargo deb --no-build
 )
 
-DAEMON_DEB=$(find "$DAEMON_DIR/target/debian" -name "keysas-firewall_*.deb" | sort | tail -1)
+DAEMON_DEB=$(find "${DAEMON_DIR}/target/debian" -name "keysas-firewall_*.deb" | sort | tail -1)
 
 # ── Tray-app ──────────────────────────────────────────────────────────────────
 
-if $BUILD_TRAY; then
+if ${BUILD_TRAY}; then
     check_tray_deps
 
     echo ""
     echo "==> [4/5] Installation des dépendances frontend..."
     (
-        cd "$TRAY_DIR"
+        cd "${TRAY_DIR}"
         npm ci
     )
 
     echo "==> [5/5] Génération du paquet .deb (tray-app)..."
     (
-        cd "$TRAY_DIR"
+        cd "${TRAY_DIR}"
         npm run tauri build -- --bundles deb
     )
 
-    TRAY_DEB=$(find "$TRAY_DIR/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)
+    TRAY_DEB=$(find "${TRAY_DIR}/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)
 fi
 
 # ── Résumé ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "Paquets générés :"
-echo "  $DAEMON_DEB"
-$BUILD_TRAY && echo "  $TRAY_DEB"
+echo "  ${DAEMON_DEB}"
+${BUILD_TRAY} && echo "  ${TRAY_DEB}"
 echo ""
 echo "Installation :"
-echo "  sudo apt install ./$DAEMON_DEB"
-$BUILD_TRAY && echo "  sudo apt install ./$TRAY_DEB"
+echo "  sudo apt install ./${DAEMON_DEB}"
+${BUILD_TRAY} && echo "  sudo apt install ./${TRAY_DEB}"
 echo ""
 echo "Post-installation daemon :"
 echo "  # Déposer les certificats dans /etc/keysas/firewall/"

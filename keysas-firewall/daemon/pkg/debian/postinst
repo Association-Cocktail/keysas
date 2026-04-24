@@ -6,7 +6,7 @@ CONF_DIR=/etc/keysas/firewall
 case "$1" in
     configure)
         # Créer le répertoire des certificats avec les bons droits
-        install -d -m 750 "$CONF_DIR"
+        install -d -m 750 "${CONF_DIR}"
 
         # Créer les répertoires de montage et de certification
         install -d -m 755 /run/keysas/media    || true
@@ -34,6 +34,21 @@ case "$1" in
         echo "│  Puis activez le service :                              │"
         echo "│    systemctl enable --now keysas-firewall               │"
         echo "└─────────────────────────────────────────────────────────┘"
+        echo ""
+        ;;
+    *)
+        echo "Usage: $0 configure"
+        echo ""
+        echo "Le paquet .deb de keysas-firewall est divisé en deux parties :"
+        echo "  - Le daemon (keysas-usbfilter-daemon) qui gère les règles de filtrage USB"
+        echo "  - La tray-app (keysas-firewall-tray) qui fournit une interface graphique pour contrôler le daemon"
+        echo ""
+        echo "Par défaut, le script build-deb.sh génère uniquement le paquet du daemon."
+        echo "Si vous souhaitez également générer le paquet de la tray-app, assurez-vous d'avoir les dépendances nécessaires (libgtk-3-dev, libwebkit2gtk-4.1-dev, libayatana-appindicator3-dev, npm) et relancez :"
+        echo "  ./build-deb.sh"
+        echo ""
+        echo "Si vous ne souhaitez pas générer le paquet de la tray-app, utilisez :"
+        echo "  ./build-deb.sh --no-tray"
         echo ""
         ;;
 esac

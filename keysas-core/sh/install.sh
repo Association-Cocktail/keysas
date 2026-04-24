@@ -42,27 +42,27 @@ readonly G_SUDO
 # keysas user is used for administration. Once enrolled by keysas-admin
 # password authentication is disabled.
 add_users() {
-	if ! getent passwd $U_KEYSAS_IN >/dev/null ; then
-		useradd -r -M --shell /bin/false -d $HOME_KEYSAS_IN $U_KEYSAS_IN
-		install -d -m 0750 -o $U_KEYSAS_IN -g $U_KEYSAS_IN $HOME_KEYSAS_IN
+	if ! getent passwd ${U_KEYSAS_IN} >/dev/null; then
+		useradd -r -M --shell /bin/false -d ${HOME_KEYSAS_IN} ${U_KEYSAS_IN}
+		install -d -m 0750 -o ${U_KEYSAS_IN} -g ${U_KEYSAS_IN} ${HOME_KEYSAS_IN}
 	fi
-	if ! getent passwd $U_KEYSAS_TRANSIT >/dev/null ; then
-		useradd -r -M --shell /bin/false -d $HOME_KEYSAS_TRANSIT -G $U_KEYSAS_IN $U_KEYSAS_TRANSIT
-		install -d -m 0750 -o $U_KEYSAS_TRANSIT -g $U_KEYSAS_TRANSIT $HOME_KEYSAS_TRANSIT
+	if ! getent passwd ${U_KEYSAS_TRANSIT} >/dev/null; then
+		useradd -r -M --shell /bin/false -d ${HOME_KEYSAS_TRANSIT} -G ${U_KEYSAS_IN} ${U_KEYSAS_TRANSIT}
+		install -d -m 0750 -o ${U_KEYSAS_TRANSIT} -g ${U_KEYSAS_TRANSIT} ${HOME_KEYSAS_TRANSIT}
 	fi
-	if ! getent passwd $U_KEYSAS_OUT >/dev/null ; then
-		useradd -r -M --shell /bin/false -d $HOME_KEYSAS_OUT -G $U_KEYSAS_TRANSIT $U_KEYSAS_OUT
-		install -d -m 0750 -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT $HOME_KEYSAS_OUT
+	if ! getent passwd ${U_KEYSAS_OUT} >/dev/null; then
+		useradd -r -M --shell /bin/false -d ${HOME_KEYSAS_OUT} -G ${U_KEYSAS_TRANSIT} ${U_KEYSAS_OUT}
+		install -d -m 0750 -o ${U_KEYSAS_OUT} -g ${U_KEYSAS_OUT} ${HOME_KEYSAS_OUT}
 	fi
-	if ! getent passwd $U_KEYSAS_ANALYZE >/dev/null ; then
-		useradd -r -M --shell /bin/false $U_KEYSAS_ANALYZE
+	if ! getent passwd ${U_KEYSAS_ANALYZE} >/dev/null; then
+		useradd -r -M --shell /bin/false ${U_KEYSAS_ANALYZE}
 	fi
-	if ! getent passwd $U_KEYSAS_VIRUSTOTAL >/dev/null ; then
-		useradd -r -M --shell /bin/false $U_KEYSAS_VIRUSTOTAL
+	if ! getent passwd ${U_KEYSAS_VIRUSTOTAL} >/dev/null; then
+		useradd -r -M --shell /bin/false ${U_KEYSAS_VIRUSTOTAL}
 	fi
-	if ! getent passwd $U_KEYSAS_ADMIN >/dev/null ; then
-		useradd -M --shell /bin/bash -d $HOME_KEYSAS_ADMIN -U $U_KEYSAS_ADMIN -G $G_SUDO -p '$6$oFhHZhscHfd1n15H$NvVSbktCLhVe9dnMJarTDNKhctbJ/B9GZoApyH7Lp1s2EjfBsLWUJM/QsdgCeGr62BxohWbQB3Qwm3rimH4O01' 
-		install -d -m 0750 -o $U_KEYSAS_ADMIN -g $U_KEYSAS_ADMIN $HOME_KEYSAS_ADMIN
+	if ! getent passwd ${U_KEYSAS_ADMIN} >/dev/null; then
+		useradd -M --shell /bin/bash -d ${HOME_KEYSAS_ADMIN} -U ${U_KEYSAS_ADMIN} -G ${G_SUDO} -p '$6$oFhHZhscHfd1n15H$NvVSbktCLhVe9dnMJarTDNKhctbJ/B9GZoApyH7Lp1s2EjfBsLWUJM/QsdgCeGr62BxohWbQB3Qwm3rimH4O01'
+		install -d -m 0750 -o ${U_KEYSAS_ADMIN} -g ${U_KEYSAS_ADMIN} ${HOME_KEYSAS_ADMIN}
 	fi
 }
 
@@ -70,35 +70,35 @@ add_users() {
 install_bin() {
 	if [ -d "/usr/bin" ]; then
 		if [ -f "../bin/keysas-in" ]; then
-			install -v -o $U_KEYSAS_IN -g $U_KEYSAS_IN -m 0500 ../bin/keysas-in /usr/bin/
+			install -v -o ${U_KEYSAS_IN} -g ${U_KEYSAS_IN} -m 0500 ../bin/keysas-in /usr/bin/
 		else
 			echo "Binary ../bin/keysas-in cannot be found !"
 		fi
 	fi
 	if [ -d "/usr/bin" ]; then
 		if [ -f "../bin/keysas-transit" ]; then
-			install -v -o $U_KEYSAS_TRANSIT -g $U_KEYSAS_TRANSIT -m 0500 ../bin/keysas-transit /usr/bin/
+			install -v -o ${U_KEYSAS_TRANSIT} -g ${U_KEYSAS_TRANSIT} -m 0500 ../bin/keysas-transit /usr/bin/
 		else
 			echo "Binary ../bin/keysas-transit cannot be found !"
 		fi
 	fi
 	if [ -d "/usr/bin" ]; then
 		if [ -f "../bin/keysas-out" ]; then
-			install -v -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT -m 0500 ../bin/keysas-out /usr/bin/
+			install -v -o ${U_KEYSAS_OUT} -g ${U_KEYSAS_OUT} -m 0500 ../bin/keysas-out /usr/bin/
 		else
 			echo "Binary ../bin/keysas-out cannot be found !"
 		fi
 	fi
 	if [ -d "/usr/bin" ]; then
 		if [ -f "../bin/keysas-analyze" ]; then
-			install -v -o $U_KEYSAS_ANALYZE -g $U_KEYSAS_ANALYZE -m 0500 ../bin/keysas-analyze /usr/bin/
+			install -v -o ${U_KEYSAS_ANALYZE} -g ${U_KEYSAS_ANALYZE} -m 0500 ../bin/keysas-analyze /usr/bin/
 		else
 			echo "Binary ../bin/keysas-analyze cannot be found !"
 		fi
 	fi
 	if [ -d "/usr/bin" ]; then
 		if [ -f "../bin/keysas-virustotal" ]; then
-			install -v -o $U_KEYSAS_VIRUSTOTAL -g $U_KEYSAS_VIRUSTOTAL -m 0500 ../bin/keysas-virustotal /usr/bin/
+			install -v -o ${U_KEYSAS_VIRUSTOTAL} -g ${U_KEYSAS_VIRUSTOTAL} -m 0500 ../bin/keysas-virustotal /usr/bin/
 		else
 			echo "Binary ../bin/keysas-virustotal cannot be found !"
 		fi
@@ -106,7 +106,7 @@ install_bin() {
 }
 
 # Install systemd units.
-install_systemd_units(){
+install_systemd_units() {
 	if [ -d "/etc/systemd/system/" ]; then
 		install -v -o root -g root -m 0644 debian/keysas.service /etc/systemd/system/keysas.service
 		install -v -o root -g root -m 0644 debian/keysas-in.service /etc/systemd/system/keysas-in.service
@@ -151,11 +151,11 @@ install_config() {
 	fi
 	if [ -d "/etc/keysas/" ]; then
 		echo "Installing configuration files for keysas."
-		install -v -o $U_KEYSAS_IN -g $U_KEYSAS_IN -m 0600 debian/keysas-in.default /etc/keysas/keysas-in.conf
-		install -v -o $U_KEYSAS_TRANSIT -g $U_KEYSAS_TRANSIT -m 0600 debian/keysas-transit.default /etc/keysas/keysas-transit.conf
-		install -v -o $U_KEYSAS_OUT -g $U_KEYSAS_OUT -m 0600 debian/keysas-out.default /etc/keysas/keysas-out.conf
-		install -v -o $U_KEYSAS_ANALYZE -g $U_KEYSAS_ANALYZE -m 0600 debian/keysas-analyze.default /etc/keysas/keysas-analyze.conf
-		install -v -o $U_KEYSAS_VIRUSTOTAL -g $U_KEYSAS_VIRUSTOTAL -m 0600 debian/keysas-virustotal.default /etc/keysas/keysas-virustotal.conf
+		install -v -o ${U_KEYSAS_IN} -g ${U_KEYSAS_IN} -m 0600 debian/keysas-in.default /etc/keysas/keysas-in.conf
+		install -v -o ${U_KEYSAS_TRANSIT} -g ${U_KEYSAS_TRANSIT} -m 0600 debian/keysas-transit.default /etc/keysas/keysas-transit.conf
+		install -v -o ${U_KEYSAS_OUT} -g ${U_KEYSAS_OUT} -m 0600 debian/keysas-out.default /etc/keysas/keysas-out.conf
+		install -v -o ${U_KEYSAS_ANALYZE} -g ${U_KEYSAS_ANALYZE} -m 0600 debian/keysas-analyze.default /etc/keysas/keysas-analyze.conf
+		install -v -o ${U_KEYSAS_VIRUSTOTAL} -g ${U_KEYSAS_VIRUSTOTAL} -m 0600 debian/keysas-virustotal.default /etc/keysas/keysas-virustotal.conf
 	fi
 	if [ -d "/etc/sudoers.d" ]; then
 		install -v -o root -g root -m 0644 debian/keysas-sudoconfig /etc/sudoers.d/010_keysas
@@ -186,18 +186,18 @@ install_apparmor_profiles() {
 }
 
 # Set ACLs on directories.
-set_acls(){
-	if [ -d "$HOME_KEYSAS_IN" ]; then
-		setfacl -b $HOME_KEYSAS_IN
-		setfacl -m u:clamav:rx,g:$U_KEYSAS_IN:rwx $HOME_KEYSAS_IN
+set_acls() {
+	if [ -d "${HOME_KEYSAS_IN}" ]; then
+		setfacl -b ${HOME_KEYSAS_IN}
+		setfacl -m u:clamav:rx,g:${U_KEYSAS_IN}:rwx ${HOME_KEYSAS_IN}
 	fi
-	if [ -d "$HOME_KEYSAS_TRANSIT" ]; then
-		setfacl -b $HOME_KEYSAS_TRANSIT
-		setfacl -m g:$U_KEYSAS_TRANSIT:rwx $HOME_KEYSAS_TRANSIT
+	if [ -d "${HOME_KEYSAS_TRANSIT}" ]; then
+		setfacl -b ${HOME_KEYSAS_TRANSIT}
+		setfacl -m g:${U_KEYSAS_TRANSIT}:rwx ${HOME_KEYSAS_TRANSIT}
 	fi
-	if [ -d "$HOME_KEYSAS_OUT" ]; then
-		setfacl -b $HOME_KEYSAS_OUT
-		setfacl -m g:$U_KEYSAS_OUT:rwx $HOME_KEYSAS_OUT
+	if [ -d "${HOME_KEYSAS_OUT}" ]; then
+		setfacl -b ${HOME_KEYSAS_OUT}
+		setfacl -m g:${U_KEYSAS_OUT}:rwx ${HOME_KEYSAS_OUT}
 	fi
 }
 
@@ -205,7 +205,7 @@ set_acls(){
 # On first install: create the directory and install the minimal index.yar.
 # Always: apply targeted patches to upstream rules to fix systematic false positives.
 # Patches are idempotent (safe to run multiple times) and surgical (no full-file duplication).
-install_yara_rule(){
+install_yara_rule() {
 	if [ ! -d "/usr/share/keysas/" ]; then
 		echo "Installing a minimal YARA index.yar in /usr/share/keysas/"
 		install -d -m 0755 -o root -g root /usr/share/keysas/
@@ -221,10 +221,10 @@ install_yara_rule(){
 	# Disable crypto_signatures: detects crypto constants (CRC32, SHA, MD5, AES S-boxes)
 	# present in all software using TLS/crypto — zero detection value, 100% FP rate.
 	INDEX="/usr/share/keysas/rules/index.yar"
-	if [ -f "$INDEX" ]; then
+	if [ -f "${INDEX}" ]; then
 		sed -i \
 			's|^include "\./crypto/crypto_signatures\.yar"|// crypto_signatures disabled: crypto constants in all TLS software — FP only\n// include "./crypto/crypto_signatures.yar"|' \
-			"$INDEX"
+			"${INDEX}"
 	fi
 
 	# --- packer_compiler_signatures.yar ---
@@ -233,10 +233,10 @@ install_yara_rule(){
 	# used as conditions in other rules, not as standalone detections.
 	# Making them private: they still work as conditions but no longer fire alone.
 	PACKERS="/usr/share/keysas/rules/packers/packer_compiler_signatures.yar"
-	if [ -f "$PACKERS" ]; then
+	if [ -f "${PACKERS}" ]; then
 		sed -i \
 			's/^rule \([A-Za-z_][A-Za-z0-9_]*\) : PECheck$/private rule \1 : PECheck/' \
-			"$PACKERS"
+			"${PACKERS}"
 	fi
 
 	# --- Maldoc_PDF.yar ---
@@ -244,8 +244,8 @@ install_yara_rule(){
 	# Disable multiple_versions: triggers on every incrementally-saved PDF (standard feature).
 	# Both rules were commented by their own author as having no detection value.
 	PDF_MALDOC="/usr/share/keysas/rules/maldocs/Maldoc_PDF.yar"
-	if [ -f "$PDF_MALDOC" ]; then
-		python3 - "$PDF_MALDOC" <<'PYEOF'
+	if [ -f "${PDF_MALDOC}" ]; then
+		python3 - "${PDF_MALDOC}" <<'PYEOF'
 import sys, re
 
 def disable_rule(content, rule_name, reason):
@@ -417,19 +417,19 @@ main() {
 	EOF
 	echo "Installation completed !"
 
-	INGID=$(getent group $U_KEYSAS_IN | awk -F: '{printf "%d\n", $3}')
+	INGID=$(getent group ${U_KEYSAS_IN} | awk -F: '{printf "%d\n", $3}')
 	readonly INGID
 
-	OUTGID=$(getent group $U_KEYSAS_OUT | awk -F: '{printf "%d\n", $3}')
+	OUTGID=$(getent group ${U_KEYSAS_OUT} | awk -F: '{printf "%d\n", $3}')
 	readonly OUTGID
 
 	cat <<-EOF
 		-|>- You can now create new users belonging to group keysas-in
 		     to be able to deposit files into /var/local/in/
-		     sudo adduser  --home /var/local/in --gid $INGID untrusted_user
+		     sudo adduser  --home /var/local/in --gid ${INGID} untrusted_user
 		-|>- You also need to create new users belonging to group keysas-out
 		     to be able to retrieve files from /var/local/out/
-		     sudo adduser  --home /var/local/out --gid $OUTGID trusted_user
+		     sudo adduser  --home /var/local/out --gid ${OUTGID} trusted_user
 	EOF
 }
 
