@@ -382,9 +382,12 @@ jobs:
           # cargo wix passes WiX preprocessor variables to candle.exe via -C "-dNAME=VALUE".
           # $(var.Version) is injected automatically from Cargo.toml.
           cargo wix `
+            --no-build `
+            --target x86_64-pc-windows-msvc `
             -C "-dBinDir=target\x86_64-pc-windows-msvc\release" `
             -C "-dMinifilterDir=$minifilterDir" `
             -C "-dTrayAppBinDir=..\tray-app\src-tauri\target\x86_64-pc-windows-msvc\release" `
+            -L "-sice:ICE20" `
             --nocapture
 
       - name: Upload MSI artifact
