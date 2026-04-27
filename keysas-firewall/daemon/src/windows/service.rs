@@ -13,7 +13,9 @@ use windows_service::service::{
 };
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::service_dispatcher;
+use std::time::SystemTime;
 use x509_cert::der::DecodePem;
+use x509_cert::time::Time;
 use x509_cert::Certificate;
 
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, PublicKeys};
@@ -140,6 +142,21 @@ pub fn start_windows_service(debug: bool) -> Result<(), anyhow::Error> {
         service_dispatcher::start("Keysas Service", ffi_keysas_service)?;
     }
 
+    Ok(())
+}
+
+/// Returns an error if `cert` has passed its `notAfter` validity date.
+fn check_not_expired(cert: &Certificate, label: &str) -> Result<(), anyhow::Error> {
+    let not_after_unix = match &cert.tbs_certificate.validity.not_after {
+        Time::UtcTime(t) => t.to_unix_duration(),
+        Time::GeneralTime(t) => t.to_unix_duration(),
+    };
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    if now > not_after_unix {
+        return Err(anyhow!("certificate '{label}' is expired"));
+    }
     Ok(())
 }
 
@@ -274,16 +291,31 @@ pub fn load_certificates(
         }
     };
 
-    // Load the raw station CA certificates for file-report signature validation.
+    // Parse and expiry-check USB CA certificates.
+    let usb_cl_bytes = std::fs::read(&*usb_cl_path)
+        .map_err(|e| anyhow!("Cannot read USB CA ED25519 certificate {usb_cl_path:?}: {e}"))?;
+    let usb_ca_cert_cl = Certificate::from_pem(&usb_cl_bytes)
+        .map_err(|e| anyhow!("Cannot parse USB CA ED25519 certificate: {e}"))?;
+    check_not_expired(&usb_ca_cert_cl, "USB CA ED25519")?;
+
+    let usb_pq_bytes = std::fs::read(&*usb_pq_path)
+        .map_err(|e| anyhow!("Cannot read USB CA ML-DSA87 certificate {usb_pq_path:?}: {e}"))?;
+    let usb_ca_cert_pq = Certificate::from_pem(&usb_pq_bytes)
+        .map_err(|e| anyhow!("Cannot parse USB CA ML-DSA87 certificate: {e}"))?;
+    check_not_expired(&usb_ca_cert_pq, "USB CA ML-DSA87")?;
+
+    // Load and expiry-check station CA certificates (also used for file-report validation).
     let st_cl_bytes = std::fs::read(&*st_cl_path)
         .map_err(|e| anyhow!("Cannot read station CA ED25519 certificate {st_cl_path:?}: {e}"))?;
     let st_ca_cert_cl = Certificate::from_pem(&st_cl_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ED25519 certificate: {e}"))?;
+    check_not_expired(&st_ca_cert_cl, "station CA ED25519")?;
 
     let st_pq_bytes = std::fs::read(&*st_pq_path)
         .map_err(|e| anyhow!("Cannot read station CA ML-DSA87 certificate {st_pq_path:?}: {e}"))?;
     let st_ca_cert_pq = Certificate::from_pem(&st_pq_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ML-DSA87 certificate: {e}"))?;
+    check_not_expired(&st_ca_cert_pq, "station CA ML-DSA87")?;
 
     Ok((st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq))
 }

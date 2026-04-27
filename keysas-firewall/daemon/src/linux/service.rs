@@ -1,6 +1,8 @@
 use anyhow::anyhow;
 use std::fs;
+use std::time::SystemTime;
 use x509_cert::der::DecodePem;
+use x509_cert::time::Time;
 use x509_cert::Certificate;
 
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, PublicKeys};
@@ -41,6 +43,21 @@ pub fn load_security_policy(config: &Config) -> Result<SecurityPolicy, anyhow::E
     Ok(policy)
 }
 
+/// Returns an error if `cert` has passed its `notAfter` validity date.
+fn check_not_expired(cert: &Certificate, label: &str) -> Result<(), anyhow::Error> {
+    let not_after_unix = match &cert.tbs_certificate.validity.not_after {
+        Time::UtcTime(t) => t.to_unix_duration(),
+        Time::GeneralTime(t) => t.to_unix_duration(),
+    };
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    if now > not_after_unix {
+        return Err(anyhow!("certificate '{label}' is expired"));
+    }
+    Ok(())
+}
+
 pub fn load_certificates(
     config: &Config,
 ) -> Result<
@@ -74,7 +91,22 @@ pub fn load_certificates(
             }
         };
 
-    // Load the raw station CA certificates for file-report signature validation.
+    // Parse and expiry-check USB CA certificates.
+    let usb_cl_bytes = fs::read(&config.usb_ca_cl).map_err(|e| {
+        anyhow!("Cannot read USB CA ED25519 certificate {:?}: {e}", &config.usb_ca_cl)
+    })?;
+    let usb_ca_cert_cl = Certificate::from_pem(&usb_cl_bytes)
+        .map_err(|e| anyhow!("Cannot parse USB CA ED25519 certificate: {e}"))?;
+    check_not_expired(&usb_ca_cert_cl, "USB CA ED25519")?;
+
+    let usb_pq_bytes = fs::read(&config.usb_ca_pq).map_err(|e| {
+        anyhow!("Cannot read USB CA ML-DSA87 certificate {:?}: {e}", &config.usb_ca_pq)
+    })?;
+    let usb_ca_cert_pq = Certificate::from_pem(&usb_pq_bytes)
+        .map_err(|e| anyhow!("Cannot parse USB CA ML-DSA87 certificate: {e}"))?;
+    check_not_expired(&usb_ca_cert_pq, "USB CA ML-DSA87")?;
+
+    // Load and expiry-check station CA certificates (also used for file-report validation).
     let st_cl_bytes = fs::read(&config.ca_cert_cl).map_err(|e| {
         anyhow!(
             "Cannot read station CA ED25519 certificate {:?}: {e}",
@@ -83,6 +115,7 @@ pub fn load_certificates(
     })?;
     let st_ca_cert_cl = Certificate::from_pem(&st_cl_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ED25519 certificate: {e}"))?;
+    check_not_expired(&st_ca_cert_cl, "station CA ED25519")?;
 
     let st_pq_bytes = fs::read(&config.ca_cert_pq).map_err(|e| {
         anyhow!(
@@ -92,6 +125,7 @@ pub fn load_certificates(
     })?;
     let st_ca_cert_pq = Certificate::from_pem(&st_pq_bytes)
         .map_err(|e| anyhow!("Cannot parse station CA ML-DSA87 certificate: {e}"))?;
+    check_not_expired(&st_ca_cert_pq, "station CA ML-DSA87")?;
 
     Ok((st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq))
 }

@@ -97,8 +97,7 @@ fn on_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     let id = event.id().as_ref().to_string();
 
     if id == "quit" {
-        app.exit(0);
-        return;
+        std::process::exit(0);
     }
 
     // "authorize:{device_id}" — manually allow a blocked USB key.

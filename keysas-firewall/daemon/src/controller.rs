@@ -197,6 +197,15 @@ pub struct SecurityPolicy {
     pub allow_user_file_write: bool,
 }
 
+/// Certificates loaded at startup.  `None` when any cert is absent, expired,
+/// unreadable or otherwise unusable — in that case the firewall blocks every
+/// USB device unconditionally until a daemon restart with valid certificates.
+struct CertBundle {
+    usb_ca_pub: KeysasHybridPubKeys,
+    st_ca_cert_cl: Certificate,
+    st_ca_cert_pq: Certificate,
+}
+
 /// Service controller object, it contains handles to the service communication interfaces and data
 #[allow(missing_debug_implementations)]
 pub struct ServiceController {
@@ -204,10 +213,8 @@ pub struct ServiceController {
     gui: Box<dyn GuiInterface + Sync + Send>,
     file_filter: Box<dyn FileFilterInterface + Sync + Send>,
     policy: SecurityPolicy,
-    /// Station CA certificates used to validate file reports (.krp)
-    st_ca_cert_cl: Certificate,
-    st_ca_cert_pq: Certificate,
-    usb_ca_pub: KeysasHybridPubKeys,
+    /// None when certificates could not be loaded — triggers unconditional Block.
+    certs: Option<CertBundle>,
     unmounted_usb: HashMap<OsString, UsbDevicePolicy>,
     mounted_usb: HashMap<OsString, UsbDevicePolicy>,
     /// Cache of files that have been pre-validated before the fanotify mark was
@@ -314,14 +321,19 @@ impl ServiceController {
         };
         log::info!("Policy loaded");
 
-        // Load local certificates for the CA
-        let (_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq) = match load_certificates(config)
-        {
-            Ok(c) => c,
+        // Load certificates — failure is non-fatal: the daemon starts but blocks
+        // all USB devices until restarted with valid/unexpired certificates.
+        let certs = match load_certificates(config) {
+            Ok((_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq)) => {
+                log::info!("ServiceController: certificates loaded and valid");
+                Some(CertBundle { usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq })
+            }
             Err(e) => {
-                return Err(anyhow!(
-                    "ServiceController init: Failed to load certificates {e}"
-                ));
+                log::warn!(
+                    "ServiceController: certificate load failed ({e}) — \
+                     all USB devices will be blocked until a restart with valid certificates"
+                );
+                None
             }
         };
 
@@ -337,9 +349,7 @@ impl ServiceController {
             gui,
             file_filter,
             policy,
-            st_ca_cert_cl,
-            st_ca_cert_pq,
-            usb_ca_pub,
+            certs,
             unmounted_usb: HashMap::new(),
             mounted_usb: HashMap::new(),
             validated_files: HashSet::new(),
@@ -443,6 +453,31 @@ impl ServiceController {
     ) -> Result<bool, anyhow::Error> {
         info!("Received USB device request: {:?}", device);
 
+        // Fail closed: if certificates are not available (absent, expired,
+        // unreadable, wrong name, incomplete set, …) block every USB device
+        // unconditionally, regardless of policy flags.
+        if self.certs.is_none() {
+            warn!(
+                "authorize_usb: certificates unavailable — blocking {:?}",
+                device.device_id
+            );
+            self.unmounted_usb
+                .entry(device.device_id.clone())
+                .or_insert(UsbDevicePolicy {
+                    device: device.clone(),
+                    auth: UsbAuthorization::Block,
+                });
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: device.device_id.to_string_lossy().into_owned(),
+                path: String::default(),
+                name: device.get_name(),
+                authorization: UsbAuthorization::Block,
+            };
+            let _ = self.gui.send_usb_update(&update);
+            return Ok(false);
+        }
+
         // TODO - Improve list of USB device
         // TODO - If mount point is given insert it in correct list
 
@@ -532,6 +567,11 @@ impl ServiceController {
     ///     allows user overrides; `update_usb()` is called directly to move the
     ///     device to `mounted_usb` and update the minifilter authorization.
     pub fn override_blocked_usb(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
+        if self.certs.is_none() {
+            return Err(anyhow!(
+                "USB override refused: certificates are not available or have expired"
+            ));
+        }
         if !self.policy.allow_user_usb_authorization {
             return Err(anyhow!(
                 "User USB authorization override is disabled by policy"
@@ -868,11 +908,9 @@ impl ServiceController {
         }
 
         // File was not certified at mount time.
-        // If allow_user_file_read is enabled, queue the file for tray-based
-        // authorization (non-blocking).  The tray-app polls `get_blocked_files`
-        // and shows an "Autoriser" button per file.  On next open after the user
-        // authorizes, the file will be in `validated_files` → allowed.
-        if self.policy.allow_user_file_read {
+        // Queue for tray-based authorization only when certs are valid AND the
+        // policy allows it.  If certs are KO the user cannot bypass cert checks.
+        if self.certs.is_some() && self.policy.allow_user_file_read {
             if let Some(device_id) = self.device_id_for_path(&file_path) {
                 let list = self.blocked_files.entry(device_id).or_default();
                 if !list.contains(&file_path) {
@@ -960,11 +998,13 @@ impl ServiceController {
         );
         info!("validate_usb_signature: verifying data={:?}", data);
 
-        match KeysasHybridPubKeys::verify_key_signatures(
-            data.as_bytes(),
-            &hybrid_sig,
-            &self.usb_ca_pub,
-        ) {
+        let usb_ca_pub = &self
+            .certs
+            .as_ref()
+            .ok_or_else(|| anyhow!("validate_usb_signature: no valid certificates"))?
+            .usb_ca_pub;
+
+        match KeysasHybridPubKeys::verify_key_signatures(data.as_bytes(), &hybrid_sig, usb_ca_pub) {
             Ok(_) => Ok(true),
             Err(e) => {
                 warn!("validate_usb_signature: verification failed: {e}");
@@ -987,6 +1027,11 @@ impl ServiceController {
     ///
     /// * `path` - Path to the file
     fn validate_file(&self, path: &Path) -> Result<bool, anyhow::Error> {
+        let certs = match self.certs.as_ref() {
+            Some(c) => c,
+            None => return Ok(false),
+        };
+
         // Test if the file is itself a station report (.krp)
         if Path::new(path)
             .extension()
@@ -1006,8 +1051,8 @@ impl ServiceController {
                 match parse_report(
                     path,
                     Some(&file_path),
-                    Some(&self.st_ca_cert_cl),
-                    Some(&self.st_ca_cert_pq),
+                    Some(&certs.st_ca_cert_cl),
+                    Some(&certs.st_ca_cert_pq),
                 ) {
                     Ok(_) => Ok(true),
                     Err(e) => {
@@ -1020,8 +1065,8 @@ impl ServiceController {
                 match parse_report(
                     path,
                     None,
-                    Some(&self.st_ca_cert_cl),
-                    Some(&self.st_ca_cert_pq),
+                    Some(&certs.st_ca_cert_cl),
+                    Some(&certs.st_ca_cert_pq),
                 ) {
                     Ok(_) => Ok(true),
                     Err(e) => {
@@ -1044,8 +1089,8 @@ impl ServiceController {
             match parse_report(
                 path_report.as_path(),
                 Some(path),
-                Some(&self.st_ca_cert_cl),
-                Some(&self.st_ca_cert_pq),
+                Some(&certs.st_ca_cert_cl),
+                Some(&certs.st_ca_cert_pq),
             ) {
                 Ok(_) => Ok(true),
                 Err(e) => {
