@@ -39,10 +39,11 @@ use windows::Win32::Security::{
     PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE, OPEN_EXISTING,
+    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+    FILE_SHARE_MODE, OPEN_EXISTING,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW, NAMED_PIPE_MODE,
 };
 use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 
@@ -52,11 +53,11 @@ const MAX_MSG_SIZE: u32 = 65536;
 /// How long `write_mailslot` waits for the pipe server to be ready (milliseconds).
 const WRITE_WAIT_MS: u32 = 500;
 
-// Named-pipe mode constants (raw u32 as exposed by the windows 0.48 crate).
-const PIPE_ACCESS_INBOUND: u32 = 0x0000_0001;
-const PIPE_TYPE_MESSAGE: u32 = 0x0000_0004;
-const PIPE_READMODE_MESSAGE: u32 = 0x0000_0002;
-const PIPE_NOWAIT: u32 = 0x0000_0001;
+// Named-pipe mode constants wrapped in the types expected by windows 0.48.
+const PIPE_ACCESS_INBOUND: FILE_FLAGS_AND_ATTRIBUTES = FILE_FLAGS_AND_ATTRIBUTES(0x0000_0001);
+const PIPE_TYPE_MESSAGE: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0004);
+const PIPE_READMODE_MESSAGE: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0002);
+const PIPE_NOWAIT: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0001);
 const PIPE_UNLIMITED_INSTANCES: u32 = 255;
 
 /// Server-side handle for a named pipe channel.
@@ -130,8 +131,9 @@ pub fn create_mailslot(name: &str) -> Result<MailSlot, anyhow::Error> {
     let handle = unsafe {
         CreateNamedPipeW(
             pslot_name,
-            PIPE_ACCESS_INBOUND,                                    // server can only read
-            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_NOWAIT, // message mode, non-blocking
+            PIPE_ACCESS_INBOUND,
+            // message mode, non-blocking: PIPE_TYPE_MESSAGE(4) | PIPE_READMODE_MESSAGE(2) | PIPE_NOWAIT(1)
+            NAMED_PIPE_MODE(PIPE_TYPE_MESSAGE.0 | PIPE_READMODE_MESSAGE.0 | PIPE_NOWAIT.0),
             PIPE_UNLIMITED_INSTANCES,
             MAX_MSG_SIZE,
             MAX_MSG_SIZE,
