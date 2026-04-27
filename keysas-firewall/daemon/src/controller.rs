@@ -215,6 +215,8 @@ pub struct ServiceController {
     policy: SecurityPolicy,
     /// None when certificates could not be loaded — triggers unconditional Block.
     certs: Option<CertBundle>,
+    /// Reason for cert load failure, logged on every USB plug-in when certs are None.
+    cert_error: Option<String>,
     unmounted_usb: HashMap<OsString, UsbDevicePolicy>,
     mounted_usb: HashMap<OsString, UsbDevicePolicy>,
     /// Cache of files that have been pre-validated before the fanotify mark was
@@ -323,17 +325,19 @@ impl ServiceController {
 
         // Load certificates — failure is non-fatal: the daemon starts but blocks
         // all USB devices until restarted with valid/unexpired certificates.
-        let certs = match load_certificates(config) {
+        let (certs, cert_error) = match load_certificates(config) {
             Ok((_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq)) => {
                 log::info!("ServiceController: certificates loaded and valid");
-                Some(CertBundle { usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq })
+                (Some(CertBundle { usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq }), None)
             }
             Err(e) => {
+                let reason = format!("{e:#}");
                 log::warn!(
-                    "ServiceController: certificate load failed ({e}) — \
-                     all USB devices will be blocked until a restart with valid certificates"
+                    "ServiceController: certificate load failed — \
+                     all USB devices will be blocked until a restart with valid certificates. \
+                     Reason: {reason}"
                 );
-                None
+                (None, Some(reason))
             }
         };
 
@@ -350,6 +354,7 @@ impl ServiceController {
             file_filter,
             policy,
             certs,
+            cert_error,
             unmounted_usb: HashMap::new(),
             mounted_usb: HashMap::new(),
             validated_files: HashSet::new(),
@@ -458,8 +463,9 @@ impl ServiceController {
         // unconditionally, regardless of policy flags.
         if self.certs.is_none() {
             warn!(
-                "authorize_usb: certificates unavailable — blocking {:?}",
-                device.device_id
+                "authorize_usb: certificates unavailable — blocking {:?} (reason: {})",
+                device.device_id,
+                self.cert_error.as_deref().unwrap_or("unknown")
             );
             self.unmounted_usb
                 .entry(device.device_id.clone())

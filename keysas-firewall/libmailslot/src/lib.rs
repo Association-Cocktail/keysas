@@ -198,7 +198,7 @@ pub fn write_mailslot(name: &str, message: &str) -> Result<(), anyhow::Error> {
     // Check that message is no longer than the maximum message size
     // Conversion from u32 to usize should not panic as usize should be at least 32 bit wide on targets
     if message.len() > usize::try_from(MAX_MSG_SIZE).unwrap() {
-        println!("write_mailslot: message too long");
+        log::warn!("write_mailslot: message too long ({} bytes, max {})", message.len(), MAX_MSG_SIZE);
         return Err(anyhow!("write_mailslot: message too long"));
     }
 
@@ -238,30 +238,41 @@ pub fn write_mailslot(name: &str, message: &str) -> Result<(), anyhow::Error> {
             tmp_handle,
         ) {
             Ok(h) => h,
-            Err(_) => {
-                println!("write_mailslot: Failed to create file");
-                let err = GetLastError();
-                println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-                return Err(anyhow!("write_mailslot: Failed to create file"));
+            Err(e) => {
+                let os_err = GetLastError();
+                log::warn!(
+                    "write_mailslot: CreateFileW failed for '{}': {} (Windows error {}: {})",
+                    resolved_name,
+                    e,
+                    os_err.0,
+                    os_err.to_hresult().message().to_string_lossy()
+                );
+                return Err(anyhow!("write_mailslot: Failed to create file: {e}"));
             }
         }
     };
 
     if handle.is_invalid() {
-        println!("write_mailslot: Invalid mailslot handle");
-        unsafe {
-            let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-        }
+        let os_err = unsafe { GetLastError() };
+        log::warn!(
+            "write_mailslot: invalid handle for '{}' (Windows error {}: {})",
+            resolved_name,
+            os_err.0,
+            os_err.to_hresult().message().to_string_lossy()
+        );
         return Err(anyhow!("write_mailslot: Invalid mailslot handle"));
     }
 
     // Write to the file
     unsafe {
         if !WriteFile(handle, Some(message.as_bytes()), None, None).as_bool() {
-            println!("write_mailslot: Failed to write to file");
-            let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
+            let os_err = GetLastError();
+            log::warn!(
+                "write_mailslot: WriteFile failed for '{}' (Windows error {}: {})",
+                resolved_name,
+                os_err.0,
+                os_err.to_hresult().message().to_string_lossy()
+            );
             return Err(anyhow!("write_mailslot: Failed to write to file"));
         }
     }
