@@ -5,13 +5,17 @@
  *
  */
 
-//! Simple wrapper around the Windows mailslot API
+//! Named-pipe IPC wrapper (replaces the Windows mailslot implementation).
+//!
+//! Named pipes via `\\.\pipe\` are routed through `\Device\NamedPipe\` in the
+//! Windows kernel — a flat, session-agnostic namespace.  They work between
+//! Session 0 (daemon / SYSTEM) and Session 1+ (interactive tray app) with no
+//! SMB stack, no port 445, no firewall rules required.
 
 #![warn(unused_extern_crates)]
 #![forbid(non_shorthand_field_patterns)]
 #![warn(dead_code)]
 #![warn(missing_debug_implementations)]
-#![warn(missing_copy_implementations)]
 #![warn(trivial_numeric_casts)]
 #![warn(unused_extern_crates)]
 #![warn(unused_import_braces)]
@@ -23,72 +27,96 @@
 
 use anyhow::anyhow;
 use libc::c_void;
-use std::str;
 use std::{ffi::OsStr, iter::once, os::windows::ffi::OsStrExt};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{GetLastError, BOOL, FALSE, HANDLE};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, BOOL, FALSE, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING,
+    ERROR_PIPE_NOT_CONNECTED,
+};
 use windows::Win32::Security::{
     InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
     PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
 };
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
+    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_MODE, OPEN_EXISTING,
 };
-use windows::Win32::System::Mailslots::{CreateMailslotW, GetMailslotInfo};
-use windows::Win32::System::WindowsProgramming::GetComputerNameW;
-use windows::Win32::System::SystemServices::MAILSLOT_WAIT_FOREVER;
+use windows::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW,
+};
 use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 
-const MAX_MSG_SIZE: u32 = 1024;
+/// Maximum message size in bytes.
+const MAX_MSG_SIZE: u32 = 65536;
 
-/// Handle to the mailslot
-#[derive(Debug, Copy, Clone)]
+/// How long `write_mailslot` waits for the pipe server to be ready (milliseconds).
+const WRITE_WAIT_MS: u32 = 500;
+
+// Named-pipe mode constants (raw u32 as exposed by the windows 0.48 crate).
+const PIPE_ACCESS_INBOUND: u32 = 0x0000_0001;
+const PIPE_TYPE_MESSAGE: u32 = 0x0000_0004;
+const PIPE_READMODE_MESSAGE: u32 = 0x0000_0002;
+const PIPE_NOWAIT: u32 = 0x0000_0001;
+const PIPE_UNLIMITED_INSTANCES: u32 = 255;
+
+/// Server-side handle for a named pipe channel.
+///
+/// Not `Copy` or `Clone`: the contained `HANDLE` must not be aliased —
+/// it is closed implicitly when the pipe server shuts down.
+#[derive(Debug)]
 pub struct MailSlot {
     pub handle: HANDLE,
+    /// True once a client has connected and we have not yet seen a disconnect.
+    connected: bool,
 }
 
-/// Create a new mailslot
+/// Create a named pipe server (the reader / server side of the channel).
 ///
-/// # Arguments
+/// Uses message mode and `PIPE_NOWAIT` so that `read_mailslot` can be called
+/// in a polling loop without blocking.
 ///
-/// * `name` - Name of the mailslot
+/// A NULL DACL is set on the pipe so that both Session 0 (SYSTEM) and any
+/// interactive-user session can connect, regardless of which side creates it.
 pub fn create_mailslot(name: &str) -> Result<MailSlot, anyhow::Error> {
-    // let slot_name = PCSTR::from_raw(name.as_ptr() as *const u8);
     let slot_name: Vec<u16> = OsStr::new(name).encode_wide().chain(once(0)).collect();
     let pslot_name = PCWSTR::from_raw(slot_name.as_ptr());
 
-    // Give complete access to the mailslot
+    // NULL DACL → any local process may connect (required for cross-session access).
     let mut sec_dec = SECURITY_DESCRIPTOR::default();
     let psec_desc = PSECURITY_DESCRIPTOR(&mut sec_dec as *mut SECURITY_DESCRIPTOR as *mut c_void);
 
     unsafe {
         if !InitializeSecurityDescriptor(psec_desc, SECURITY_DESCRIPTOR_REVISION).as_bool() {
-            println!("run_server: Failed to initialize the security descriptor");
             let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
             return Err(anyhow!(
-                "run_server: Failed to initialize the security descriptor"
+                "create_mailslot: InitializeSecurityDescriptor failed for '{name}' \
+                 (Windows error {}: {})",
+                err.0,
+                err.to_hresult().message().to_string_lossy()
             ));
         }
 
         if !SetSecurityDescriptorDacl(psec_desc, BOOL::from(true), None, BOOL::from(false))
             .as_bool()
         {
-            println!("run_server: Failed to set the security descriptor Dacl");
             let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
             return Err(anyhow!(
-                "run_server: Failed to set the security descriptor Dacl"
+                "create_mailslot: SetSecurityDescriptorDacl failed for '{name}' \
+                 (Windows error {}: {})",
+                err.0,
+                err.to_hresult().message().to_string_lossy()
             ));
         }
 
-        if !SetSecurityDescriptorControl(psec_desc, SE_DACL_PROTECTED, SE_DACL_PROTECTED).as_bool()
+        if !SetSecurityDescriptorControl(psec_desc, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+            .as_bool()
         {
-            println!("run_server: Failed to set the security descriptor Control");
             let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
             return Err(anyhow!(
-                "run_server: Failed to set the security descriptor Control"
+                "create_mailslot: SetSecurityDescriptorControl failed for '{name}' \
+                 (Windows error {}: {})",
+                err.0,
+                err.to_hresult().message().to_string_lossy()
             ));
         }
     }
@@ -100,154 +128,166 @@ pub fn create_mailslot(name: &str) -> Result<MailSlot, anyhow::Error> {
     };
 
     let handle = unsafe {
-        match CreateMailslotW(
+        CreateNamedPipeW(
             pslot_name,
+            PIPE_ACCESS_INBOUND,                                    // server can only read
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_NOWAIT, // message mode, non-blocking
+            PIPE_UNLIMITED_INSTANCES,
             MAX_MSG_SIZE,
-            MAILSLOT_WAIT_FOREVER,
+            MAX_MSG_SIZE,
+            0, // default timeout
             Some(&sec_attr as *const SECURITY_ATTRIBUTES),
-        ) {
-            Ok(h) => h,
-            Err(_) => {
-                println!("create_mailslot: Failed to create mailslot: {:?}", name);
-                let err = GetLastError();
-                println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-                return Err(anyhow!("create_mailslot: Failed to create mailslot"));
-            }
-        }
+        )
     };
 
-    if handle.is_invalid() {
-        println!("create_mailslot: Invalid mailslot handle");
-        unsafe {
-            let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-        }
-        return Err(anyhow!("create_mailslot: Invalid mailslot handle"));
+    if handle == INVALID_HANDLE_VALUE || handle.is_invalid() {
+        let err = unsafe { GetLastError() };
+        return Err(anyhow!(
+            "create_mailslot: CreateNamedPipeW failed for '{name}' \
+             (Windows error {}: {})",
+            err.0,
+            err.to_hresult().message().to_string_lossy()
+        ));
     }
 
-    Ok(MailSlot { handle })
+    Ok(MailSlot { handle, connected: false })
 }
 
-/// Read one message from the mailslot
+/// Read one message from a named pipe server (non-blocking).
 ///
-/// # Arguments
+/// Returns `Ok(Some(msg))` when a complete message is available,
+/// `Ok(None)` when there is no client or no data yet, and `Err` on
+/// unexpected errors.
 ///
-/// * `mailslot` - Handle to the mailslot
-/// * `handle_msg` - Callback to handle messages received
-pub fn read_mailslot(mailslot: &MailSlot) -> Result<Option<String>, anyhow::Error> {
-    // Retrieve state of the mailslot
-    let mut next_msg_size: u32 = 0;
-    let mut nb_msg: u32 = 0;
-    unsafe {
-        if !GetMailslotInfo(
-            mailslot.handle,
-            None,
-            Some(&mut next_msg_size),
-            Some(&mut nb_msg),
-            None,
-        )
-        .as_bool()
-        {
-            println!("read_mailslot: Failed to read mailslot info");
-            let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-            return Err(anyhow!("read_mailslot: Failed to read mailslot info"));
+/// Manages the connection lifecycle internally: if a client disconnects the
+/// pipe is reset and will accept the next client on the following call.
+pub fn read_mailslot(slot: &mut MailSlot) -> Result<Option<String>, anyhow::Error> {
+    if !slot.connected {
+        // With PIPE_NOWAIT, ConnectNamedPipe always returns FALSE.
+        // We only care about GetLastError():
+        //   ERROR_PIPE_CONNECTED  → a client connected before we called this
+        //   ERROR_PIPE_LISTENING  → no client yet, nothing to read
+        unsafe { ConnectNamedPipe(slot.handle, None) };
+        let err = unsafe { GetLastError() };
+        match err {
+            ERROR_PIPE_CONNECTED => {
+                slot.connected = true;
+            }
+            ERROR_PIPE_LISTENING => {
+                return Ok(None);
+            }
+            other => {
+                return Err(anyhow!(
+                    "read_mailslot: ConnectNamedPipe failed \
+                     (Windows error {}: {})",
+                    other.0,
+                    other.to_hresult().message().to_string_lossy()
+                ));
+            }
         }
     }
 
-    // If there is no message to read exit
-    if nb_msg == 0 {
-        return Ok(None);
-    }
-
-    // Read the message from the mailslot
-    let mut buffer: [u8; MAX_MSG_SIZE as usize] = [0; MAX_MSG_SIZE as usize];
-    unsafe {
-        if !ReadFile(
-            mailslot.handle,
+    let mut buffer = vec![0u8; MAX_MSG_SIZE as usize];
+    let mut bytes_read: u32 = 0;
+    let ok = unsafe {
+        ReadFile(
+            slot.handle,
             Some(buffer.as_mut_ptr() as *mut c_void),
-            next_msg_size,
-            None,
+            MAX_MSG_SIZE,
+            Some(&mut bytes_read),
             None,
         )
-        .as_bool()
-        {
-            println!("read_mailslot: Failed to read message");
-            let err = GetLastError();
-            println!("Error: {:?}", err.to_hresult().message().to_string_lossy());
-            return Err(anyhow!("read_mailslot: Failed to read message"));
-        }
+    };
+
+    if ok.as_bool() {
+        let msg = String::from_utf8_lossy(&buffer[..bytes_read as usize])
+            .trim_matches(char::from(0))
+            .to_owned();
+        return Ok(Some(msg));
     }
 
-    match str::from_utf8(&buffer) {
-        Ok(msg) => {
-            let res = msg.trim_matches(char::from(0));
-            Ok(Some(String::from(res)))
+    let err = unsafe { GetLastError() };
+    match err {
+        ERROR_NO_DATA => {
+            // PIPE_NOWAIT: no message available yet, try again next poll.
+            Ok(None)
         }
-        Err(e) => Err(anyhow!("read_mailslot: Failed to read message {e}")),
+        ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED => {
+            // Client disconnected; reset so the next client can connect.
+            unsafe { DisconnectNamedPipe(slot.handle) };
+            slot.connected = false;
+            // Re-arm immediately so we do not miss a quick reconnect.
+            unsafe { ConnectNamedPipe(slot.handle, None) };
+            Ok(None)
+        }
+        other => Err(anyhow!(
+            "read_mailslot: ReadFile failed \
+             (Windows error {}: {})",
+            other.0,
+            other.to_hresult().message().to_string_lossy()
+        )),
     }
 }
 
-/// Write a message to a mailbox
+/// Write a message to a named pipe server (client / writer side).
 ///
-/// # Arguments
-///
-/// * `name` - Name of the mailslot
-/// * `message` - Message to write
+/// Waits up to `WRITE_WAIT_MS` for the server to be ready, connects,
+/// sends the message, and closes the handle.
 pub fn write_mailslot(name: &str, message: &str) -> Result<(), anyhow::Error> {
-    // Check that message is no longer than the maximum message size
-    // Conversion from u32 to usize should not panic as usize should be at least 32 bit wide on targets
     if message.len() > usize::try_from(MAX_MSG_SIZE).unwrap() {
-        log::warn!("write_mailslot: message too long ({} bytes, max {})", message.len(), MAX_MSG_SIZE);
+        log::warn!(
+            "write_mailslot: message too long ({} bytes, max {})",
+            message.len(),
+            MAX_MSG_SIZE
+        );
         return Err(anyhow!("write_mailslot: message too long"));
     }
 
-    // "\\." resolves within the caller's session only.  A daemon running in
-    // Session 0 cannot reach a mailslot created by a user-session process
-    // (Session 1+) via "\\.".  Using the computer name makes the path
-    // session-agnostic and reachable from any local session.
-    let resolved_name = if name.starts_with("\\\\.\\mailslot\\") {
-        let mut buf = [0u16; 256];
-        let mut len = buf.len() as u32;
-        unsafe {
-            GetComputerNameW(windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
-        }
-        let computer_name = String::from_utf16_lossy(&buf[..len as usize]);
-        name.replacen("\\\\.", &format!("\\\\{}", computer_name), 1)
-    } else {
-        name.to_owned()
-    };
+    // Named pipes via \\.\pipe\ are in \Device\NamedPipe\ — a kernel-level
+    // global namespace accessible across sessions without SMB.
+    let pipe_name: Vec<u16> = OsStr::new(name).encode_wide().chain(once(0)).collect();
+    let ppipe_name = PCWSTR::from_raw(pipe_name.as_ptr());
 
-    // The mailslot is accessed like a file
-    // Create a handle to the file
-    let slot_name: Vec<u16> = OsStr::new(&resolved_name).encode_wide().chain(once(0)).collect();
-    let pslot_name = PCWSTR::from_raw(slot_name.as_ptr());
+    // Wait for the server instance to become available.
+    if !unsafe { WaitNamedPipeW(ppipe_name, WRITE_WAIT_MS) }.as_bool() {
+        let err = unsafe { GetLastError() };
+        log::warn!(
+            "write_mailslot: WaitNamedPipeW timed out for '{}' \
+             (Windows error {}: {})",
+            name,
+            err.0,
+            err.to_hresult().message().to_string_lossy()
+        );
+        return Err(anyhow!(
+            "write_mailslot: pipe server not available: '{name}'"
+        ));
+    }
 
-    let tmp_handle = HANDLE::default();
-    // GENERIC_WRITE corresponds to the 30th bit of the mask
-    //  according to https://learn.microsoft.com/en-us/windows/win32/secauthz/access-mask-format
-    let generic_write_val: u32 = 0x40000000;
+    let generic_write: u32 = 0x4000_0000; // GENERIC_WRITE
     let handle = unsafe {
         match CreateFileW(
-            pslot_name,
-            generic_write_val,
-            FILE_SHARE_READ,
+            ppipe_name,
+            generic_write,
+            FILE_SHARE_MODE(0), // named pipes cannot be shared
             None,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
-            tmp_handle,
+            HANDLE::default(),
         ) {
             Ok(h) => h,
             Err(e) => {
                 let os_err = GetLastError();
                 log::warn!(
-                    "write_mailslot: CreateFileW failed for '{}': {} (Windows error {}: {})",
-                    resolved_name,
+                    "write_mailslot: CreateFileW failed for '{}': {} \
+                     (Windows error {}: {})",
+                    name,
                     e,
                     os_err.0,
                     os_err.to_hresult().message().to_string_lossy()
                 );
-                return Err(anyhow!("write_mailslot: Failed to create file: {e}"));
+                return Err(anyhow!(
+                    "write_mailslot: failed to open pipe '{name}': {e}"
+                ));
             }
         }
     };
@@ -255,26 +295,28 @@ pub fn write_mailslot(name: &str, message: &str) -> Result<(), anyhow::Error> {
     if handle.is_invalid() {
         let os_err = unsafe { GetLastError() };
         log::warn!(
-            "write_mailslot: invalid handle for '{}' (Windows error {}: {})",
-            resolved_name,
+            "write_mailslot: invalid handle for '{}' \
+             (Windows error {}: {})",
+            name,
             os_err.0,
             os_err.to_hresult().message().to_string_lossy()
         );
-        return Err(anyhow!("write_mailslot: Invalid mailslot handle"));
+        return Err(anyhow!("write_mailslot: invalid pipe handle for '{name}'"));
     }
 
-    // Write to the file
-    unsafe {
-        if !WriteFile(handle, Some(message.as_bytes()), None, None).as_bool() {
-            let os_err = GetLastError();
-            log::warn!(
-                "write_mailslot: WriteFile failed for '{}' (Windows error {}: {})",
-                resolved_name,
-                os_err.0,
-                os_err.to_hresult().message().to_string_lossy()
-            );
-            return Err(anyhow!("write_mailslot: Failed to write to file"));
-        }
+    let ok = unsafe { WriteFile(handle, Some(message.as_bytes()), None, None) };
+    unsafe { CloseHandle(handle) };
+
+    if !ok.as_bool() {
+        let os_err = unsafe { GetLastError() };
+        log::warn!(
+            "write_mailslot: WriteFile failed for '{}' \
+             (Windows error {}: {})",
+            name,
+            os_err.0,
+            os_err.to_hresult().message().to_string_lossy()
+        );
+        return Err(anyhow!("write_mailslot: WriteFile failed for '{name}'"));
     }
 
     Ok(())
