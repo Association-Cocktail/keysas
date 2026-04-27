@@ -62,7 +62,7 @@ impl ServiceInterface for WindowsServiceInterface {
         let server = self.server.clone();
         std::thread::spawn(move || {
             // Get a mutable lock on the server
-            let server = match server.write() {
+            let mut server = match server.write() {
                 Ok(s) => s,
                 Err(_) => {
                     return;
