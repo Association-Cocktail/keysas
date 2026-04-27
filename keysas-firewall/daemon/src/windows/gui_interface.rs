@@ -34,9 +34,9 @@ use crate::gui_interface::{
     FileUpdateMessage, GuiInterface, PolicyUpdateMessage, UsbFileListRequest, UsbUpdateMessage,
 };
 
-/// Name of the communication pipe
-const SERVICE_PIPE: &str = r"\\.\mailslot\keysas\service-to-app";
-const TRAY_PIPE: &str = r"\\.\mailslot\keysas\app-to-service";
+/// Name of the communication pipes (named pipes — no SMB, no network).
+const SERVICE_PIPE: &str = r"\\.\pipe\keysas-service-to-app";
+const TRAY_PIPE: &str = r"\\.\pipe\keysas-app-to-service";
 
 #[derive(Debug)]
 pub struct WindowsGuiInterface {
@@ -64,13 +64,13 @@ impl GuiInterface for WindowsGuiInterface {
         let ctrl_hdl = ctrl.clone();
 
         std::thread::spawn(move || {
-            let server = match libmailslot::create_mailslot(TRAY_PIPE) {
+            let mut server = match libmailslot::create_mailslot(TRAY_PIPE) {
                 Ok(s) => s,
                 Err(_) => return,
             };
 
             loop {
-                while let Ok(Some(msg)) = libmailslot::read_mailslot(&server) {
+                while let Ok(Some(msg)) = libmailslot::read_mailslot(&mut server) {
                     // Try to read a file update message
                     if let Ok(update) = serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
                     {

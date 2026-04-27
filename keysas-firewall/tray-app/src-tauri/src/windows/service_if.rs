@@ -36,9 +36,9 @@ pub struct WindowsServiceInterface {
     server: Arc<RwLock<libmailslot::MailSlot>>,
 }
 
-/// Name of the communication pipe
-const SERVICE_PIPE: &str = r"\\.\mailslot\keysas\service-to-app";
-const TRAY_PIPE: &str = r"\\.\mailslot\keysas\app-to-service";
+/// Name of the communication pipes (named pipes — no SMB, no network).
+const SERVICE_PIPE: &str = r"\\.\pipe\keysas-service-to-app";
+const TRAY_PIPE: &str = r"\\.\pipe\keysas-app-to-service";
 
 impl WindowsServiceInterface {
     pub fn init() -> Result<WindowsServiceInterface, anyhow::Error> {
@@ -70,7 +70,7 @@ impl ServiceInterface for WindowsServiceInterface {
             };
             log::info!("Windows tray: listening for daemon on {SERVICE_PIPE}");
             loop {
-                while let Ok(Some(msg)) = libmailslot::read_mailslot(&server) {
+                while let Ok(Some(msg)) = libmailslot::read_mailslot(&mut *server) {
                     if let Ok(update) =
                         serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
                     {
