@@ -70,56 +70,62 @@ impl GuiInterface for WindowsGuiInterface {
             };
 
             loop {
-                while let Ok(Some(msg)) = libmailslot::read_mailslot(&mut server) {
-                    // Try to read a file update message
-                    if let Ok(update) = serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
-                    {
+                match libmailslot::read_mailslot(&mut server) {
+                    Ok(Some(msg)) => {
+                        if let Ok(update) =
+                            serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
+                        {
+                            {
+                                let controller = ctrl_hdl.lock().unwrap();
+                                if let Err(e) = controller.request_file_update(&update) {
+                                    error!("Failed to handle file update request: {e}");
+                                }
+                            }
+                        } else if let Ok(update) =
+                            serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
+                        {
+                            {
+                                if let Err(e) =
+                                    ctrl_hdl.lock().unwrap().request_usb_update(&update)
+                                {
+                                    error!("Failed to handle usb update request: {e}");
+                                }
+                            }
+                        } else if let Ok(_req) =
+                            serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes())
                         {
                             let controller = ctrl_hdl.lock().unwrap();
-                            if let Err(e) = controller.request_file_update(&update) {
-                                error!("Failed to handle file update request: {e}");
+                            if let Err(e) = controller.send_usb_file_list() {
+                                error!("Failed to send usb and file listt: {e}");
                             }
-                        }
-                    }
-                    // Try to read a usb update message
-                    else if let Ok(update) =
-                        serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
-                    {
+                        } else if let Ok(req) =
+                            serde_json::from_slice::<PolicyUpdateMessage>(msg.as_bytes())
                         {
-                            if let Err(e) = ctrl_hdl.lock().unwrap().request_usb_update(&update) {
-                                error!("Failed to handle usb update request: {e}");
+                            let mut controller = ctrl_hdl.lock().unwrap();
+                            if let Err(e) = controller.update_policy(&req) {
+                                error!("Failed to update policy settings: {e}");
                             }
+                        } else {
+                            warn!("Message from tray app not recognized");
                         }
                     }
-                    // Try to read Usb and Files list request
-                    else if let Ok(_req) =
-                        serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes())
-                    {
-                        let controller = ctrl_hdl.lock().unwrap();
-                        if let Err(e) = controller.send_usb_file_list() {
-                            error!("Failed to send usb and file listt: {e}");
+                    Ok(None) => {
+                        // Client disconnected; ConnectNamedPipe in the next call
+                        // will block — no sleep needed with PIPE_WAIT.
+                        let must_stop = stop.read().unwrap();
+                        if !*must_stop {
+                            return;
                         }
-                    } else if let Ok(req) =
-                        serde_json::from_slice::<PolicyUpdateMessage>(msg.as_bytes())
-                    {
-                        let mut controller = ctrl_hdl.lock().unwrap();
-                        if let Err(e) = controller.update_policy(&req) {
-                            error!("Failed to update policy settings: {e}");
-                        }
-                    } else {
-                        warn!("Message from tray app not recognized");
                     }
-                }
-
-                // Test if the process is still alive
-                {
-                    let must_stop = stop.read().unwrap();
-                    if !*must_stop {
-                        return;
+                    Err(e) => {
+                        error!("read_mailslot error: {e}");
+                        let must_stop = stop.read().unwrap();
+                        if !*must_stop {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                 }
-
-                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         });
 

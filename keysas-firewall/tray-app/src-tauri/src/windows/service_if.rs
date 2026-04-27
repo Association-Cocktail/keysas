@@ -70,20 +70,29 @@ impl ServiceInterface for WindowsServiceInterface {
             };
             log::info!("Windows tray: listening for daemon on {SERVICE_PIPE}");
             loop {
-                while let Ok(Some(msg)) = libmailslot::read_mailslot(&mut *server) {
-                    if let Ok(update) =
-                        serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
-                    {
-                        ctrl_hdl.notify_file_change(&update);
-                    } else if let Ok(update) =
-                        serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
-                    {
-                        ctrl_hdl.notify_usb_change(&update);
-                    } else {
-                        log::warn!("Windows tray: unrecognised message from daemon");
+                match libmailslot::read_mailslot(&mut *server) {
+                    Ok(Some(msg)) => {
+                        if let Ok(update) =
+                            serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
+                        {
+                            ctrl_hdl.notify_file_change(&update);
+                        } else if let Ok(update) =
+                            serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
+                        {
+                            ctrl_hdl.notify_usb_change(&update);
+                        } else {
+                            log::warn!("Windows tray: unrecognised message from daemon");
+                        }
+                    }
+                    Ok(None) => {
+                        // Client disconnected; ConnectNamedPipe in the next call
+                        // will block — no sleep needed with PIPE_WAIT.
+                    }
+                    Err(e) => {
+                        log::error!("Windows tray: read_mailslot error: {e}");
+                        std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         });
         // Request the current device list from the daemon so that USB keys

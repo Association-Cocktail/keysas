@@ -31,8 +31,7 @@ use std::{ffi::OsStr, iter::once, os::windows::ffi::OsStrExt};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, BOOL, FALSE, HANDLE, INVALID_HANDLE_VALUE,
-    ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, ERROR_PIPE_LISTENING,
-    ERROR_PIPE_NOT_CONNECTED,
+    ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
 };
 use windows::Win32::Security::{
     InitializeSecurityDescriptor, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
@@ -57,7 +56,7 @@ const WRITE_WAIT_MS: u32 = 500;
 const PIPE_ACCESS_INBOUND: FILE_FLAGS_AND_ATTRIBUTES = FILE_FLAGS_AND_ATTRIBUTES(0x0000_0001);
 const PIPE_TYPE_MESSAGE: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0004);
 const PIPE_READMODE_MESSAGE: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0002);
-const PIPE_NOWAIT: NAMED_PIPE_MODE = NAMED_PIPE_MODE(0x0000_0001);
+// PIPE_WAIT (0) is the default — blocking mode — do not add PIPE_NOWAIT.
 const PIPE_UNLIMITED_INSTANCES: u32 = 255;
 
 /// Server-side handle for a named pipe channel.
@@ -73,8 +72,10 @@ pub struct MailSlot {
 
 /// Create a named pipe server (the reader / server side of the channel).
 ///
-/// Uses message mode and `PIPE_NOWAIT` so that `read_mailslot` can be called
-/// in a polling loop without blocking.
+/// Uses message mode with `PIPE_WAIT` (blocking).  `read_mailslot` blocks
+/// inside `ConnectNamedPipe` until a client connects, which means the named
+/// pipe always has a pending `ConnectNamedPipe` operation — `WaitNamedPipeW`
+/// on the writer side therefore always succeeds immediately.
 ///
 /// A NULL DACL is set on the pipe so that both Session 0 (SYSTEM) and any
 /// interactive-user session can connect, regardless of which side creates it.
@@ -132,8 +133,8 @@ pub fn create_mailslot(name: &str) -> Result<MailSlot, anyhow::Error> {
         CreateNamedPipeW(
             pslot_name,
             PIPE_ACCESS_INBOUND,
-            // message mode, non-blocking: PIPE_TYPE_MESSAGE(4) | PIPE_READMODE_MESSAGE(2) | PIPE_NOWAIT(1)
-            NAMED_PIPE_MODE(PIPE_TYPE_MESSAGE.0 | PIPE_READMODE_MESSAGE.0 | PIPE_NOWAIT.0),
+            // blocking message mode: PIPE_TYPE_MESSAGE(4) | PIPE_READMODE_MESSAGE(2), no PIPE_NOWAIT
+            NAMED_PIPE_MODE(PIPE_TYPE_MESSAGE.0 | PIPE_READMODE_MESSAGE.0),
             PIPE_UNLIMITED_INSTANCES,
             MAX_MSG_SIZE,
             MAX_MSG_SIZE,
@@ -155,40 +156,35 @@ pub fn create_mailslot(name: &str) -> Result<MailSlot, anyhow::Error> {
     Ok(MailSlot { handle, connected: false })
 }
 
-/// Read one message from a named pipe server (non-blocking).
+/// Read one message from a named pipe server (blocking).
 ///
-/// Returns `Ok(Some(msg))` when a complete message is available,
-/// `Ok(None)` when there is no client or no data yet, and `Err` on
-/// unexpected errors.
+/// Blocks inside `ConnectNamedPipe` until a client connects, then blocks
+/// inside `ReadFile` until a message arrives or the client disconnects.
 ///
-/// Manages the connection lifecycle internally: if a client disconnects the
-/// pipe is reset and will accept the next client on the following call.
+/// Returns `Ok(Some(msg))` when a message is received, `Ok(None)` when the
+/// client disconnected (pipe reset for the next client), and `Err` on error.
+///
+/// Must be called from a dedicated thread — it never busy-waits.
 pub fn read_mailslot(slot: &mut MailSlot) -> Result<Option<String>, anyhow::Error> {
     if !slot.connected {
-        // With PIPE_NOWAIT, ConnectNamedPipe always returns FALSE.
-        // We only care about GetLastError():
-        //   ERROR_PIPE_CONNECTED  → a client connected before we called this
-        //   ERROR_PIPE_LISTENING  → no client yet, nothing to read
-        unsafe { ConnectNamedPipe(slot.handle, None) };
+        // Block until a client connects (PIPE_WAIT).
+        // Returns TRUE on success; FALSE + ERROR_PIPE_CONNECTED if the client
+        // connected before we called ConnectNamedPipe.
+        let ok = unsafe { ConnectNamedPipe(slot.handle, None) };
         let err = unsafe { GetLastError() };
-        match err {
-            ERROR_PIPE_CONNECTED => {
-                slot.connected = true;
-            }
-            ERROR_PIPE_LISTENING => {
-                return Ok(None);
-            }
-            other => {
-                return Err(anyhow!(
-                    "read_mailslot: ConnectNamedPipe failed \
-                     (Windows error {}: {})",
-                    other.0,
-                    other.to_hresult().message().to_string_lossy()
-                ));
-            }
+        if ok.as_bool() || err == ERROR_PIPE_CONNECTED {
+            slot.connected = true;
+        } else {
+            return Err(anyhow!(
+                "read_mailslot: ConnectNamedPipe failed \
+                 (Windows error {}: {})",
+                err.0,
+                err.to_hresult().message().to_string_lossy()
+            ));
         }
     }
 
+    // Block until a message arrives or the client disconnects.
     let mut buffer = vec![0u8; MAX_MSG_SIZE as usize];
     let mut bytes_read: u32 = 0;
     let ok = unsafe {
@@ -210,16 +206,11 @@ pub fn read_mailslot(slot: &mut MailSlot) -> Result<Option<String>, anyhow::Erro
 
     let err = unsafe { GetLastError() };
     match err {
-        ERROR_NO_DATA => {
-            // PIPE_NOWAIT: no message available yet, try again next poll.
-            Ok(None)
-        }
         ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED => {
-            // Client disconnected; reset so the next client can connect.
+            // Client disconnected; reset so the next ConnectNamedPipe call
+            // (on the following read_mailslot invocation) accepts a new client.
             unsafe { DisconnectNamedPipe(slot.handle) };
             slot.connected = false;
-            // Re-arm immediately so we do not miss a quick reconnect.
-            unsafe { ConnectNamedPipe(slot.handle, None) };
             Ok(None)
         }
         other => Err(anyhow!(
