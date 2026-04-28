@@ -339,16 +339,16 @@
         is handled by MSI internally and does not depend on SecureCustomProperties.
         Display='hidden' hides these from any feature-selection UI.
       -->
-      <Feature Id='feat_policy_disable_usb'  Level='2' Display='hidden' Title=''>
+      <Feature Id='feat_policy_disable_usb'  Level='2' Display='hidden'>
         <ComponentRef Id='comp_policy_disable_usb'/>
       </Feature>
-      <Feature Id='feat_policy_usb_auth'     Level='2' Display='hidden' Title=''>
+      <Feature Id='feat_policy_usb_auth'     Level='2' Display='hidden'>
         <ComponentRef Id='comp_policy_usb_auth'/>
       </Feature>
-      <Feature Id='feat_policy_file_read'    Level='2' Display='hidden' Title=''>
+      <Feature Id='feat_policy_file_read'    Level='2' Display='hidden'>
         <ComponentRef Id='comp_policy_file_read'/>
       </Feature>
-      <Feature Id='feat_policy_file_write'   Level='2' Display='hidden' Title=''>
+      <Feature Id='feat_policy_file_write'   Level='2' Display='hidden'>
         <ComponentRef Id='comp_policy_file_write'/>
       </Feature>
     </Feature>
