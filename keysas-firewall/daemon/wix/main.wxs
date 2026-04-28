@@ -167,6 +167,24 @@
               <RegistryValue Type='string'  Name='UsbCaPqCert'
                 Value='C:\ProgramData\Keysas\Firewall\usb-pq.pem'/>
             </RegistryKey>
+            <!--
+              RemoveRegistryValues runs BEFORE WriteRegistryValues in the MSI sequence.
+              These entries erase any stale policy DWORDs left by a previous install or
+              manual reg add before the feat_policy_* components write the fresh values.
+              Return is silent if a value does not exist (MSI ignores missing keys here).
+            -->
+            <RemoveRegistryValue Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
+              Name='DisableUnsignedUsb'/>
+            <RemoveRegistryValue Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
+              Name='AllowUserUsbAuthorization'/>
+            <RemoveRegistryValue Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
+              Name='AllowUserFileRead'/>
+            <RemoveRegistryValue Root='HKLM'
+              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
+              Name='AllowUserFileWrite'/>
           </Component>
 
           <!--
@@ -574,33 +592,36 @@
           Execute sequence by MSI's own mechanism, independently of
           SecureCustomProperties, which is unreliable on Windows 11.
         -->
+        <!--
+          WiX v3 SetFeatureLevel: Value = feature name, content = INTEGER level expression.
+          MSI evaluates the content as the new install level (not as a boolean condition).
+          "PROPERTY = \"1\"" evaluates to 1 (install) when box is checked,
+          or 0 (disabled/absent) when box is unchecked — a single Publish per checkbox suffices.
+          The event fires on every click (check and uncheck alike); the level is re-evaluated.
+        -->
         <Control Id='chk_disable_usb' Type='CheckBox'
           X='20' Y='58' Width='340' Height='17'
           Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
           <Text>&amp;Block uncertified USB keys (recommended)</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:1' Order='1'>DISABLE_UNSIGNED_USB = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:2' Order='2'>NOT DISABLE_UNSIGNED_USB = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb'>DISABLE_UNSIGNED_USB = "1"</Publish>
         </Control>
         <Control Id='chk_user_usb_auth' Type='CheckBox'
           X='20' Y='80' Width='340' Height='17'
           Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
           <Text>Allow &amp;user to manually authorize blocked USB keys</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:1' Order='1'>ALLOW_USER_USB_AUTH = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:2' Order='2'>NOT ALLOW_USER_USB_AUTH = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth'>ALLOW_USER_USB_AUTH = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_read' Type='CheckBox'
           X='20' Y='102' Width='340' Height='17'
           Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;reading</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:1' Order='1'>ALLOW_USER_FILE_READ = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:2' Order='2'>NOT ALLOW_USER_FILE_READ = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read'>ALLOW_USER_FILE_READ = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_write' Type='CheckBox'
           X='20' Y='124' Width='340' Height='17'
           Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;writing</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:1' Order='1'>ALLOW_USER_FILE_WRITE = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:2' Order='2'>NOT ALLOW_USER_FILE_WRITE = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write'>ALLOW_USER_FILE_WRITE = "1"</Publish>
         </Control>
         <Control Id='Note' Type='Text' X='20' Y='155' Width='340' Height='35'
           Transparent='yes' NoPrefix='yes'>
