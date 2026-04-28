@@ -51,13 +51,13 @@
         msiexec /i keysas-firewall.msi /quiet ALLOW_USER_USB_AUTH=1 ALLOW_USER_FILE_READ=1
       All four can be changed after install by re-running msiexec with new values.
     -->
-    <Property Id='DISABLE_UNSIGNED_USB'  Value='0'/>
-    <Property Id='ALLOW_USER_USB_AUTH'   Value='0'/>
-    <Property Id='ALLOW_USER_FILE_READ'  Value='0'/>
-    <Property Id='ALLOW_USER_FILE_WRITE' Value='0'/>
-    <!-- Required so UI-sequence checkbox values are forwarded to the elevated Execute sequence -->
-    <Property Id='SecureCustomProperties'
-      Value='DISABLE_UNSIGNED_USB;ALLOW_USER_USB_AUTH;ALLOW_USER_FILE_READ;ALLOW_USER_FILE_WRITE'/>
+    <!-- Secure='yes' causes WiX to add each property to SecureCustomProperties,
+         which is required for UI-sequence checkbox values to be forwarded to
+         the elevated Execute sequence in an interactive elevated install. -->
+    <Property Id='DISABLE_UNSIGNED_USB'  Value='0' Secure='yes'/>
+    <Property Id='ALLOW_USER_USB_AUTH'   Value='0' Secure='yes'/>
+    <Property Id='ALLOW_USER_FILE_READ'  Value='0' Secure='yes'/>
+    <Property Id='ALLOW_USER_FILE_WRITE' Value='0' Secure='yes'/>
 
     <!-- ───────────────────────────────────────────────── directory tree -->
     <Directory Id='TARGETDIR' Name='SourceDir'>
