@@ -101,6 +101,7 @@ use crate::file_filter_if::FileFilterInterface;
 
 // C enum values from KEYSAS_FILTER_OPERATION in keysasCommunication.h
 const SCAN_FILE: u32 = 0;
+const USER_ALLOW_FILE: u32 = 1; // file on AUTH_ALLOW_WARNING volume — treat like SCAN_FILE
 const SCAN_USB: u32 = 2;
 
 /// Format of a request from the driver to the service scanner
@@ -235,7 +236,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
 
                 // Raw KEYSAS_AUTHORIZATION value to send back to the kernel.
                 let auth_kernel: u8 = match request.operation {
-                    SCAN_FILE => {
+                    SCAN_FILE | USER_ALLOW_FILE => {
                         // content = [FileID(16×u16 = 32 bytes) | FileName(utf16, null-terminated)]
                         let mut file = FilteredFile {
                             path: None,

@@ -514,6 +514,14 @@ impl UsbMonitor for WindowsUsbMonitor {
 
                 let current_drives = get_removable_drives();
 
+                let removed_drives: Vec<char> =
+                    known_drives.difference(&current_drives).copied().collect();
+
+                for letter in removed_drives {
+                    log::info!("Removable drive {letter}: removed");
+                    ctrl_hdl.lock().unwrap().remove_usb_by_drive(letter);
+                }
+
                 let new_drives: Vec<char> =
                     current_drives.difference(&known_drives).copied().collect();
 

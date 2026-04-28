@@ -838,6 +838,79 @@ impl ServiceController {
         }
     }
 
+    /// Called by the Windows USB monitor when a drive letter disappears from the system.
+    ///
+    /// Cleans up the stale entry from `mounted_usb` or `unmounted_usb` and notifies
+    /// the tray-app.  This prevents device-id collisions when a new USB key is plugged
+    /// on the same PhysicalDriveN slot as a previously tracked device.
+    #[cfg(target_os = "windows")]
+    pub fn remove_usb_by_drive(&mut self, drive_letter: char) {
+        let prefix = format!("{drive_letter}:\\");
+
+        let found_mounted = self
+            .mounted_usb
+            .iter()
+            .find(|(_, p)| {
+                p.device
+                    .mnt_point
+                    .as_ref()
+                    .map(|m| m.to_string_lossy().starts_with(&prefix))
+                    .unwrap_or(false)
+            })
+            .map(|(id, p)| (id.clone(), p.device.get_name()));
+
+        if let Some((id, name)) = found_mounted {
+            info!(
+                "remove_usb_by_drive: drive {drive_letter}: {:?} unplugged",
+                id
+            );
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: id.to_string_lossy().into_owned(),
+                path: String::default(),
+                name,
+                authorization: UsbAuthorization::Block,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("remove_usb_by_drive: GUI notification failed: {e}");
+            }
+            // remove_usb cleans mounted_usb, validated_files and blocked_files caches.
+            // FilterSendMessage will fail (drive gone) but the error is non-fatal.
+            self.remove_usb(&id);
+            return;
+        }
+
+        let found_unmounted = self
+            .unmounted_usb
+            .iter()
+            .find(|(_, p)| {
+                p.device
+                    .mnt_point
+                    .as_ref()
+                    .map(|m| m.to_string_lossy().starts_with(&prefix))
+                    .unwrap_or(false)
+            })
+            .map(|(id, p)| (id.clone(), p.device.get_name()));
+
+        if let Some((id, name)) = found_unmounted {
+            self.unmounted_usb.remove(&id);
+            info!(
+                "remove_usb_by_drive: drive {drive_letter}: blocked device {:?} unplugged",
+                id
+            );
+            let update = UsbUpdateMessage {
+                code: GuiMessageCode::UsbUpdateMessage,
+                device: id.to_string_lossy().into_owned(),
+                path: String::default(),
+                name,
+                authorization: UsbAuthorization::Block,
+            };
+            if let Err(e) = self.gui.send_usb_update(&update) {
+                warn!("remove_usb_by_drive: GUI notification failed: {e}");
+            }
+        }
+    }
+
     /// Decide to authorize a file
     /// This method is called by the file filter interface
     /// Start by whitelisting file that belongs to Windows and remove directories
