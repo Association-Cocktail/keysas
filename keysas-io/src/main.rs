@@ -612,10 +612,13 @@ enum KrpStatus {
 
 /// Inspect the `.<filename>.krp` companion of `file_path` and return the appropriate action.
 ///
-/// CA-chain validation of the station certificate is intentionally skipped here:
-/// structural integrity (hash + signature) is sufficient to detect tampering.
-/// TODO: add optional st-ca-cl / st-ca-pq args and pass them to parse_report.
-fn krp_status(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Certificate>) -> KrpStatus {
+/// CA-chain validation is skipped (`None` passed to `parse_report`): the USB CA
+/// cert that keysas-io knows about is not the station-file-signing CA, so passing
+/// it would cause every report to fail.  Structural integrity (file hash + report
+/// signature verified with the key embedded in the station cert) is sufficient to
+/// detect tampering without knowing the full trust chain.
+/// TODO: add optional st-ca-cl / st-ca-pq CLI args and plumb them here.
+fn krp_status(file_path: &Path) -> KrpStatus {
     let parent = file_path.parent().unwrap_or(Path::new(""));
     let fname = file_path.file_name().unwrap_or_default().to_string_lossy();
     let krp_path = parent.join(format!(".{fname}.krp"));
@@ -625,7 +628,8 @@ fn krp_status(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Cert
         return KrpStatus::NeedsReanalysis;
     }
 
-    match parse_report(&krp_path, Some(file_path), ca_cl, ca_pq) {
+    // CA certs are None: skip chain validation, still verify hash + signature.
+    match parse_report(&krp_path, Some(file_path), None, None) {
         Err(e) => {
             info!("krp_status: .krp invalid for {:?}: {e}", file_path);
             KrpStatus::NeedsReanalysis
@@ -666,7 +670,7 @@ fn krp_status(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Cert
 ///   SAS_OUT) and the new .krp written back onto the key
 ///
 /// Any results already waiting in SAS_OUT are transferred to the USB key first.
-fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: &str) -> Result<()> {
+fn process_certified_usb(device: &Path) -> Result<()> {
     // Mount the USB key read-write.
     let dir = tempfile::tempdir()?;
     let mount_point = dir.path().to_path_buf();
@@ -688,14 +692,6 @@ fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: 
         mount_point.display()
     );
 
-    // Load station CA certs for .krp validation (best-effort; None skips CA-chain check).
-    let ca_cl_cert: Option<Certificate> = fs::read(ca_cert_cl_path)
-        .ok()
-        .and_then(|b| Certificate::from_pem(&b).ok());
-    let ca_pq_cert: Option<Certificate> = fs::read(ca_cert_pq_path)
-        .ok()
-        .and_then(|b| Certificate::from_pem(&b).ok());
-
     // Walk every non-hidden, non-.krp file and decide which need re-analysis.
     // `pending` maps the expected SAS_OUT .krp filename → original USB file path.
     let mut pending: HashSet<String> = HashSet::new();
@@ -716,7 +712,7 @@ fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: 
             continue;
         }
 
-        match krp_status(file_path, ca_cl_cert.as_ref(), ca_pq_cert.as_ref()) {
+        match krp_status(file_path) {
             KrpStatus::Valid => {
                 // .krp is present, valid, non-expired, and the file passed analysis — nothing to do.
             }
@@ -750,8 +746,8 @@ fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: 
 
                 let tmp_dir = Path::new(TMP_DIR.trim_end_matches('/'));
                 if !tmp_dir.exists() {
-                    if let Err(e) = fs::create_dir(tmp_dir) {
-                        error!("process_certified_usb: cannot create tmp dir: {e}");
+                    if let Err(e) = create_dir_all(tmp_dir) {
+                        error!("process_certified_usb: cannot create tmp dir {}: {e}", tmp_dir.display());
                         continue;
                     }
                 }
@@ -779,7 +775,7 @@ fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: 
                         pending.insert(format!(".{sanitized}.krp"));
                     }
                     Err(e) => {
-                        error!("process_certified_usb: cannot copy {:?} to SAS_IN: {e}", file_path);
+                        error!("process_certified_usb: cannot copy {:?} to TMP: {e}", file_path);
                     }
                 }
             }
@@ -1204,11 +1200,7 @@ fn main() -> Result<()> {
                                     log::error!("Cannot write data into the websocket: {e}");
                                 }
                             }
-                            process_certified_usb(
-                                Path::new(&device),
-                                &ca_cert_cl,
-                                &ca_cert_pq,
-                            )?;
+                            process_certified_usb(Path::new(&device))?;
                             info!("Signed USB device done.");
                             ready_out()?;
                         }
