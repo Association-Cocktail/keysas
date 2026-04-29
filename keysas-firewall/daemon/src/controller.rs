@@ -991,9 +991,26 @@ impl ServiceController {
         // policy allows it.  If certs are KO the user cannot bypass cert checks.
         if self.certs.is_some() && self.policy.allow_user_file_read {
             if let Some(device_id) = self.device_id_for_path(&file_path) {
-                let list = self.blocked_files.entry(device_id).or_default();
-                if !list.contains(&file_path) {
-                    list.push(file_path.clone());
+                let is_new = {
+                    let list = self.blocked_files.entry(device_id.clone()).or_default();
+                    if list.contains(&file_path) {
+                        false
+                    } else {
+                        list.push(file_path.clone());
+                        true
+                    }
+                };
+                if is_new {
+                    let update = FileUpdateMessage {
+                        code: GuiMessageCode::FileUpdateMessage,
+                        device: device_id.to_string_lossy().into_owned(),
+                        id: [0u16; 16],
+                        path: file_path.to_string_lossy().into_owned(),
+                        authorization: FileAuthorization::Block,
+                    };
+                    if let Err(e) = self.gui.send_file_update(&update) {
+                        warn!("authorize_file: failed to notify tray of blocked file: {e}");
+                    }
                 }
             }
         }

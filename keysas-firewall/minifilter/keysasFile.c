@@ -365,9 +365,20 @@ Return Value:
 
 	UNREFERENCED_PARAMETER(FltObjects);
 	UNREFERENCED_PARAMETER(CompletionContext);
-	UNREFERENCED_PARAMETER(Flags);
 
 	PAGED_CODE();
+
+	// During instance teardown (e.g. USB physically removed while a Create was
+	// in flight) the FltMgr replays all pending PostCreate callbacks with this
+	// flag set.  Do NOT contact userspace in this state: FltSendMessage would
+	// block indefinitely because the communication port is already being torn
+	// down → BSOD.  Deny the I/O and return immediately.
+	if (FlagOn(Flags, FLTFL_POST_OPERATION_DRAINING)) {
+		Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+		Data->IoStatus.Information = 0;
+		FltSetCallbackDataDirty(Data);
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
 
 	// If the create is failing, don't bother with it
 	if (!NT_SUCCESS(Data->IoStatus.Status) ||
@@ -853,6 +864,10 @@ Return Value:
 
 	replyLength = sizeof(*request);
 
+	// 500 ms relative timeout — negative value = relative time in 100-ns units.
+	// Prevents blocking forever if the daemon becomes unresponsive.
+	LARGE_INTEGER timeout = { .QuadPart = -5000000LL };
+
 	// Send request to userspace
 	status = FltSendMessage(
 		KeysasData.Filter,
@@ -861,7 +876,7 @@ Return Value:
 		FileName->Length+sizeof(KEYSAS_FILTER_OPERATION) + KeysasData.HashLength,
 		request,
 		&replyLength,
-		NULL
+		&timeout
 	);
 
 	if (STATUS_SUCCESS == status) {
