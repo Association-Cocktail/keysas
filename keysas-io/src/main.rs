@@ -614,18 +614,18 @@ fn ready_out() -> Result<(), anyhow::Error> {
 fn get_attr_udev(event: &Event) -> Result<String, anyhow::Error> {
     let id_vendor_id = event
         .property_value(
-            OsStr::new("ID_VENDOR_ID")
+            OsStr::new("ID_VENDOR")
                 .to_str()
-                .ok_or_else(|| anyhow!("Cannot convert ID_VENDOR_ID to str."))?,
+                .ok_or_else(|| anyhow!("Cannot convert ID_VENDOR to str."))?,
         )
-        .ok_or_else(|| anyhow!("Cannot get ID_VENDOR_ID from event."))?;
+        .ok_or_else(|| anyhow!("Cannot get ID_VENDOR from event."))?;
     let id_model_id = event
         .property_value(
-            OsStr::new("ID_MODEL_ID")
+            OsStr::new("ID_MODEL")
                 .to_str()
-                .ok_or_else(|| anyhow!("Cannot convert ID_MODEL_ID to str."))?,
+                .ok_or_else(|| anyhow!("Cannot convert ID_MODEL to str."))?,
         )
-        .ok_or_else(|| anyhow!("Cannot get ID_MODEL_ID from event."))?;
+        .ok_or_else(|| anyhow!("Cannot get ID_MODEL from event."))?;
     let id_revision = event
         .property_value(
             OsStr::new("ID_REVISION")
@@ -784,18 +784,18 @@ fn main() -> Result<()> {
 
                     let id_vendor_id = event
                         .property_value(
-                            OsStr::new("ID_VENDOR_ID")
+                            OsStr::new("ID_VENDOR")
                                 .to_str()
-                                .ok_or_else(|| anyhow!("Cannot convert ID_VENDOR_ID to str."))?,
+                                .ok_or_else(|| anyhow!("Cannot convert ID_VENDOR to str."))?,
                         )
-                        .ok_or_else(|| anyhow!("Cannot get ID_VENDOR_ID from event."))?;
+                        .ok_or_else(|| anyhow!("Cannot get ID_VENDOR from event."))?;
                     let id_model_id = event
                         .property_value(
-                            OsStr::new("ID_MODEL_ID")
+                            OsStr::new("ID_MODEL")
                                 .to_str()
-                                .ok_or_else(|| anyhow!("Cannot convert ID_MODEL_ID to str."))?,
+                                .ok_or_else(|| anyhow!("Cannot convert ID_MODEL to str."))?,
                         )
-                        .ok_or_else(|| anyhow!("Cannot get ID_MODEL_ID from event."))?;
+                        .ok_or_else(|| anyhow!("Cannot get ID_MODEL from event."))?;
                     let id_revision = event
                         .property_value(
                             OsStr::new("ID_REVISION")
@@ -812,11 +812,11 @@ fn main() -> Result<()> {
                         .ok_or_else(|| anyhow!("Cannot get DEVNAME from event."))?;
                     let id_serial = event
                         .property_value(
-                            OsStr::new("ID_SERIAL")
+                            OsStr::new("ID_SERIAL_SHORT")
                                 .to_str()
-                                .ok_or_else(|| anyhow!("Cannot convert ID_SERIAL to str."))?,
+                                .ok_or_else(|| anyhow!("Cannot convert ID_SERIAL_SHORT to str."))?,
                         )
-                        .ok_or_else(|| anyhow!("Cannot get ID_SERIAL from event."))?;
+                        .ok_or_else(|| anyhow!("Cannot get ID_SERIAL_SHORT from event."))?;
                     error!(
                         "device: {:?}",
                         event
