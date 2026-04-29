@@ -66,15 +66,6 @@
     <Property Id='ALLOW_USER_USB_AUTH'   Value='0' Secure='yes'/>
     <Property Id='ALLOW_USER_FILE_READ'  Value='0' Secure='yes'/>
     <Property Id='ALLOW_USER_FILE_WRITE' Value='0' Secure='yes'/>
-    <!--
-      Helper properties for SetFeatureLevel: hold the target level (1=install, 2=absent).
-      Initialized to '2' so that unchecked = absent (re-installable), not disabled (level=0).
-      Level=0 would permanently disable the hidden feature and crash on re-check.
-    -->
-    <Property Id='_DISABLE_USB_LVL'  Value='2'/>
-    <Property Id='_USB_AUTH_LVL'     Value='2'/>
-    <Property Id='_FILE_READ_LVL'    Value='2'/>
-    <Property Id='_FILE_WRITE_LVL'   Value='2'/>
 
     <!-- ───────────────────────────────────────────────── directory tree -->
     <Directory Id='TARGETDIR' Name='SourceDir'>
@@ -602,43 +593,40 @@
           SecureCustomProperties, which is unreliable on Windows 11.
         -->
         <!--
-          WiX v3 SetFeatureLevel: Value = feature name, content = INTEGER level expression.
-          3 Publish events per checkbox: first two set a helper property to 1 (install) or 2
-          (absent/re-installable); the third passes [helper] as the level to SetFeatureLevel.
-          Level=2 (absent) allows the feature to be re-enabled; level=0 (disabled) would
-          permanently disable a hidden feature and crash on re-check.
+          SetFeatureLevel ControlEvent: Value = "featureName:level" (MSI ControlEvent Argument
+          column format), content = MSI condition expression (Condition column).
+          Two events per checkbox: level:1 (install) fires when checked, level:2 (absent,
+          re-installable) fires when unchecked.  Level 2 > INSTALLLEVEL (1) = absent but
+          re-activatable, so check → uncheck → re-check works without crash.
+          Level 0 (disabled) must never be used for hidden features — it is permanent.
         -->
         <Control Id='chk_disable_usb' Type='CheckBox'
           X='20' Y='58' Width='340' Height='17'
           Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
           <Text>&amp;Block uncertified USB keys (recommended)</Text>
-          <Publish Property='_DISABLE_USB_LVL' Value='1'>DISABLE_UNSIGNED_USB = "1"</Publish>
-          <Publish Property='_DISABLE_USB_LVL' Value='2'>NOT DISABLE_UNSIGNED_USB = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb'>[_DISABLE_USB_LVL]</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:1'>DISABLE_UNSIGNED_USB = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:2'>NOT DISABLE_UNSIGNED_USB = "1"</Publish>
         </Control>
         <Control Id='chk_user_usb_auth' Type='CheckBox'
           X='20' Y='80' Width='340' Height='17'
           Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
           <Text>Allow &amp;user to manually authorize blocked USB keys</Text>
-          <Publish Property='_USB_AUTH_LVL' Value='1'>ALLOW_USER_USB_AUTH = "1"</Publish>
-          <Publish Property='_USB_AUTH_LVL' Value='2'>NOT ALLOW_USER_USB_AUTH = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth'>[_USB_AUTH_LVL]</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:1'>ALLOW_USER_USB_AUTH = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:2'>NOT ALLOW_USER_USB_AUTH = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_read' Type='CheckBox'
           X='20' Y='102' Width='340' Height='17'
           Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;reading</Text>
-          <Publish Property='_FILE_READ_LVL' Value='1'>ALLOW_USER_FILE_READ = "1"</Publish>
-          <Publish Property='_FILE_READ_LVL' Value='2'>NOT ALLOW_USER_FILE_READ = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read'>[_FILE_READ_LVL]</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:1'>ALLOW_USER_FILE_READ = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:2'>NOT ALLOW_USER_FILE_READ = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_write' Type='CheckBox'
           X='20' Y='124' Width='340' Height='17'
           Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;writing</Text>
-          <Publish Property='_FILE_WRITE_LVL' Value='1'>ALLOW_USER_FILE_WRITE = "1"</Publish>
-          <Publish Property='_FILE_WRITE_LVL' Value='2'>NOT ALLOW_USER_FILE_WRITE = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write'>[_FILE_WRITE_LVL]</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:1'>ALLOW_USER_FILE_WRITE = "1"</Publish>
+          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:2'>NOT ALLOW_USER_FILE_WRITE = "1"</Publish>
         </Control>
         <Control Id='Note' Type='Text' X='20' Y='155' Width='340' Height='35'
           Transparent='yes' NoPrefix='yes'>
