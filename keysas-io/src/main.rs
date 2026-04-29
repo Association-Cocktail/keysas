@@ -600,61 +600,71 @@ fn cert_is_expired(cert: &Certificate) -> bool {
     now > not_after
 }
 
-/// Returns true if the file must go through the analysis pipeline.
-///
-/// Three cases trigger re-analysis:
-/// - No corresponding `.<filename>.krp` found on the same device
-/// - The .krp fails structural validation (invalid signature or file-hash mismatch)
-/// - Any station signing certificate embedded in the .krp has passed its notAfter date
+/// Decision for a file found on a certified USB key.
+enum KrpStatus {
+    /// No .krp, structurally invalid .krp, or expired station cert → send to analysis pipeline.
+    NeedsReanalysis,
+    /// Valid .krp whose analysis concluded the file is KO (`is_valid: false`) → delete from key.
+    Corrupted,
+    /// Valid .krp, non-expired cert, analysis passed (`is_valid: true`) → no action needed.
+    Valid,
+}
+
+/// Inspect the `.<filename>.krp` companion of `file_path` and return the appropriate action.
 ///
 /// CA-chain validation of the station certificate is intentionally skipped here:
 /// structural integrity (hash + signature) is sufficient to detect tampering.
 /// TODO: add optional st-ca-cl / st-ca-pq args and pass them to parse_report.
-fn krp_needs_reanalysis(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Certificate>) -> bool {
+fn krp_status(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Certificate>) -> KrpStatus {
     let parent = file_path.parent().unwrap_or(Path::new(""));
     let fname = file_path.file_name().unwrap_or_default().to_string_lossy();
     let krp_path = parent.join(format!(".{fname}.krp"));
 
     if !krp_path.exists() {
-        info!("krp_needs_reanalysis: no .krp found for {:?}", file_path);
-        return true;
+        info!("krp_status: no .krp found for {:?}", file_path);
+        return KrpStatus::NeedsReanalysis;
     }
 
     match parse_report(&krp_path, Some(file_path), ca_cl, ca_pq) {
         Err(e) => {
-            info!("krp_needs_reanalysis: .krp invalid for {:?}: {e}", file_path);
-            true
+            info!("krp_status: .krp invalid for {:?}: {e}", file_path);
+            KrpStatus::NeedsReanalysis
         }
         Ok(report) => {
-            // Check whether the station signing certificates embedded in the .krp have expired.
+            // Reject reports signed with an expired station certificate.
             for pem in report.binding.station_certificate.split('|') {
                 match Certificate::from_pem(pem.as_bytes()) {
                     Ok(cert) if cert_is_expired(&cert) => {
-                        info!("krp_needs_reanalysis: expired station cert in .krp for {:?}", file_path);
-                        return true;
+                        info!("krp_status: expired station cert in .krp for {:?}", file_path);
+                        return KrpStatus::NeedsReanalysis;
                     }
                     Err(_) => {
-                        info!("krp_needs_reanalysis: unparseable station cert in .krp for {:?}", file_path);
-                        return true;
+                        info!("krp_status: unparseable station cert in .krp for {:?}", file_path);
+                        return KrpStatus::NeedsReanalysis;
                     }
                     _ => {}
                 }
             }
-            false
+            // The report is structurally sound and the cert is valid.
+            if report.metadata.is_valid {
+                KrpStatus::Valid
+            } else {
+                info!("krp_status: analysis KO in .krp for {:?}", file_path);
+                KrpStatus::Corrupted
+            }
         }
     }
 }
 
 /// Process a certified (signed by keysas-admin) USB key.
 ///
-/// For every non-hidden, non-.krp file on the device the function checks whether
-/// the companion `.<filename>.krp` report is present, structurally valid, and
-/// signed with a non-expired station certificate.  Files that fail any of those
-/// checks are queued for re-analysis through the normal pipeline (SAS_IN →
-/// keysas-transit → keysas-out → SAS_OUT) and the new .krp (and possibly the
-/// sanitised copy of the file) is written back onto the USB key.
+/// For every non-hidden, non-.krp file on the device:
+/// - Valid .krp + `is_valid: true`  → untouched
+/// - Valid .krp + `is_valid: false` → file and .krp deleted from the USB key
+/// - No .krp, structurally invalid .krp, or expired station cert → queued for
+///   re-analysis through the pipeline (SAS_IN → keysas-transit → keysas-out →
+///   SAS_OUT) and the new .krp written back onto the key
 ///
-/// Files that already have a valid .krp are untouched.
 /// Any results already waiting in SAS_OUT are transferred to the USB key first.
 fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: &str) -> Result<()> {
     // Mount the USB key read-write.
@@ -706,47 +716,71 @@ fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: 
             continue;
         }
 
-        if krp_needs_reanalysis(file_path, ca_cl_cert.as_ref(), ca_pq_cert.as_ref()) {
-            // Sanitise the filename the same way copy_files_in does.
-            let cleaned = str::replace(&fname, "?", "-");
-            let sanitized = diacritics::remove_diacritics(&cleaned);
+        match krp_status(file_path, ca_cl_cert.as_ref(), ca_pq_cert.as_ref()) {
+            KrpStatus::Valid => {
+                // .krp is present, valid, non-expired, and the file passed analysis — nothing to do.
+            }
 
-            // Copy to TMP then rename into SAS_IN (avoids partial reads by keysas-in).
-            let tmp_path = format!("{}{}", TMP_DIR, &sanitized);
-            let dst_path = format!("{}{}", SAS_IN, &sanitized);
-
-            let tmp_dir = Path::new(TMP_DIR.trim_end_matches('/'));
-            if !tmp_dir.exists() {
-                if let Err(e) = fs::create_dir(tmp_dir) {
-                    error!("process_certified_usb: cannot create tmp dir: {e}");
-                    continue;
+            KrpStatus::Corrupted => {
+                // The file was analysed and marked KO: remove it and its .krp from the USB key.
+                let krp_path = file_path
+                    .parent()
+                    .unwrap_or(Path::new(""))
+                    .join(format!(".{fname}.krp"));
+                if let Err(e) = fs::remove_file(file_path) {
+                    error!("process_certified_usb: cannot delete corrupted file {:?}: {e}", file_path);
+                } else {
+                    info!("process_certified_usb: deleted corrupted file {:?}", file_path);
+                }
+                if krp_path.exists() {
+                    if let Err(e) = fs::remove_file(&krp_path) {
+                        warn!("process_certified_usb: cannot delete .krp {:?}: {e}", krp_path);
+                    }
                 }
             }
 
-            match fs::copy(file_path, &tmp_path) {
-                Ok(_) => {
-                    if let Err(e) = fs::rename(&tmp_path, &dst_path) {
-                        error!("process_certified_usb: cannot move to SAS_IN {dst_path}: {e}");
+            KrpStatus::NeedsReanalysis => {
+                // No .krp, structurally invalid .krp, or expired station cert → re-analyse.
+                let cleaned = str::replace(&fname, "?", "-");
+                let sanitized = diacritics::remove_diacritics(&cleaned);
+
+                // Copy to TMP then rename into SAS_IN (avoids partial reads by keysas-in).
+                let tmp_path = format!("{}{}", TMP_DIR, &sanitized);
+                let dst_path = format!("{}{}", SAS_IN, &sanitized);
+
+                let tmp_dir = Path::new(TMP_DIR.trim_end_matches('/'));
+                if !tmp_dir.exists() {
+                    if let Err(e) = fs::create_dir(tmp_dir) {
+                        error!("process_certified_usb: cannot create tmp dir: {e}");
                         continue;
                     }
-                    info!("process_certified_usb: queued {sanitized} for re-analysis");
-
-                    // Remove the stale .krp so the firewall does not accept the old report.
-                    let old_krp = file_path
-                        .parent()
-                        .unwrap_or(Path::new(""))
-                        .join(format!(".{fname}.krp"));
-                    if old_krp.exists() {
-                        if let Err(e) = fs::remove_file(&old_krp) {
-                            warn!("process_certified_usb: cannot remove old .krp {:?}: {e}", old_krp);
-                        }
-                    }
-
-                    // The expected SAS_OUT .krp name mirrors what keysas-out writes.
-                    pending.insert(format!(".{sanitized}.krp"));
                 }
-                Err(e) => {
-                    error!("process_certified_usb: cannot copy {:?} to SAS_IN: {e}", file_path);
+
+                match fs::copy(file_path, &tmp_path) {
+                    Ok(_) => {
+                        if let Err(e) = fs::rename(&tmp_path, &dst_path) {
+                            error!("process_certified_usb: cannot move to SAS_IN {dst_path}: {e}");
+                            continue;
+                        }
+                        info!("process_certified_usb: queued {sanitized} for re-analysis");
+
+                        // Remove the stale .krp so the firewall does not accept the old report.
+                        let old_krp = file_path
+                            .parent()
+                            .unwrap_or(Path::new(""))
+                            .join(format!(".{fname}.krp"));
+                        if old_krp.exists() {
+                            if let Err(e) = fs::remove_file(&old_krp) {
+                                warn!("process_certified_usb: cannot remove old .krp {:?}: {e}", old_krp);
+                            }
+                        }
+
+                        // The expected SAS_OUT .krp name mirrors what keysas-out writes.
+                        pending.insert(format!(".{sanitized}.krp"));
+                    }
+                    Err(e) => {
+                        error!("process_certified_usb: cannot copy {:?} to SAS_IN: {e}", file_path);
+                    }
                 }
             }
         }
