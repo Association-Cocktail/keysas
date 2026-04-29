@@ -41,6 +41,7 @@ extern crate serde_derive;
 use crate::errors::{Context, Result};
 use bytemuck::cast_slice;
 use ed25519_dalek::Signature as SignatureDalek;
+use keysas_lib::file_report::parse_report;
 use keysas_lib::init_logger;
 use keysas_lib::keysas_key::PublicKeys;
 use keysas_lib::keysas_key::{KeysasHybridPubKeys, KeysasHybridSignature};
@@ -49,6 +50,7 @@ use kv::Store;
 use libc::{c_int, c_short, c_ulong, c_void};
 use oqs::sig::{Algorithm, Sig};
 use proc_mounts::MountIter;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -59,7 +61,10 @@ use std::path::Path;
 use std::ptr;
 use std::str;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
+use x509_cert::Certificate;
+use x509_cert::der::DecodePem;
+use x509_cert::time::Time;
 use sys_mount::unmount;
 use sys_mount::{FilesystemType, Mount, MountFlags, SupportedFilesystems, Unmount, UnmountFlags};
 use yubico_manager::Yubico;
@@ -131,6 +136,8 @@ const FIDO_DB: &str = "/etc/keysas/fido_db";
 const VAR_LOCK_DIR: &str = "/var/lock/keysas/";
 const WORKING_IN_FILE: &str = "/var/lock/keysas/keysas-in";
 const WORKING_OUT_FILE: &str = "/var/lock/keysas/keysas-out";
+/// Maximum time (seconds) to wait for the analysis pipeline to return results.
+const ANALYSIS_TIMEOUT_SECS: u64 = 180;
 
 fn list_yubikey() -> Vec<String> {
     let mut yubi = Yubico::new();
@@ -377,36 +384,6 @@ fn copy_device_in(device: &Path) -> Result<()> {
     Ok(())
 }
 
-fn move_device_out(device: &Path) -> Result<PathBuf> {
-    let dir = tempfile::tempdir()?;
-    let mount_point = dir.path();
-    info!(
-        "Signed USB device {} will be mounted on path: {}",
-        device.display(),
-        mount_point.display()
-    );
-    let supported = SupportedFilesystems::new()?;
-    let mount_result = Mount::builder()
-        .fstype(FilesystemType::from(&supported))
-        .flags(MountFlags::NOEXEC | MountFlags::NOSUID | MountFlags::NODEV)
-        .mount(device, mount_point);
-    match mount_result {
-        Ok(mount) => {
-            // Moving files to the mounted device.
-            info!(
-                "Temporary out mount point for signed key: {}",
-                mount_point.display()
-            );
-            move_files_out(&mount_point.to_path_buf())?;
-            // Make the mount temporary, so that it will be unmounted on drop.
-            let _mount = mount.into_unmount_drop(UnmountFlags::DETACH);
-        }
-        Err(why) => {
-            error!("Failed to mount signed device: {why}");
-        }
-    }
-    Ok(mount_point.to_path_buf())
-}
 
 #[allow(clippy::too_many_lines)]
 fn copy_files_in(mount_point: &PathBuf) -> Result<()> {
@@ -608,6 +585,247 @@ fn ready_out() -> Result<(), anyhow::Error> {
     if Path::new(WORKING_OUT_FILE).exists() {
         fs::remove_file(WORKING_OUT_FILE)?;
     }
+    Ok(())
+}
+
+/// Returns true if the x509 certificate's notAfter date has passed.
+fn cert_is_expired(cert: &Certificate) -> bool {
+    let not_after = match &cert.tbs_certificate.validity.not_after {
+        Time::UtcTime(t) => t.to_unix_duration(),
+        Time::GeneralTime(t) => t.to_unix_duration(),
+    };
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    now > not_after
+}
+
+/// Returns true if the file must go through the analysis pipeline.
+///
+/// Three cases trigger re-analysis:
+/// - No corresponding `.<filename>.krp` found on the same device
+/// - The .krp fails structural validation (invalid signature or file-hash mismatch)
+/// - Any station signing certificate embedded in the .krp has passed its notAfter date
+///
+/// CA-chain validation of the station certificate is intentionally skipped here:
+/// structural integrity (hash + signature) is sufficient to detect tampering.
+/// TODO: add optional st-ca-cl / st-ca-pq args and pass them to parse_report.
+fn krp_needs_reanalysis(file_path: &Path, ca_cl: Option<&Certificate>, ca_pq: Option<&Certificate>) -> bool {
+    let parent = file_path.parent().unwrap_or(Path::new(""));
+    let fname = file_path.file_name().unwrap_or_default().to_string_lossy();
+    let krp_path = parent.join(format!(".{fname}.krp"));
+
+    if !krp_path.exists() {
+        info!("krp_needs_reanalysis: no .krp found for {:?}", file_path);
+        return true;
+    }
+
+    match parse_report(&krp_path, Some(file_path), ca_cl, ca_pq) {
+        Err(e) => {
+            info!("krp_needs_reanalysis: .krp invalid for {:?}: {e}", file_path);
+            true
+        }
+        Ok(report) => {
+            // Check whether the station signing certificates embedded in the .krp have expired.
+            for pem in report.binding.station_certificate.split('|') {
+                match Certificate::from_pem(pem.as_bytes()) {
+                    Ok(cert) if cert_is_expired(&cert) => {
+                        info!("krp_needs_reanalysis: expired station cert in .krp for {:?}", file_path);
+                        return true;
+                    }
+                    Err(_) => {
+                        info!("krp_needs_reanalysis: unparseable station cert in .krp for {:?}", file_path);
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Process a certified (signed by keysas-admin) USB key.
+///
+/// For every non-hidden, non-.krp file on the device the function checks whether
+/// the companion `.<filename>.krp` report is present, structurally valid, and
+/// signed with a non-expired station certificate.  Files that fail any of those
+/// checks are queued for re-analysis through the normal pipeline (SAS_IN →
+/// keysas-transit → keysas-out → SAS_OUT) and the new .krp (and possibly the
+/// sanitised copy of the file) is written back onto the USB key.
+///
+/// Files that already have a valid .krp are untouched.
+/// Any results already waiting in SAS_OUT are transferred to the USB key first.
+fn process_certified_usb(device: &Path, ca_cert_cl_path: &str, ca_cert_pq_path: &str) -> Result<()> {
+    // Mount the USB key read-write.
+    let dir = tempfile::tempdir()?;
+    let mount_point = dir.path().to_path_buf();
+    let supported = SupportedFilesystems::new()?;
+    let mount = match Mount::builder()
+        .fstype(FilesystemType::from(&supported))
+        .flags(MountFlags::NOEXEC | MountFlags::NOSUID | MountFlags::NODEV)
+        .mount(device, &mount_point)
+    {
+        Ok(m) => m,
+        Err(e) => {
+            error!("process_certified_usb: cannot mount {}: {e}", device.display());
+            return Err(anyhow!("Failed to mount certified USB: {e}"));
+        }
+    };
+    info!(
+        "process_certified_usb: mounted {} on {}",
+        device.display(),
+        mount_point.display()
+    );
+
+    // Load station CA certs for .krp validation (best-effort; None skips CA-chain check).
+    let ca_cl_cert: Option<Certificate> = fs::read(ca_cert_cl_path)
+        .ok()
+        .and_then(|b| Certificate::from_pem(&b).ok());
+    let ca_pq_cert: Option<Certificate> = fs::read(ca_cert_pq_path)
+        .ok()
+        .and_then(|b| Certificate::from_pem(&b).ok());
+
+    // Walk every non-hidden, non-.krp file and decide which need re-analysis.
+    // `pending` maps the expected SAS_OUT .krp filename → original USB file path.
+    let mut pending: HashSet<String> = HashSet::new();
+
+    for entry in WalkDir::new(&mount_point)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.metadata().map_or(false, |m| m.is_file()))
+    {
+        let file_path = entry.path();
+        let fname = match file_path.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => continue,
+        };
+
+        // Skip hidden files (which includes the .krp files themselves).
+        if fname.starts_with('.') {
+            continue;
+        }
+
+        if krp_needs_reanalysis(file_path, ca_cl_cert.as_ref(), ca_pq_cert.as_ref()) {
+            // Sanitise the filename the same way copy_files_in does.
+            let cleaned = str::replace(&fname, "?", "-");
+            let sanitized = diacritics::remove_diacritics(&cleaned);
+
+            // Copy to TMP then rename into SAS_IN (avoids partial reads by keysas-in).
+            let tmp_path = format!("{}{}", TMP_DIR, &sanitized);
+            let dst_path = format!("{}{}", SAS_IN, &sanitized);
+
+            let tmp_dir = Path::new(TMP_DIR.trim_end_matches('/'));
+            if !tmp_dir.exists() {
+                if let Err(e) = fs::create_dir(tmp_dir) {
+                    error!("process_certified_usb: cannot create tmp dir: {e}");
+                    continue;
+                }
+            }
+
+            match fs::copy(file_path, &tmp_path) {
+                Ok(_) => {
+                    if let Err(e) = fs::rename(&tmp_path, &dst_path) {
+                        error!("process_certified_usb: cannot move to SAS_IN {dst_path}: {e}");
+                        continue;
+                    }
+                    info!("process_certified_usb: queued {sanitized} for re-analysis");
+
+                    // Remove the stale .krp so the firewall does not accept the old report.
+                    let old_krp = file_path
+                        .parent()
+                        .unwrap_or(Path::new(""))
+                        .join(format!(".{fname}.krp"));
+                    if old_krp.exists() {
+                        if let Err(e) = fs::remove_file(&old_krp) {
+                            warn!("process_certified_usb: cannot remove old .krp {:?}: {e}", old_krp);
+                        }
+                    }
+
+                    // The expected SAS_OUT .krp name mirrors what keysas-out writes.
+                    pending.insert(format!(".{sanitized}.krp"));
+                }
+                Err(e) => {
+                    error!("process_certified_usb: cannot copy {:?} to SAS_IN: {e}", file_path);
+                }
+            }
+        }
+    }
+
+    // Transfer any results that are already waiting in SAS_OUT (e.g. from a previous run).
+    move_files_out(&mount_point)?;
+
+    // Wait for re-analysis results and write them onto the USB key.
+    if !pending.is_empty() {
+        info!(
+            "process_certified_usb: waiting for {} file(s) — timeout {}s",
+            pending.len(),
+            ANALYSIS_TIMEOUT_SECS
+        );
+        let deadline = Instant::now() + Duration::from_secs(ANALYSIS_TIMEOUT_SECS);
+
+        while !pending.is_empty() && Instant::now() < deadline {
+            let ready: Vec<String> = pending
+                .iter()
+                .filter(|krp_name| PathBuf::from(SAS_OUT).join(krp_name.as_str()).exists())
+                .cloned()
+                .collect();
+
+            for krp_name in ready {
+                // ".foo.txt.krp" → "foo.txt"
+                let data_name = krp_name
+                    .strip_prefix('.')
+                    .and_then(|s| s.strip_suffix(".krp"))
+                    .unwrap_or(&krp_name)
+                    .to_string();
+
+                // Write the new .krp onto the USB key.
+                let krp_src = PathBuf::from(SAS_OUT).join(&krp_name);
+                let krp_dst = mount_point.join(diacritics::remove_diacritics(&krp_name));
+                match fs::copy(&krp_src, &krp_dst) {
+                    Ok(_) => {
+                        let _ = fs::remove_file(&krp_src);
+                        info!("process_certified_usb: wrote {} onto USB key", krp_name);
+                    }
+                    Err(e) => {
+                        error!("process_certified_usb: cannot write {} to USB: {e}", krp_name);
+                    }
+                }
+
+                // If the file was sanitised and re-emitted by keysas-out, update it too.
+                let data_src = PathBuf::from(SAS_OUT).join(&data_name);
+                if data_src.exists() {
+                    let data_dst = mount_point.join(diacritics::remove_diacritics(&data_name));
+                    match fs::copy(&data_src, &data_dst) {
+                        Ok(_) => {
+                            let _ = fs::remove_file(&data_src);
+                            info!("process_certified_usb: updated {} on USB key", data_name);
+                        }
+                        Err(e) => {
+                            error!("process_certified_usb: cannot update {} on USB: {e}", data_name);
+                        }
+                    }
+                }
+
+                pending.remove(&krp_name);
+            }
+
+            if !pending.is_empty() {
+                sthread::sleep(Duration::from_secs(1));
+            }
+        }
+
+        if !pending.is_empty() {
+            warn!(
+                "process_certified_usb: timeout — {} file(s) not yet re-analysed: {:?}",
+                pending.len(),
+                pending
+            );
+        }
+    }
+
+    drop(mount.into_unmount_drop(UnmountFlags::DETACH));
+    info!("process_certified_usb: done for {}", device.display());
     Ok(())
 }
 
@@ -952,7 +1170,11 @@ fn main() -> Result<()> {
                                     log::error!("Cannot write data into the websocket: {e}");
                                 }
                             }
-                            move_device_out(Path::new(&device))?;
+                            process_certified_usb(
+                                Path::new(&device),
+                                &ca_cert_cl,
+                                &ca_cert_pq,
+                            )?;
                             info!("Signed USB device done.");
                             ready_out()?;
                         }
