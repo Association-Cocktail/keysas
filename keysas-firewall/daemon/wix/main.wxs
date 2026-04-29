@@ -53,19 +53,18 @@
     -->
     <!--
       Policy properties — defaults to 0 (most restrictive).
-      These are used only as the CheckBox-bound properties in the UI wizard.
-      Registry writes are handled by per-feature components (feat_policy_*)
-      via the MSI Feature Level mechanism, which transmits state from the
-      UI sequence to the elevated Execute sequence reliably on Windows 11,
-      independently of SecureCustomProperties.
-      Secure='yes' is kept so that property values are also transmitted via
-      SecureCustomProperties as a belt-and-suspenders measure on platforms
-      where that mechanism works.
+      All-uppercase names are MSI public properties, transmitted automatically
+      from the UI (non-elevated) sequence to the elevated Execute sequence.
+      No SecureCustomProperties or SetFeatureLevel is required.
+      The comp_policy_* components each carry a <Condition> that installs them
+      only when the corresponding property equals "1":
+        checked checkbox → DWORD=1 in registry
+        unchecked         → DWORD absent (daemon reads missing value as 0)
     -->
-    <Property Id='DISABLE_UNSIGNED_USB'  Value='0' Secure='yes'/>
-    <Property Id='ALLOW_USER_USB_AUTH'   Value='0' Secure='yes'/>
-    <Property Id='ALLOW_USER_FILE_READ'  Value='0' Secure='yes'/>
-    <Property Id='ALLOW_USER_FILE_WRITE' Value='0' Secure='yes'/>
+    <Property Id='DISABLE_UNSIGNED_USB'  Value='0'/>
+    <Property Id='ALLOW_USER_USB_AUTH'   Value='0'/>
+    <Property Id='ALLOW_USER_FILE_READ'  Value='0'/>
+    <Property Id='ALLOW_USER_FILE_WRITE' Value='0'/>
 
     <!-- ───────────────────────────────────────────────── directory tree -->
     <Directory Id='TARGETDIR' Name='SourceDir'>
@@ -197,25 +196,37 @@
             On upgrade, an absent feature removes a previously written DWORD,
             so unchecking a box during reinstall correctly reverts to 0.
           -->
+          <!--
+            Each comp_policy_* component carries a Condition element.  MSI
+            evaluates the condition in the Execute sequence using the public
+            property value transmitted from the UI sequence.  The component is
+            installed (DWORD=1 written) only when the condition is true.
+            comp_registry's RemoveRegistryValue entries ensure stale DWORDs
+            from a previous install are wiped before the fresh WriteRegistryValues.
+          -->
           <Component Id='comp_policy_disable_usb' Guid='A3D7F089-C152-4B6E-8D4F-2E9A73B1C0F5' Win64='yes'>
+            <Condition>DISABLE_UNSIGNED_USB = "1"</Condition>
             <RegistryValue Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
               Name='DisableUnsignedUsb' Type='integer' Value='1' KeyPath='yes'/>
           </Component>
 
           <Component Id='comp_policy_usb_auth' Guid='F5C8B2A4-7D91-4E38-A5C3-9B3D0E8F2A5C' Win64='yes'>
+            <Condition>ALLOW_USER_USB_AUTH = "1"</Condition>
             <RegistryValue Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
               Name='AllowUserUsbAuthorization' Type='integer' Value='1' KeyPath='yes'/>
           </Component>
 
           <Component Id='comp_policy_file_read' Guid='2BE1F7A3-9C54-4D82-B6E1-3A8D2C9F6B3E' Win64='yes'>
+            <Condition>ALLOW_USER_FILE_READ = "1"</Condition>
             <RegistryValue Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
               Name='AllowUserFileRead' Type='integer' Value='1' KeyPath='yes'/>
           </Component>
 
           <Component Id='comp_policy_file_write' Guid='7C4E9F62-A3B5-4D08-9F2E-6B0A3D8C5E1D' Win64='yes'>
+            <Condition>ALLOW_USER_FILE_WRITE = "1"</Condition>
             <RegistryValue Root='HKLM'
               Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
               Name='AllowUserFileWrite' Type='integer' Value='1' KeyPath='yes'/>
@@ -350,25 +361,15 @@
       <ComponentRef Id='comp_minifilter_reg'/>
 
       <!--
-        Policy sub-features — Level='2' means absent by default (INSTALLLEVEL=1 < 2).
-        SetFeatureLevel events in PolicySettingsDlg raise the level to 1 (install)
-        when the user checks the corresponding box, and back to 2 (absent) when
-        unchecked.  Feature state transmission from UI to elevated Execute sequence
-        is handled by MSI internally and does not depend on SecureCustomProperties.
-        Display='hidden' hides these from any feature-selection UI.
+        Policy components — always in the Complete feature (Level=1) so MSI
+        processes them in the Execute sequence.  Each component has a Condition
+        element: the component is installed (DWORD written) only when the
+        corresponding public property equals "1".  No SetFeatureLevel needed.
       -->
-      <Feature Id='feat_policy_disable_usb'  Level='2' Display='hidden'>
-        <ComponentRef Id='comp_policy_disable_usb'/>
-      </Feature>
-      <Feature Id='feat_policy_usb_auth'     Level='2' Display='hidden'>
-        <ComponentRef Id='comp_policy_usb_auth'/>
-      </Feature>
-      <Feature Id='feat_policy_file_read'    Level='2' Display='hidden'>
-        <ComponentRef Id='comp_policy_file_read'/>
-      </Feature>
-      <Feature Id='feat_policy_file_write'   Level='2' Display='hidden'>
-        <ComponentRef Id='comp_policy_file_write'/>
-      </Feature>
+      <ComponentRef Id='comp_policy_disable_usb'/>
+      <ComponentRef Id='comp_policy_usb_auth'/>
+      <ComponentRef Id='comp_policy_file_read'/>
+      <ComponentRef Id='comp_policy_file_write'/>
     </Feature>
 
     <!-- ──────────────────────────────────────────── force-stop before remove -->
@@ -585,48 +586,30 @@
           <Text>Configure the USB firewall security policy.</Text>
         </Control>
         <!--
-          Each CheckBox is bound to a Property (for rendering state) AND
-          publishes SetFeatureLevel events so that the corresponding policy
-          sub-feature is installed (level 1) or removed (level 2) based on
-          the user's choice.  Feature states are transmitted to the elevated
-          Execute sequence by MSI's own mechanism, independently of
-          SecureCustomProperties, which is unreliable on Windows 11.
-        -->
-        <!--
-          SetFeatureLevel ControlEvent: Value = "featureName:level" (MSI ControlEvent Argument
-          column format), content = MSI condition expression (Condition column).
-          Two events per checkbox: level:1 (install) fires when checked, level:2 (absent,
-          re-installable) fires when unchecked.  Level 2 > INSTALLLEVEL (1) = absent but
-          re-activatable, so check → uncheck → re-check works without crash.
-          Level 0 (disabled) must never be used for hidden features — it is permanent.
+          Each CheckBox is bound to its public property (CheckBoxValue='1').
+          Checking sets the property to "1"; unchecking sets it to "" (empty).
+          No SetFeatureLevel events — the comp_policy_* Component Conditions
+          read the property directly in the elevated Execute sequence.
         -->
         <Control Id='chk_disable_usb' Type='CheckBox'
           X='20' Y='58' Width='340' Height='17'
           Property='DISABLE_UNSIGNED_USB' CheckBoxValue='1'>
           <Text>&amp;Block uncertified USB keys (recommended)</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:1'>DISABLE_UNSIGNED_USB = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_disable_usb:2'>NOT DISABLE_UNSIGNED_USB = "1"</Publish>
         </Control>
         <Control Id='chk_user_usb_auth' Type='CheckBox'
           X='20' Y='80' Width='340' Height='17'
           Property='ALLOW_USER_USB_AUTH' CheckBoxValue='1'>
           <Text>Allow &amp;user to manually authorize blocked USB keys</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:1'>ALLOW_USER_USB_AUTH = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_usb_auth:2'>NOT ALLOW_USER_USB_AUTH = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_read' Type='CheckBox'
           X='20' Y='102' Width='340' Height='17'
           Property='ALLOW_USER_FILE_READ' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;reading</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:1'>ALLOW_USER_FILE_READ = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_read:2'>NOT ALLOW_USER_FILE_READ = "1"</Publish>
         </Control>
         <Control Id='chk_user_file_write' Type='CheckBox'
           X='20' Y='124' Width='340' Height='17'
           Property='ALLOW_USER_FILE_WRITE' CheckBoxValue='1'>
           <Text>Allow user to authorize blocked files for &amp;writing</Text>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:1'>ALLOW_USER_FILE_WRITE = "1"</Publish>
-          <Publish Event='SetFeatureLevel' Value='feat_policy_file_write:2'>NOT ALLOW_USER_FILE_WRITE = "1"</Publish>
         </Control>
         <Control Id='Note' Type='Text' X='20' Y='155' Width='340' Height='35'
           Transparent='yes' NoPrefix='yes'>
