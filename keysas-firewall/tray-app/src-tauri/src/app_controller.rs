@@ -73,14 +73,12 @@ impl AppController {
         Ok(ctrl)
     }
 
-    /// Called when a file notification has been received from the driver (reserved for future push-based file updates)
+    /// Called when a file notification has been received from the daemon (Windows push path).
     #[allow(dead_code)]
-    /// It adds the new file to the data store and notifies the view to update itself
     pub fn notify_file_change(&self, update: &FileUpdateMessage) {
         let mut id: [u16; 16] = Default::default();
         id.copy_from_slice(&update.id);
 
-        // Store the new file
         let file = FileAuth {
             device: String::from(&update.device),
             id,
@@ -91,19 +89,32 @@ impl AppController {
         match self.store.write() {
             Ok(mut store) => {
                 if let Err(e) = store.add_file(&file) {
-                    println!("Failed to add file in store: {e}");
+                    log::error!("notify_file_change: add_file failed: {e}");
                     return;
                 }
+                // Also add to dev.blocked_files so the tray menu shows the item.
+                if update.authorization == FileAuthorization::Block {
+                    if let Some(dev) = store.get_device_mut(&update.device) {
+                        if !dev.blocked_files.contains(&update.path) {
+                            dev.blocked_files.push(update.path.clone());
+                        }
+                    }
+                }
             }
-            Err(e) => println!("Failed to get store lock: {e}"),
+            Err(e) => log::error!("notify_file_change: store lock error: {e}"),
         }
 
-        // Notify the GUI to update the view
-        if let Err(e) = self
-            .view
-            .emit("file_update", String::from(&update.device))
-        {
-            println!("Failed to notify view of file changed: {e}");
+        // Notify the webview (file-detail panel).
+        let _ = self.view.emit("file_update", String::from(&update.device));
+
+        // Rebuild the tray menu so the "Autoriser la lecture" item appears immediately.
+        let app = self.view.clone();
+        if let Err(e) = self.view.run_on_main_thread(move || {
+            if let Some(ctrl) = app.try_state::<Arc<AppController>>() {
+                tray_menu::rebuild_tray_menu(&app, &ctrl);
+            }
+        }) {
+            log::error!("notify_file_change: run_on_main_thread failed: {e}");
         }
     }
 

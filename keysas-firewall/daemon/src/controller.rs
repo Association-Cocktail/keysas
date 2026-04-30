@@ -515,12 +515,11 @@ impl ServiceController {
         );
 
         // Evaluate USB key policy
+        // Certified keys always start at AllowRead; the user can explicitly elevate
+        // to AllowRW via the tray button when allow_user_file_write=true.
         let auth = match signature {
             Some(sig) => match self.validate_usb_signature(&device, &sig) {
-                Ok(true) => match self.policy.allow_user_file_write {
-                    true => UsbAuthorization::AllowRW,
-                    false => UsbAuthorization::AllowRead,
-                },
+                Ok(true) => UsbAuthorization::AllowRead,
                 Ok(false) => match self.policy.disable_unsigned_usb {
                     true => UsbAuthorization::AllowAll,
                     false => UsbAuthorization::Block,
@@ -985,6 +984,16 @@ impl ServiceController {
             return Ok(true);
         }
 
+        // GIO/glib write-buffer files: transient, renamed to the final filename after
+        // the atomic write completes.  They are never user-visible content and must
+        // not appear in the blocked-files list.
+        if file_path
+            .file_name()
+            .map_or(false, |n| n.to_string_lossy().starts_with(".goutputstream-"))
+        {
+            return Ok(true);
+        }
+
         // Cache lookup: was this file certified during the pre-scan that ran
         // BEFORE the fanotify mark was placed?
         //
@@ -1386,13 +1395,9 @@ impl ServiceController {
                 }
             };
 
-            // Re-derive auth from the current policy.
-            // The sentinel already attests that the device passed certification.
-            let auth = if self.policy.allow_user_file_write {
-                UsbAuthorization::AllowRW
-            } else {
-                UsbAuthorization::AllowRead
-            };
+            // Sentinel attests prior certification; always restore as AllowRead.
+            // The user can re-elevate to AllowRW via the tray button.
+            let auth = UsbAuthorization::AllowRead;
 
             let device = UsbDevice {
                 device_id: device_id.clone(),
