@@ -145,6 +145,10 @@ pub struct UsbUpdateMessage {
     pub path: String,
     pub name: String,
     pub authorization: UsbAuthorization,
+    /// Whether the daemon policy allows the user to elevate to read-write.
+    /// Tray-app uses this to show or hide the "Autoriser l'écriture" button.
+    #[serde(default)]
+    pub allow_user_file_write: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]

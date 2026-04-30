@@ -146,6 +146,10 @@ pub struct UsbUpdateMessage {
     pub name: String,
     /// Authorization status
     pub authorization: UsbAuthorization,
+    /// Whether the security policy permits the user to elevate a certified key to
+    /// read-write. Tray-app uses this to hide or show the "Autoriser l'écriture" button.
+    #[serde(default)]
+    pub allow_user_file_write: bool,
 }
 
 /// Message for a file notification

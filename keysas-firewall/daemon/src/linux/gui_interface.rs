@@ -155,6 +155,7 @@ impl FirewallService {
             path: String::default(),
             name: String::default(),
             authorization,
+            allow_user_file_write: false,
         };
         if let Err(e) = self.ctrl.lock().unwrap().request_usb_update(&msg) {
             warn!("update_usb_authorization: {e}");

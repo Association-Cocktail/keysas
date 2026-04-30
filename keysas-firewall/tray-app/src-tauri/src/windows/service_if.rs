@@ -124,6 +124,7 @@ impl ServiceInterface for WindowsServiceInterface {
             path: String::new(),
             name: String::new(),
             authorization: UsbAuthorization::AllowRW,
+            allow_user_file_write: false,
         };
         let json = serde_json::to_string(&msg)
             .map_err(|e| anyhow!("Failed to serialize USB override message: {e}"))?;
@@ -138,6 +139,7 @@ impl ServiceInterface for WindowsServiceInterface {
             path: String::new(),
             name: String::new(),
             authorization: UsbAuthorization::AllowRW,
+            allow_user_file_write: false,
         };
         let json = serde_json::to_string(&msg)
             .map_err(|e| anyhow!("Failed to serialize USB write elevation message: {e}"))?;

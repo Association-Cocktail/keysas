@@ -45,8 +45,8 @@ pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tau
                     )
                     .build(app)?,
                 );
-            } else if dev.authorization == 2 {
-                // AllowRead — offer write elevation
+            } else if dev.authorization == 2 && dev.allow_user_file_write {
+                // AllowRead + policy permits write elevation
                 builder = builder.item(
                     &MenuItemBuilder::with_id(
                         format!("allow_write:{}", dev.id),

@@ -120,6 +120,7 @@ impl AppController {
                 path: u.path,
                 authorization: u.authorization.as_u8(),
                 blocked_files: Vec::new(),
+                allow_user_file_write: u.allow_user_file_write,
             })
             .collect();
 
@@ -153,6 +154,7 @@ impl AppController {
                     existing.name.clone_from(&update.name);
                     existing.path.clone_from(&update.path);
                     existing.authorization = update.authorization.as_u8();
+                    existing.allow_user_file_write = update.allow_user_file_write;
                 } else {
                     store.add_device(&UsbDevice {
                         id: update.device.clone(),
@@ -160,6 +162,7 @@ impl AppController {
                         path: update.path.clone(),
                         authorization: update.authorization.as_u8(),
                         blocked_files: Vec::new(),
+                        allow_user_file_write: update.allow_user_file_write,
                     });
                 }
             }

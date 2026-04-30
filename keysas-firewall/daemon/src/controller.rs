@@ -479,6 +479,7 @@ impl ServiceController {
                 path: String::default(),
                 name: device.get_name(),
                 authorization: UsbAuthorization::Block,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
             let _ = self.gui.send_usb_update(&update);
             return Ok(false);
@@ -547,6 +548,7 @@ impl ServiceController {
                 path: String::default(),
                 name: device.get_name(),
                 authorization: auth,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("authorize_usb: GUI notification failed: {e}");
@@ -754,6 +756,7 @@ impl ServiceController {
                     .unwrap_or_default(),
                 name: p.device.get_name(),
                 authorization: p.auth,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("update_usb: GUI notification failed: {e}");
@@ -876,6 +879,7 @@ impl ServiceController {
                 path: String::default(),
                 name,
                 authorization: UsbAuthorization::Block,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("remove_usb_by_drive: GUI notification failed: {e}");
@@ -910,6 +914,7 @@ impl ServiceController {
                 path: String::default(),
                 name,
                 authorization: UsbAuthorization::Block,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("remove_usb_by_drive: GUI notification failed: {e}");
@@ -1298,9 +1303,10 @@ impl ServiceController {
 
     /// Return the list of USB devices currently tracked as a flat tuple list.
     ///
-    /// Each tuple is `(device_id, mount_point, name, auth_u8)`.
+    /// Each tuple is `(device_id, mount_point, name, auth_u8, allow_user_file_write)`.
     /// Used by the D-Bus `get_usb_list` method for tray-app polling.
-    pub fn list_usb_devices(&self) -> Vec<(String, String, String, u8)> {
+    pub fn list_usb_devices(&self) -> Vec<(String, String, String, u8, bool)> {
+        let allow_write = self.policy.allow_user_file_write;
         let mut result = Vec::new();
         for (_, usb) in self.unmounted_usb.iter() {
             result.push((
@@ -1308,6 +1314,7 @@ impl ServiceController {
                 String::new(),
                 usb.device.get_name(),
                 usb.auth.as_u8(),
+                allow_write,
             ));
         }
         for (_, usb) in self.mounted_usb.iter() {
@@ -1320,6 +1327,7 @@ impl ServiceController {
                     .unwrap_or_default(),
                 usb.device.get_name(),
                 usb.auth.as_u8(),
+                allow_write,
             ));
         }
         result
@@ -1433,6 +1441,7 @@ impl ServiceController {
                 path: String::default(),
                 name: usb.device.get_name(),
                 authorization: usb.auth,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
 
             let _ = self.gui.send_usb_update(&update);
@@ -1445,6 +1454,7 @@ impl ServiceController {
                 path: String::default(),
                 name: usb.device.get_name(),
                 authorization: usb.auth,
+                allow_user_file_write: self.policy.allow_user_file_write,
             };
 
             let _ = self.gui.send_usb_update(&update);

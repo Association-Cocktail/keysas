@@ -44,6 +44,8 @@ pub struct UsbDevice {
     pub authorization: u8,
     /// Files that were blocked (not pre-certified) and are awaiting user authorization.
     pub blocked_files: Vec<String>,
+    /// Whether the daemon policy allows elevating this device to read-write.
+    pub allow_user_file_write: bool,
 }
 
 #[derive(Debug, Clone)]

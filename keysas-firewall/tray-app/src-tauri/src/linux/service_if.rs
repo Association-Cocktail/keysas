@@ -69,11 +69,11 @@ impl ServiceInterface for LinuxServiceInterface {
                 Ok(conn) => match Firewall1ProxyBlocking::new(&conn) {
                     Ok(proxy) => match proxy.get_usb_list() {
                         Ok(json) => {
-                            match serde_json::from_str::<Vec<(String, String, String, u8)>>(&json) {
+                            match serde_json::from_str::<Vec<(String, String, String, u8, bool)>>(&json) {
                                 Ok(entries) => {
                                     let updates: Vec<UsbUpdateMessage> = entries
                                         .into_iter()
-                                        .map(|(device, path, name, auth_u8)| UsbUpdateMessage {
+                                        .map(|(device, path, name, auth_u8, allow_write)| UsbUpdateMessage {
                                             code: crate::service_if::GuiMessageCode::UsbUpdateMessage,
                                             device,
                                             path,
@@ -85,6 +85,7 @@ impl ServiceInterface for LinuxServiceInterface {
                                                 3 => UsbAuthorization::AllowRW,
                                                 _ => UsbAuthorization::AllowAll,
                                             },
+                                            allow_user_file_write: allow_write,
                                         })
                                         .collect();
 
