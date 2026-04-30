@@ -98,6 +98,10 @@ use ed25519_dalek::Signature as SignatureDalek;
 use log::*;
 use oqs::sig::{Algorithm, Sig};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
 use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
@@ -1345,6 +1349,19 @@ impl ServiceController {
             .map(|(id, _)| id.clone())
     }
 
+    #[cfg(target_os = "windows")]
+    fn windows_file_id_for_path(path: &Path) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        for unit in path.as_os_str().encode_wide() {
+            hasher.update(unit.to_le_bytes());
+        }
+
+        let digest = hasher.finalize();
+        let mut file_id = [0u8; 32];
+        file_id.copy_from_slice(&digest);
+        file_id
+    }
+
     /// Return the list of blocked (non-certified) file paths for `device_id`.
     /// Used by the D-Bus `get_blocked_files` method so the tray-app can show
     /// per-file authorization buttons.
@@ -1379,6 +1396,17 @@ impl ServiceController {
             list.retain(|p| p != &file_path);
         }
         self.validated_files.insert(file_path);
+        #[cfg(target_os = "windows")]
+        {
+            let file_policy = FilePolicy {
+                file: FilteredFile {
+                    path: Some(OsString::from(path)),
+                    id: Self::windows_file_id_for_path(Path::new(path)),
+                },
+                auth: FileAuthorization::AllowRead,
+            };
+            self.file_filter.update_file_auth(&file_policy)?;
+        }
         info!(
             "authorize_blocked_file: authorized {:?} on {:?}",
             path, device_id
