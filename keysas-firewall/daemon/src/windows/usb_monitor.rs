@@ -498,12 +498,13 @@ impl UsbMonitor for WindowsUsbMonitor {
         let stop_flag = self.stop_flag.clone();
 
         thread::spawn(move || -> Result<(), anyhow::Error> {
-            // Snapshot drives present at daemon start — do not inspect pre-existing drives.
-            let mut known_drives = get_removable_drives();
-            log::info!(
-                "USB monitor started. Pre-existing removable drives (skipped): {:?}",
-                known_drives
-            );
+            // Start with an empty set so drives already present at daemon start
+            // are treated as new and go through the full authorize/eject pipeline.
+            // A short delay lets Windows finish attaching minifilter instances to
+            // volumes that were mounted before the daemon started.
+            thread::sleep(Duration::from_millis(500));
+            let mut known_drives: HashSet<char> = HashSet::new();
+            log::info!("USB monitor started. All removable drives will be inspected.");
 
             loop {
                 if stop_flag.load(Ordering::Relaxed) {
