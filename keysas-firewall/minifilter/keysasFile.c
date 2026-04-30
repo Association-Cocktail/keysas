@@ -53,6 +53,7 @@ Return Value:
 --*/
 {
 	PKEYSAS_FILE_CTX fileContext;
+	KIRQL oldIrql;
 
 	PAGED_CODE();
 	KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfFileContextCleanup: Entered\n"));
@@ -60,6 +61,15 @@ Return Value:
 	switch (ContextType) {
 	case FLT_FILE_CONTEXT:
 		fileContext = (PKEYSAS_FILE_CTX)Context;
+
+		// Remove from the global list before freeing any fields.
+		// The entry is non-NULL only when it was actually inserted (see FindFileContext).
+		if (fileContext->FileCtxList.Flink != NULL) {
+			KeAcquireSpinLock(&KeysasData.FileCtxListLock, &oldIrql);
+			RemoveEntryList(&fileContext->FileCtxList);
+			KeReleaseSpinLock(&KeysasData.FileCtxListLock, oldIrql);
+		}
+
 		if (NULL != fileContext->FileID) {
 			ExFreePoolWithTag(fileContext->FileID, KEYSAS_MEMORY_TAG);
 		}
@@ -161,14 +171,12 @@ Return Value:
 		}
 		ExInitializeResourceLite(fileContext->Resource);
 		fileContext->FileID = NULL;
+		// FileCtxList.Flink/Blink remain NULL (RtlZeroMemory above).
+		// They are set only after FltSetFileContext succeeds, so KfFileContextCleanup
+		// can safely check Flink != NULL to decide whether to call RemoveEntryList.
 
-		// Initialize and place the context in the list
-		ExInterlockedInsertHeadList(
-			&KeysasData.FileCtxListHead,
-			&fileContext->FileCtxList,
-			&KeysasData.FileCtxListLock);
-
-		// Attach the context to the file
+		// Attach the context to the file BEFORE inserting into the global list.
+		// If FltSetFileContext fails, we release the context without any list surgery.
 		status = FltSetFileContext(
 			Data->Iopb->TargetInstance,
 			Data->Iopb->TargetFileObject,
@@ -192,7 +200,11 @@ Return Value:
 			status = STATUS_SUCCESS;
 		}
 		else {
-			// Successful creation of a new file context
+			// Successful creation of a new file context — now safe to insert into list.
+			ExInterlockedInsertHeadList(
+				&KeysasData.FileCtxListHead,
+				&fileContext->FileCtxList,
+				&KeysasData.FileCtxListLock);
 			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!FindFileContext: Created a new file context\n"));
 			*ContextCreated = TRUE;
 		}
