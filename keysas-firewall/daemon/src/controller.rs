@@ -386,27 +386,31 @@ impl ServiceController {
     ///
     /// * `update` - Contains the device ID and new authorization status
     pub fn request_usb_update(&mut self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
-        // Enforce write policy: reject AllowRW if the admin disabled it.
-        if matches!(
-            update.authorization,
-            UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
-        ) && !self.policy.allow_user_file_write
-        {
-            return Err(anyhow!(
-                "request_usb_update: elevation to {:?} refused — allow_user_file_write=false",
-                update.authorization
-            ));
-        }
-
         let device_key = OsString::from(&update.device);
 
-        if let Some(policy) = self.mounted_usb.get(&device_key) {
-            // Device is already mounted — just update the file-filter authorization.
+        if self.mounted_usb.contains_key(&device_key) {
+            // Device is already mounted — enforce write policy only for elevation.
+            if matches!(
+                update.authorization,
+                UsbAuthorization::AllowRW | UsbAuthorization::AllowAll
+            ) && !self.policy.allow_user_file_write
+            {
+                return Err(anyhow!(
+                    "request_usb_update: elevation to {:?} refused — allow_user_file_write=false",
+                    update.authorization
+                ));
+            }
+            // Clone device before any mutable borrow.
+            let device_clone = self.mounted_usb.get(&device_key).unwrap().device.clone();
             let new_policy = UsbDevicePolicy {
-                device: policy.device.clone(),
+                device: device_clone,
                 auth: update.authorization,
             };
             self.file_filter.update_usb_auth(&new_policy)?;
+            // Persist new auth in-memory so the next tray poll reflects it.
+            if let Some(p) = self.mounted_usb.get_mut(&device_key) {
+                p.auth = update.authorization;
+            }
         } else if self.unmounted_usb.contains_key(&device_key)
             && matches!(
                 update.authorization,

@@ -118,9 +118,16 @@ impl FileAuthorization {
     }
 }
 
+fn default_file_msg_code() -> GuiMessageCode {
+    GuiMessageCode::FileUpdateMessage
+}
+
 /// Message for a file status notification
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileUpdateMessage {
+    /// Discriminator required by the daemon's deserializer.
+    #[serde(default = "default_file_msg_code")]
+    pub code: GuiMessageCode,
     pub device: String,
     pub id: [u16; 16],
     pub path: String,

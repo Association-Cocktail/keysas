@@ -77,8 +77,14 @@ impl GuiInterface for WindowsGuiInterface {
                             serde_json::from_slice::<FileUpdateMessage>(msg.as_bytes())
                         {
                             {
-                                let controller = ctrl_hdl.lock().unwrap();
-                                if let Err(e) = controller.request_file_update(&update) {
+                                let mut controller = ctrl_hdl.lock().unwrap();
+                                // AllowRead = user authorizing a blocked (non-certified) file.
+                                // Add to validated_files so the next open succeeds.
+                                if update.authorization == FileAuthorization::AllowRead {
+                                    if let Err(e) = controller.authorize_blocked_file(&update.device, &update.path) {
+                                        error!("Failed to authorize blocked file: {e}");
+                                    }
+                                } else if let Err(e) = controller.request_file_update(&update) {
                                     error!("Failed to handle file update request: {e}");
                                 }
                             }

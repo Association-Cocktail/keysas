@@ -257,6 +257,7 @@ impl AppController {
         file_id.copy_from_slice(id);
 
         if let Err(e) = self.comm.send_file_update(&FileUpdateMessage {
+            code: crate::service_if::GuiMessageCode::FileUpdateMessage,
             device: device.to_string(),
             id: file_id,
             path: path.to_string(),

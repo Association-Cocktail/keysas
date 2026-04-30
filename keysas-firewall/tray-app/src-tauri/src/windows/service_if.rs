@@ -27,7 +27,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::app_controller::AppController;
 use crate::service_if::{
-    FileUpdateMessage, GuiMessageCode, ServiceInterface,
+    FileAuthorization, FileUpdateMessage, GuiMessageCode, ServiceInterface,
     UsbAuthorization, UsbFileListRequest, UsbUpdateMessage,
 };
 
@@ -151,7 +151,17 @@ impl ServiceInterface for WindowsServiceInterface {
         Ok(Vec::new())
     }
 
-    fn authorize_blocked_file(&self, _device_id: &str, _path: &str) -> Result<(), anyhow::Error> {
-        Ok(())
+    fn authorize_blocked_file(&self, device_id: &str, path: &str) -> Result<(), anyhow::Error> {
+        let msg = FileUpdateMessage {
+            code: GuiMessageCode::FileUpdateMessage,
+            device: device_id.to_string(),
+            id: [0u16; 16],
+            path: path.to_string(),
+            authorization: FileAuthorization::AllowRead,
+        };
+        let json = serde_json::to_string(&msg)
+            .map_err(|e| anyhow!("Failed to serialize authorize file message: {e}"))?;
+        libmailslot::write_mailslot(TRAY_PIPE, &json)
+            .map_err(|e| anyhow!("Failed to send authorize file message to daemon: {e}"))
     }
 }
