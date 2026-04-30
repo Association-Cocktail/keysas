@@ -253,9 +253,34 @@ Return value
 			return STATUS_UNSUCCESSFUL;
 		}
 
+		// The volume name payload must be UTF-16 aligned and null-terminated within bounds.
+		ULONG payloadBytes = InputBufferSize - 2;
+		if ((payloadBytes % sizeof(WCHAR)) != 0) {
+			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasPortNotify: USB_AUTH payload not WCHAR-aligned\n"));
+			return STATUS_UNSUCCESSFUL;
+		}
+
+		PCWSTR volNamePtr = (PCWSTR)(&inputBuffer[2]);
+		ULONG maxWchars = payloadBytes / sizeof(WCHAR);
+		ULONG volNameLen = 0;
+		while (volNameLen < maxWchars && volNamePtr[volNameLen] != L'\0') {
+			volNameLen++;
+		}
+		if (volNameLen >= maxWchars) {
+			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasPortNotify: USB_AUTH volume name not null-terminated\n"));
+			return STATUS_UNSUCCESSFUL;
+		}
+		// Reject excessively long volume names (NT device paths are at most ~256 chars).
+		if (volNameLen > 256) {
+			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasPortNotify: USB_AUTH volume name too long\n"));
+			return STATUS_UNSUCCESSFUL;
+		}
+
 		KEYSAS_AUTHORIZATION auth = (KEYSAS_AUTHORIZATION)inputBuffer[1];
 		UNICODE_STRING targetVolName;
-		RtlInitUnicodeString(&targetVolName, (PCWSTR)(&inputBuffer[2]));
+		targetVolName.Length = (USHORT)(volNameLen * sizeof(WCHAR));
+		targetVolName.MaximumLength = targetVolName.Length + (USHORT)sizeof(WCHAR);
+		targetVolName.Buffer = (PWCH)volNamePtr;
 
 		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
 			"Keysas!KeysasPortNotify: USB_AUTH for volume %wZ auth=%d\n", &targetVolName, auth));

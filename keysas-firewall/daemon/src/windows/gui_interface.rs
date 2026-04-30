@@ -26,7 +26,8 @@ use log::*;
 use rust_i18n::t;
 use std::sync::{Arc, Mutex, RwLock};
 
-use windows::core::PCSTR;
+use std::iter::once;
+use windows::core::PCWSTR;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::controller::{FileAuthorization, ServiceController, UsbAuthorization};
@@ -112,15 +113,15 @@ impl GuiInterface for WindowsGuiInterface {
                     Ok(None) => {
                         // Client disconnected; ConnectNamedPipe in the next call
                         // will block — no sleep needed with PIPE_WAIT.
-                        let must_stop = stop.read().unwrap();
-                        if !*must_stop {
+                        let is_running = stop.read().unwrap();
+                        if !*is_running {
                             return;
                         }
                     }
                     Err(e) => {
                         error!("read_mailslot error: {e}");
-                        let must_stop = stop.read().unwrap();
-                        if !*must_stop {
+                        let is_running = stop.read().unwrap();
+                        if !*is_running {
                             return;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -186,7 +187,7 @@ impl GuiInterface for WindowsGuiInterface {
             }
         };
 
-        display_auth_request(PCSTR::from_raw(auth_request.as_ptr()))
+        display_auth_request(&auth_request)
     }
 
     /// Send a request to the user to authorize a usb key
@@ -210,7 +211,7 @@ impl GuiInterface for WindowsGuiInterface {
             }
         };
 
-        display_auth_request(PCSTR::from_raw(auth_request.as_ptr()))
+        display_auth_request(&auth_request)
     }
 
     /// Stop listening for user notifications and free the interface
@@ -221,12 +222,14 @@ impl GuiInterface for WindowsGuiInterface {
     }
 }
 
-fn display_auth_request(request: PCSTR) -> Result<bool, anyhow::Error> {
+fn display_auth_request(request: &str) -> Result<bool, anyhow::Error> {
+    let text: Vec<u16> = request.encode_utf16().chain(once(0)).collect();
+    let title: Vec<u16> = t!("keysas_title").encode_utf16().chain(once(0)).collect();
     match unsafe {
-        MessageBoxA(
+        MessageBoxW(
             None,
-            request,
-            PCSTR::from_raw(t!("keysas_title").as_ptr()),
+            PCWSTR(text.as_ptr()),
+            PCWSTR(title.as_ptr()),
             MB_YESNO | MB_ICONWARNING | MB_SYSTEMMODAL,
         )
     } {

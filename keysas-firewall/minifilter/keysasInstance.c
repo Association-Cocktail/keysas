@@ -178,14 +178,14 @@ Return Value:
 
 	PAGED_CODE();
 
-	// Set default authorization to true
-	*Authorization = AUTH_ALLOW_ALL;
+	// Block by default: only allow if the daemon explicitly grants access.
+	*Authorization = AUTH_BLOCK;
 
 	KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Entered\n"));
 
 	if (NULL == KeysasData.ClientPort) {
-		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Invalid client port\n"));
-		return status;
+		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: No client port, blocking volume\n"));
+		return STATUS_SUCCESS;
 	}
 
 	if (InstanceName->Length > (KEYSAS_REQUEST_BUFFER_SIZE - 1)) {
