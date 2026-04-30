@@ -93,14 +93,16 @@ impl FirewallService {
     /// Ask the daemon to emit UsbUpdateMessage / FileUpdateMessage for all
     /// currently registered devices and files.
     fn request_objects_list(&self) -> zbus::fdo::Result<()> {
-        if let Err(e) = self.ctrl.lock().unwrap().send_usb_file_list() {
+        let mut ctrl = self.ctrl.lock().unwrap();
+        if let Err(e) = ctrl.send_usb_file_list() {
             warn!("request_objects_list: {e}");
         }
         Ok(())
     }
 
     /// Return the current USB device list as a JSON array of
-    /// `[device_id, mount_point, name, auth_u8]` tuples.
+    /// `[device_id, mount_point, name, auth_u8, allow_write, allow_read, allow_usb]`
+    /// tuples.
     ///
     /// The tray-app calls this periodically to sync its state.
     fn get_usb_list(&self) -> zbus::fdo::Result<String> {
@@ -156,6 +158,9 @@ impl FirewallService {
             name: String::default(),
             authorization,
             allow_user_file_write: false,
+            allow_user_file_read: false,
+            allow_user_usb_authorization: false,
+            blocked_files: Vec::new(),
         };
         if let Err(e) = self.ctrl.lock().unwrap().request_usb_update(&msg) {
             warn!("update_usb_authorization: {e}");

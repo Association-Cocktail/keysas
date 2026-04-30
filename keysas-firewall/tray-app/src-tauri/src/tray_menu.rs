@@ -10,14 +10,17 @@
 
 use std::sync::Arc;
 
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::AppHandle;
-use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, Menu};
 
 use crate::app_controller::AppController;
 use crate::filter_store::UsbDevice;
 
 /// Build a fresh `Menu` from a slice of USB devices.
-pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tauri::Wry>, anyhow::Error> {
+pub fn build_usb_menu(
+    app: &AppHandle,
+    devices: &[UsbDevice],
+) -> Result<Menu<tauri::Wry>, anyhow::Error> {
     let mut builder = MenuBuilder::new(app);
 
     if devices.is_empty() {
@@ -33,17 +36,12 @@ pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tau
             } else {
                 format!("✓  {}", dev.name)
             };
-            builder = builder.item(
-                &MenuItemBuilder::with_id(format!("device:{}", dev.id), label)
-                    .build(app)?,
-            );
-            if dev.authorization <= 1 {
+            builder = builder
+                .item(&MenuItemBuilder::with_id(format!("device:{}", dev.id), label).build(app)?);
+            if dev.authorization <= 1 && dev.allow_user_usb_authorization {
                 builder = builder.item(
-                    &MenuItemBuilder::with_id(
-                        format!("authorize:{}", dev.id),
-                        "    Autoriser",
-                    )
-                    .build(app)?,
+                    &MenuItemBuilder::with_id(format!("authorize:{}", dev.id), "    Autoriser")
+                        .build(app)?,
                 );
             } else if dev.authorization == 2 && dev.allow_user_file_write {
                 // AllowRead + policy permits write elevation
@@ -69,13 +67,15 @@ pub fn build_usb_menu(app: &AppHandle, devices: &[UsbDevice]) -> Result<Menu<tau
                         .enabled(false)
                         .build(app)?,
                 );
-                builder = builder.item(
-                    &MenuItemBuilder::with_id(
-                        format!("authorize_file:{}:{}", dev.id, idx),
-                        "      Autoriser la lecture",
-                    )
-                    .build(app)?,
-                );
+                if dev.allow_user_file_read {
+                    builder = builder.item(
+                        &MenuItemBuilder::with_id(
+                            format!("authorize_file:{}:{}", dev.id, idx),
+                            "      Autoriser la lecture",
+                        )
+                        .build(app)?,
+                    );
+                }
             }
         }
     }

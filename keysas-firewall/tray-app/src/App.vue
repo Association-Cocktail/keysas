@@ -62,7 +62,11 @@ declare interface UsbDevice {
   id: string,
   name: string,
   path: string,
-  authorization: number
+  authorization: number,
+  blocked_files: string[],
+  allow_user_file_write: boolean,
+  allow_user_file_read: boolean,
+  allow_user_usb_authorization: boolean
 }
 
 declare interface File {
@@ -115,12 +119,7 @@ export default {
       this.showUsbDetails = true;
     },
     async toggleFileAuth(file: File, new_mode: AuthorizationMode) {
-      let auth = 0;
-      if (new_mode == AuthorizationMode.AllowRead) {
-        auth = 1;
-      } else if (new_mode == AuthorizationMode.AllowRW) {
-        auth = 2;
-      }
+      const auth = new_mode as number;
       invoke('toggle_file_auth', {device: file.device, id: file.id, path: file.path, newAuth: auth})
         .then(() => {
           file.authorization = new_mode;

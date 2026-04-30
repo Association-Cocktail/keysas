@@ -22,9 +22,7 @@ use anyhow::anyhow;
 use std::sync::Arc;
 
 use crate::app_controller::AppController;
-use crate::service_if::{
-    FileUpdateMessage, ServiceInterface, UsbAuthorization, UsbUpdateMessage,
-};
+use crate::service_if::{FileUpdateMessage, ServiceInterface, UsbAuthorization, UsbUpdateMessage};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D-Bus proxy — fr.asso_cocktail.keysas.Firewall1 (system bus, blocking)
@@ -69,11 +67,14 @@ impl ServiceInterface for LinuxServiceInterface {
                 Ok(conn) => match Firewall1ProxyBlocking::new(&conn) {
                     Ok(proxy) => match proxy.get_usb_list() {
                         Ok(json) => {
-                            match serde_json::from_str::<Vec<(String, String, String, u8, bool)>>(&json) {
+                            match serde_json::from_str::<
+                                Vec<(String, String, String, u8, bool, bool, bool)>,
+                            >(&json)
+                            {
                                 Ok(entries) => {
                                     let updates: Vec<UsbUpdateMessage> = entries
                                         .into_iter()
-                                        .map(|(device, path, name, auth_u8, allow_write)| UsbUpdateMessage {
+                                        .map(|(device, path, name, auth_u8, allow_write, allow_read, allow_usb)| UsbUpdateMessage {
                                             code: crate::service_if::GuiMessageCode::UsbUpdateMessage,
                                             device,
                                             path,
@@ -86,15 +87,16 @@ impl ServiceInterface for LinuxServiceInterface {
                                                 _ => UsbAuthorization::AllowAll,
                                             },
                                             allow_user_file_write: allow_write,
+                                            allow_user_file_read: allow_read,
+                                            allow_user_usb_authorization: allow_usb,
+                                            blocked_files: Vec::new(),
                                         })
                                         .collect();
 
                                     // Fetch blocked files for each device and
                                     // store them before rebuilding the tray.
-                                    let device_ids: Vec<String> = updates
-                                        .iter()
-                                        .map(|u| u.device.clone())
-                                        .collect();
+                                    let device_ids: Vec<String> =
+                                        updates.iter().map(|u| u.device.clone()).collect();
                                     ctrl_hdl.set_usb_list(updates);
                                     for device_id in &device_ids {
                                         match proxy.get_blocked_files(device_id) {
@@ -102,16 +104,11 @@ impl ServiceInterface for LinuxServiceInterface {
                                                 if let Ok(files) =
                                                     serde_json::from_str::<Vec<String>>(&json)
                                                 {
-                                                    ctrl_hdl.set_blocked_files(
-                                                        device_id,
-                                                        files,
-                                                    );
+                                                    ctrl_hdl.set_blocked_files(device_id, files);
                                                 }
                                             }
                                             Err(e) => {
-                                                log::warn!(
-                                                    "get_blocked_files({device_id}): {e}"
-                                                );
+                                                log::warn!("get_blocked_files({device_id}): {e}");
                                             }
                                         }
                                     }

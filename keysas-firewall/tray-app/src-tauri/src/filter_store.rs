@@ -46,6 +46,10 @@ pub struct UsbDevice {
     pub blocked_files: Vec<String>,
     /// Whether the daemon policy allows elevating this device to read-write.
     pub allow_user_file_write: bool,
+    /// Whether the daemon policy allows manually reading blocked files.
+    pub allow_user_file_read: bool,
+    /// Whether the daemon policy allows manually opening non-certified USB devices.
+    pub allow_user_usb_authorization: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -119,11 +123,7 @@ impl FilterStore {
         Ok(())
     }
 
-    pub fn remove_file(
-        &mut self,
-        device_id: &str,
-        file_path: &str,
-    ) -> Result<(), anyhow::Error> {
+    pub fn remove_file(&mut self, device_id: &str, file_path: &str) -> Result<(), anyhow::Error> {
         self.files
             .retain(|f| !(f.device.eq(device_id) && f.path.eq(file_path)));
         Ok(())

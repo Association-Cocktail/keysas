@@ -81,7 +81,9 @@ impl GuiInterface for WindowsGuiInterface {
                                 // AllowRead = user authorizing a blocked (non-certified) file.
                                 // Add to validated_files so the next open succeeds.
                                 if update.authorization == FileAuthorization::AllowRead {
-                                    if let Err(e) = controller.authorize_blocked_file(&update.device, &update.path) {
+                                    if let Err(e) = controller
+                                        .authorize_blocked_file(&update.device, &update.path)
+                                    {
                                         error!("Failed to authorize blocked file: {e}");
                                     }
                                 } else if let Err(e) = controller.request_file_update(&update) {
@@ -92,8 +94,7 @@ impl GuiInterface for WindowsGuiInterface {
                             serde_json::from_slice::<UsbUpdateMessage>(msg.as_bytes())
                         {
                             {
-                                if let Err(e) =
-                                    ctrl_hdl.lock().unwrap().request_usb_update(&update)
+                                if let Err(e) = ctrl_hdl.lock().unwrap().request_usb_update(&update)
                                 {
                                     error!("Failed to handle usb update request: {e}");
                                 }
@@ -101,7 +102,7 @@ impl GuiInterface for WindowsGuiInterface {
                         } else if let Ok(_req) =
                             serde_json::from_slice::<UsbFileListRequest>(msg.as_bytes())
                         {
-                            let controller = ctrl_hdl.lock().unwrap();
+                            let mut controller = ctrl_hdl.lock().unwrap();
                             if let Err(e) = controller.send_usb_file_list() {
                                 error!("Failed to send usb and file listt: {e}");
                             }

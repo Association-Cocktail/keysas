@@ -27,8 +27,8 @@ use std::sync::{Arc, RwLock};
 
 use crate::app_controller::AppController;
 use crate::service_if::{
-    FileAuthorization, FileUpdateMessage, GuiMessageCode, ServiceInterface,
-    UsbAuthorization, UsbFileListRequest, UsbUpdateMessage,
+    FileAuthorization, FileUpdateMessage, GuiMessageCode, ServiceInterface, UsbAuthorization,
+    UsbFileListRequest, UsbUpdateMessage,
 };
 
 /// Handle to the service interface client and server
@@ -51,6 +51,14 @@ impl WindowsServiceInterface {
         Ok(WindowsServiceInterface {
             server: RwLock::new(server).into(),
         })
+    }
+}
+
+fn request_usb_file_list() {
+    if let Ok(req) = serde_json::to_string(&UsbFileListRequest::new()) {
+        if let Err(e) = libmailslot::write_mailslot(TRAY_PIPE, &req) {
+            log::warn!("Windows tray: failed to send UsbFileListRequest: {e}");
+        }
     }
 }
 
@@ -97,11 +105,12 @@ impl ServiceInterface for WindowsServiceInterface {
         });
         // Request the current device list from the daemon so that USB keys
         // already connected before the tray-app started are shown immediately.
-        if let Ok(req) = serde_json::to_string(&UsbFileListRequest::new()) {
-            if let Err(e) = libmailslot::write_mailslot(TRAY_PIPE, &req) {
-                log::warn!("Windows tray: failed to send UsbFileListRequest: {e}");
-            }
-        }
+        request_usb_file_list();
+
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            request_usb_file_list();
+        });
 
         Ok(())
     }
@@ -125,6 +134,9 @@ impl ServiceInterface for WindowsServiceInterface {
             name: String::new(),
             authorization: UsbAuthorization::AllowRW,
             allow_user_file_write: false,
+            allow_user_file_read: false,
+            allow_user_usb_authorization: false,
+            blocked_files: Vec::new(),
         };
         let json = serde_json::to_string(&msg)
             .map_err(|e| anyhow!("Failed to serialize USB override message: {e}"))?;
@@ -140,6 +152,9 @@ impl ServiceInterface for WindowsServiceInterface {
             name: String::new(),
             authorization: UsbAuthorization::AllowRW,
             allow_user_file_write: false,
+            allow_user_file_read: false,
+            allow_user_usb_authorization: false,
+            blocked_files: Vec::new(),
         };
         let json = serde_json::to_string(&msg)
             .map_err(|e| anyhow!("Failed to serialize USB write elevation message: {e}"))?;

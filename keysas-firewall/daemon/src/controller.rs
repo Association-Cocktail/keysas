@@ -328,7 +328,14 @@ impl ServiceController {
         let (certs, cert_error) = match load_certificates(config) {
             Ok((_st_ca_pub, usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq)) => {
                 log::info!("ServiceController: certificates loaded and valid");
-                (Some(CertBundle { usb_ca_pub, st_ca_cert_cl, st_ca_cert_pq }), None)
+                (
+                    Some(CertBundle {
+                        usb_ca_pub,
+                        st_ca_cert_cl,
+                        st_ca_cert_pq,
+                    }),
+                    None,
+                )
             }
             Err(e) => {
                 let reason = format!("{e:#}");
@@ -375,6 +382,43 @@ impl ServiceController {
         Ok(ctrl)
     }
 
+    /// On Windows the security switches live in HKLM and may be changed by the
+    /// installer or an administrator while the service is already running.
+    /// Refresh before policy-sensitive decisions so registry values set to 1 are
+    /// honored without requiring a service restart.
+    #[cfg(target_os = "windows")]
+    fn refresh_policy_from_registry(&mut self) {
+        match load_security_policy(&Config::default()) {
+            Ok(policy) => {
+                if self.policy.disable_unsigned_usb != policy.disable_unsigned_usb
+                    || self.policy.allow_user_usb_authorization
+                        != policy.allow_user_usb_authorization
+                    || self.policy.allow_user_file_read != policy.allow_user_file_read
+                    || self.policy.allow_user_file_write != policy.allow_user_file_write
+                {
+                    info!("Security policy refreshed from registry: {:?}", policy);
+                }
+                self.policy = policy;
+            }
+            Err(e) => warn!("refresh_policy_from_registry: {e}"),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn refresh_policy_from_registry(&mut self) {}
+
+    fn blocked_files_for_device(&self, device_id: &OsString) -> Vec<String> {
+        self.blocked_files
+            .get(device_id)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Called by the GUI to update a USB key policy in the firewall.
     ///
     /// Two cases:
@@ -386,6 +430,7 @@ impl ServiceController {
     ///
     /// * `update` - Contains the device ID and new authorization status
     pub fn request_usb_update(&mut self, update: &UsbUpdateMessage) -> Result<(), anyhow::Error> {
+        self.refresh_policy_from_registry();
         let device_key = OsString::from(&update.device);
 
         if self.mounted_usb.contains_key(&device_key) {
@@ -410,6 +455,27 @@ impl ServiceController {
             // Persist new auth in-memory so the next tray poll reflects it.
             if let Some(p) = self.mounted_usb.get_mut(&device_key) {
                 p.auth = update.authorization;
+            }
+            if let Some(p) = self.mounted_usb.get(&device_key) {
+                let update = UsbUpdateMessage {
+                    code: GuiMessageCode::UsbUpdateMessage,
+                    device: device_key.to_string_lossy().into_owned(),
+                    path: p
+                        .device
+                        .mnt_point
+                        .as_ref()
+                        .map(|m| m.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    name: p.device.get_name(),
+                    authorization: p.auth,
+                    allow_user_file_write: self.policy.allow_user_file_write,
+                    allow_user_file_read: self.policy.allow_user_file_read,
+                    allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                    blocked_files: self.blocked_files_for_device(&device_key),
+                };
+                if let Err(e) = self.gui.send_usb_update(&update) {
+                    warn!("request_usb_update: GUI notification failed: {e}");
+                }
             }
         } else if self.unmounted_usb.contains_key(&device_key)
             && matches!(
@@ -439,10 +505,17 @@ impl ServiceController {
     ///
     /// * `update` - Contains the file path and new authorization status
     pub fn request_file_update(&self, update: &FileUpdateMessage) -> Result<(), anyhow::Error> {
+        let mut file_id = [0u8; 32];
+        for (idx, word) in update.id.iter().enumerate() {
+            let bytes = word.to_le_bytes();
+            file_id[idx * 2] = bytes[0];
+            file_id[idx * 2 + 1] = bytes[1];
+        }
+
         let file_policy = FilePolicy {
             file: FilteredFile {
                 path: Some(OsString::from(&update.path)),
-                id: [0u8; 32],
+                id: file_id,
             },
             auth: update.authorization,
         };
@@ -460,6 +533,7 @@ impl ServiceController {
         device: &UsbDevice,
         signature: Option<&str>,
     ) -> Result<bool, anyhow::Error> {
+        self.refresh_policy_from_registry();
         info!("Received USB device request: {:?}", device);
 
         // Fail closed: if certificates are not available (absent, expired,
@@ -484,6 +558,9 @@ impl ServiceController {
                 name: device.get_name(),
                 authorization: UsbAuthorization::Block,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&device.device_id),
             };
             let _ = self.gui.send_usb_update(&update);
             return Ok(false);
@@ -552,6 +629,9 @@ impl ServiceController {
                 name: device.get_name(),
                 authorization: auth,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&device.device_id),
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("authorize_usb: GUI notification failed: {e}");
@@ -578,6 +658,7 @@ impl ServiceController {
     ///     allows user overrides; `update_usb()` is called directly to move the
     ///     device to `mounted_usb` and update the minifilter authorization.
     pub fn override_blocked_usb(&mut self, device_id: &str) -> Result<(), anyhow::Error> {
+        self.refresh_policy_from_registry();
         if self.certs.is_none() {
             return Err(anyhow!(
                 "USB override refused: certificates are not available or have expired"
@@ -760,6 +841,9 @@ impl ServiceController {
                 name: p.device.get_name(),
                 authorization: p.auth,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&device.device_id),
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("update_usb: GUI notification failed: {e}");
@@ -883,6 +967,9 @@ impl ServiceController {
                 name,
                 authorization: UsbAuthorization::Block,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&id),
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("remove_usb_by_drive: GUI notification failed: {e}");
@@ -918,6 +1005,9 @@ impl ServiceController {
                 name,
                 authorization: UsbAuthorization::Block,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: Vec::new(),
             };
             if let Err(e) = self.gui.send_usb_update(&update) {
                 warn!("remove_usb_by_drive: GUI notification failed: {e}");
@@ -942,8 +1032,9 @@ impl ServiceController {
     pub fn authorize_file(
         &mut self,
         file: &FilteredFile,
-        _write: bool,
+        write: bool,
     ) -> Result<bool, anyhow::Error> {
+        self.refresh_policy_from_registry();
         let file_path = match &file.path {
             Some(p) => {
                 let mut pb = PathBuf::new();
@@ -991,10 +1082,9 @@ impl ServiceController {
         // GIO/glib write-buffer files: transient, renamed to the final filename after
         // the atomic write completes.  They are never user-visible content and must
         // not appear in the blocked-files list.
-        if file_path
-            .file_name()
-            .map_or(false, |n| n.to_string_lossy().starts_with(".goutputstream-"))
-        {
+        if file_path.file_name().map_or(false, |n| {
+            n.to_string_lossy().starts_with(".goutputstream-")
+        }) {
             return Ok(true);
         }
 
@@ -1007,6 +1097,18 @@ impl ServiceController {
         // process those events while it is already blocked handling this one →
         // deadlock.  The pre-scan is the only safe validation path.
         if self.validated_files.contains(&file_path) {
+            return Ok(true);
+        }
+
+        // On Windows, USER_ALLOW_FILE is used for opens that intend to write on
+        // a USB volume already elevated from the tray.  When the registry policy
+        // allows user file writes, grant this file context AUTH_ALLOW_ALL so the
+        // following IRP_MJ_WRITE is not rejected by the minifilter.
+        if self.certs.is_some() && write && self.policy.allow_user_file_write {
+            info!(
+                "authorize_file: allowing write-capable access to {:?} by policy",
+                file_path
+            );
             return Ok(true);
         }
 
@@ -1267,6 +1369,10 @@ impl ServiceController {
         device_id: &str,
         path: &str,
     ) -> Result<(), anyhow::Error> {
+        self.refresh_policy_from_registry();
+        if !self.policy.allow_user_file_read {
+            return Err(anyhow!("File read override is disabled by policy"));
+        }
         let key = OsString::from(device_id);
         let file_path = PathBuf::from(path);
         if let Some(list) = self.blocked_files.get_mut(&key) {
@@ -1316,10 +1422,14 @@ impl ServiceController {
 
     /// Return the list of USB devices currently tracked as a flat tuple list.
     ///
-    /// Each tuple is `(device_id, mount_point, name, auth_u8, allow_user_file_write)`.
+    /// Each tuple is `(device_id, mount_point, name, auth_u8,
+    /// allow_user_file_write, allow_user_file_read,
+    /// allow_user_usb_authorization)`.
     /// Used by the D-Bus `get_usb_list` method for tray-app polling.
-    pub fn list_usb_devices(&self) -> Vec<(String, String, String, u8, bool)> {
+    pub fn list_usb_devices(&self) -> Vec<(String, String, String, u8, bool, bool, bool)> {
         let allow_write = self.policy.allow_user_file_write;
+        let allow_read = self.policy.allow_user_file_read;
+        let allow_usb = self.policy.allow_user_usb_authorization;
         let mut result = Vec::new();
         for (_, usb) in self.unmounted_usb.iter() {
             result.push((
@@ -1328,6 +1438,8 @@ impl ServiceController {
                 usb.device.get_name(),
                 usb.auth.as_u8(),
                 allow_write,
+                allow_read,
+                allow_usb,
             ));
         }
         for (_, usb) in self.mounted_usb.iter() {
@@ -1341,6 +1453,8 @@ impl ServiceController {
                 usb.device.get_name(),
                 usb.auth.as_u8(),
                 allow_write,
+                allow_read,
+                allow_usb,
             ));
         }
         result
@@ -1442,7 +1556,9 @@ impl ServiceController {
     /// # Return value
     ///
     /// * error if needed
-    pub fn send_usb_file_list(&self) -> Result<(), anyhow::Error> {
+    pub fn send_usb_file_list(&mut self) -> Result<(), anyhow::Error> {
+        self.refresh_policy_from_registry();
+
         for (_, usb) in self.unmounted_usb.iter() {
             let update = UsbUpdateMessage {
                 code: GuiMessageCode::UsbUpdateMessage,
@@ -1451,6 +1567,9 @@ impl ServiceController {
                 name: usb.device.get_name(),
                 authorization: usb.auth,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&usb.device.device_id),
             };
 
             let _ = self.gui.send_usb_update(&update);
@@ -1460,10 +1579,18 @@ impl ServiceController {
             let update = UsbUpdateMessage {
                 code: GuiMessageCode::UsbUpdateMessage,
                 device: String::from(usb.device.device_id.to_string_lossy()),
-                path: String::default(),
+                path: usb
+                    .device
+                    .mnt_point
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
                 name: usb.device.get_name(),
                 authorization: usb.auth,
                 allow_user_file_write: self.policy.allow_user_file_write,
+                allow_user_file_read: self.policy.allow_user_file_read,
+                allow_user_usb_authorization: self.policy.allow_user_usb_authorization,
+                blocked_files: self.blocked_files_for_device(&usb.device.device_id),
             };
 
             let _ = self.gui.send_usb_update(&update);

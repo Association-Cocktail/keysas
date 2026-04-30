@@ -150,6 +150,15 @@ pub struct UsbUpdateMessage {
     /// read-write. Tray-app uses this to hide or show the "Autoriser l'écriture" button.
     #[serde(default)]
     pub allow_user_file_write: bool,
+    /// Whether users may manually allow blocked files without a valid report.
+    #[serde(default)]
+    pub allow_user_file_read: bool,
+    /// Whether users may manually allow non-certified USB devices.
+    #[serde(default)]
+    pub allow_user_usb_authorization: bool,
+    /// Files currently blocked for this device and awaiting user authorization.
+    #[serde(default)]
+    pub blocked_files: Vec<String>,
 }
 
 /// Message for a file notification

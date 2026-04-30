@@ -255,23 +255,27 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                             &request.content[16..16 + end],
                         )));
 
-                        let certified = {
+                        let allowed = {
                             let mut ctrl = ctrl_hdl.lock().unwrap();
-                            ctrl.authorize_file(&file, true).unwrap_or(false)
+                            ctrl.authorize_file(&file, request.operation == USER_ALLOW_FILE)
+                                .unwrap_or(false)
                         };
-                        // USER_ALLOW_FILE means the minifilter instance is AUTH_ALLOW_WARNING
-                        // (AllowRW volume).  KfPreWriteHandler only allows writes when the
-                        // file context is AUTH_ALLOW_ALL (5).  Return AUTH_ALLOW_ALL for
-                        // certified files on AllowRW volumes; AUTH_ALLOW_READ (3) for
-                        // certified files on AllowRead volumes (SCAN_FILE).
-                        let auth_kernel: u8 = if certified {
-                            if request.operation == USER_ALLOW_FILE { 5 } else { 3 }
+                        // USER_ALLOW_FILE means the minifilter saw a write-capable open
+                        // on an AUTH_ALLOW_WARNING (AllowRW) volume. KfPreWriteHandler
+                        // only allows writes when the file context is AUTH_ALLOW_ALL (5).
+                        // Normal read opens keep AUTH_ALLOW_READ (3).
+                        let auth_kernel: u8 = if allowed {
+                            if request.operation == USER_ALLOW_FILE {
+                                5
+                            } else {
+                                3
+                            }
                         } else {
                             2 // AUTH_BLOCK
                         };
                         println!(
-                            "SCAN_FILE/USER_ALLOW_FILE op={} certified={} kernel={}",
-                            request.operation, certified, auth_kernel
+                            "SCAN_FILE/USER_ALLOW_FILE op={} allowed={} kernel={}",
+                            request.operation, allowed, auth_kernel
                         );
                         auth_kernel
                     }

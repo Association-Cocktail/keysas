@@ -38,6 +38,7 @@ check_tray_deps() {
 
     # npm / node
     command -v npm >/dev/null 2>&1 || missing_tools+=("npm (nodejs >= 18)")
+    command -v fakeroot >/dev/null 2>&1 || missing_tools+=("fakeroot")
 
     # Bibliothèques système via pkg-config
     pkg-config --exists webkit2gtk-4.1               2>/dev/null || missing_pkgs+=("libwebkit2gtk-4.1-dev")
@@ -96,7 +97,7 @@ if ${BUILD_TRAY}; then
     echo "==> [5/5] Génération du paquet .deb (tray-app)..."
     (
         cd "${TRAY_DIR}"
-        npm run tauri build -- --bundles deb
+        fakeroot ./node_modules/.bin/tauri build --bundles deb
     )
 
     TRAY_DEB=$(find "${TRAY_DIR}/src-tauri/target/release/bundle/deb" -name "*.deb" | sort | tail -1)

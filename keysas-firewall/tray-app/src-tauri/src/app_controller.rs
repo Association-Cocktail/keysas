@@ -23,8 +23,10 @@
 #![warn(unused_imports)]
 
 use crate::filter_store::{FileAuth, FilterStore, UsbDevice};
-use crate::service_if::{FileUpdateMessage, FileAuthorization, ServiceInterface,
-    ServiceInterfaceBuilder, UsbUpdateMessage};
+use crate::service_if::{
+    FileAuthorization, FileUpdateMessage, ServiceInterface, ServiceInterfaceBuilder,
+    UsbUpdateMessage,
+};
 use crate::tray_menu;
 
 use anyhow::anyhow;
@@ -95,6 +97,7 @@ impl AppController {
                 // Also add to dev.blocked_files so the tray menu shows the item.
                 if update.authorization == FileAuthorization::Block {
                     if let Some(dev) = store.get_device_mut(&update.device) {
+                        dev.allow_user_file_read = true;
                         if !dev.blocked_files.contains(&update.path) {
                             dev.blocked_files.push(update.path.clone());
                         }
@@ -130,8 +133,10 @@ impl AppController {
                 name: u.name,
                 path: u.path,
                 authorization: u.authorization.as_u8(),
-                blocked_files: Vec::new(),
+                blocked_files: u.blocked_files,
                 allow_user_file_write: u.allow_user_file_write,
+                allow_user_file_read: u.allow_user_file_read,
+                allow_user_usb_authorization: u.allow_user_usb_authorization,
             })
             .collect();
 
@@ -166,14 +171,19 @@ impl AppController {
                     existing.path.clone_from(&update.path);
                     existing.authorization = update.authorization.as_u8();
                     existing.allow_user_file_write = update.allow_user_file_write;
+                    existing.allow_user_file_read = update.allow_user_file_read;
+                    existing.allow_user_usb_authorization = update.allow_user_usb_authorization;
+                    existing.blocked_files.clone_from(&update.blocked_files);
                 } else {
                     store.add_device(&UsbDevice {
                         id: update.device.clone(),
                         name: update.name.clone(),
                         path: update.path.clone(),
                         authorization: update.authorization.as_u8(),
-                        blocked_files: Vec::new(),
+                        blocked_files: update.blocked_files.clone(),
                         allow_user_file_write: update.allow_user_file_write,
+                        allow_user_file_read: update.allow_user_file_read,
+                        allow_user_usb_authorization: update.allow_user_usb_authorization,
                     });
                 }
             }
@@ -218,11 +228,7 @@ impl AppController {
 
     /// Ask the daemon to authorize a previously blocked file, then remove it
     /// from the local store so the tray menu refreshes.
-    pub fn authorize_blocked_file(
-        &self,
-        device_id: &str,
-        path: &str,
-    ) -> Result<(), anyhow::Error> {
+    pub fn authorize_blocked_file(&self, device_id: &str, path: &str) -> Result<(), anyhow::Error> {
         self.comm.authorize_blocked_file(device_id, path)?;
         // Remove from local store immediately so the tray menu item disappears.
         match self.store.write() {

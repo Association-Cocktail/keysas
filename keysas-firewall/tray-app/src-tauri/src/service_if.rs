@@ -7,9 +7,9 @@
 
 //! Generic interface to the Keysas daemon/Windows service. It must be specialized
 //!  for Linux and Windows
-//! 
+//!
 //! Communications between the daemon and the tray app are:
-//! 
+//!
 //! - Notification of Usb device or File authorization update
 //!
 //!  ```text
@@ -22,7 +22,7 @@
 //!             │ ─────────────────────────► │
 //!             │                            │
 //! ```
-//! 
+//!
 //! - Request by the user to update the authorization status for a Usb device or a File
 //!
 //! ```text
@@ -35,7 +35,7 @@
 //!             │ ─────────────────────────► │
 //!             │                            │
 //! ```
-//! 
+//!
 //! Both type of communications are done with UpdateMessage
 
 #![warn(unused_extern_crates)]
@@ -53,9 +53,9 @@
 #![warn(deprecated)]
 #![warn(unused_imports)]
 
+use cfg_if::cfg_if;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use cfg_if::cfg_if;
 
 use crate::app_controller::AppController;
 
@@ -113,7 +113,7 @@ impl FileAuthorization {
             1 => FileAuthorization::Block,
             2 => FileAuthorization::AllowRead,
             3 => FileAuthorization::AllowRW,
-            _ => FileAuthorization::Block
+            _ => FileAuthorization::Block,
         }
     }
 }
@@ -156,6 +156,15 @@ pub struct UsbUpdateMessage {
     /// Tray-app uses this to show or hide the "Autoriser l'écriture" button.
     #[serde(default)]
     pub allow_user_file_write: bool,
+    /// Whether the daemon policy allows manually reading blocked files.
+    #[serde(default)]
+    pub allow_user_file_read: bool,
+    /// Whether the daemon policy allows manually opening non-certified USB devices.
+    #[serde(default)]
+    pub allow_user_usb_authorization: bool,
+    /// Files currently blocked for this device and awaiting user authorization.
+    #[serde(default)]
+    pub blocked_files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -165,7 +174,9 @@ pub struct UsbFileListRequest {
 
 impl UsbFileListRequest {
     pub fn new() -> Self {
-        UsbFileListRequest { code: GuiMessageCode::UsbFileListRequest }
+        UsbFileListRequest {
+            code: GuiMessageCode::UsbFileListRequest,
+        }
     }
 }
 
@@ -173,7 +184,9 @@ impl UsbFileListRequest {
 pub struct ServiceInterfaceBuilder {}
 
 impl ServiceInterfaceBuilder {
-    pub fn build(_app: &tauri::AppHandle) -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
+    pub fn build(
+        _app: &tauri::AppHandle,
+    ) -> Result<Box<dyn ServiceInterface + Send + Sync>, anyhow::Error> {
         cfg_if! {
             if #[cfg(target_os = "linux")] {
                 let iface: Box<dyn ServiceInterface + Send + Sync> =

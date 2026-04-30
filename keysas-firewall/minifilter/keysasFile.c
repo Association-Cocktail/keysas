@@ -374,6 +374,7 @@ Return Value:
 	KEYSAS_FILTER_OPERATION operation = SCAN_FILE;
 	PKEYSAS_INSTANCE_CTX instanceContext = NULL;
 	POBJECT_NAME_INFORMATION msFileName = NULL;
+	BOOLEAN writeRequested = FALSE;
 
 	UNREFERENCED_PARAMETER(FltObjects);
 	UNREFERENCED_PARAMETER(CompletionContext);
@@ -480,6 +481,20 @@ Return Value:
 
 			// Set the scan operation depending on the instance status
 			operation = SCAN_FILE;
+			if (Data->Iopb->Parameters.Create.SecurityContext != NULL) {
+				ACCESS_MASK desiredAccess = Data->Iopb->Parameters.Create.SecurityContext->DesiredAccess;
+				writeRequested = FlagOn(
+					desiredAccess,
+					FILE_WRITE_DATA |
+					FILE_APPEND_DATA |
+					FILE_WRITE_EA |
+					FILE_WRITE_ATTRIBUTES |
+					DELETE |
+					WRITE_DAC |
+					WRITE_OWNER |
+					GENERIC_WRITE
+				) ? TRUE : FALSE;
+			}
 			switch (instanceContext->Authorization) {
 			case AUTH_BLOCK:
 				// Set the file to block mode
@@ -488,8 +503,12 @@ Return Value:
 				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Instance blocked, File authorization BLOCK\n"));
 				break;
 			case AUTH_ALLOW_WARNING:
-				// In this case, ask for the user authorization
-				operation = USER_ALLOW_FILE;
+				// The tray elevated this certified volume to write mode.  Keep
+				// read-only opens on the normal scan path, and use USER_ALLOW_FILE
+				// only for opens that can write so userland can return AUTH_ALLOW_ALL.
+				if (writeRequested) {
+					operation = USER_ALLOW_FILE;
+				}
 			case AUTH_ALLOW_READ:
 				// Ask the userspace to scan the file
 				ReleaseResource(instanceContext->Resource);
