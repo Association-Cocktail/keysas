@@ -649,6 +649,12 @@ impl ServiceController {
         self.policy.allow_user_usb_authorization
     }
 
+    /// Return `true` if `device_id` is already tracked (mounted or unmounted).
+    /// Used by the Linux initial USB scan to skip devices recovered via sentinels.
+    pub fn is_device_tracked(&self, device_id: &OsString) -> bool {
+        self.mounted_usb.contains_key(device_id) || self.unmounted_usb.contains_key(device_id)
+    }
+
     /// Walk `mount_point` recursively and validate every regular file using
     /// `validate_file()`.  All files that pass are inserted into
     /// `self.validated_files` so that the fanotify event handler can answer

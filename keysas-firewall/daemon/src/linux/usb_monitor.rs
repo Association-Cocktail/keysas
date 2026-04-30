@@ -36,7 +36,7 @@ use std::{
     thread,
     time::Duration,
 };
-use udev::{Event, MonitorBuilder};
+use udev::{Device, Enumerator, Event, MonitorBuilder};
 
 use crate::controller::{ServiceController, UsbDevice};
 use crate::usb_monitor::UsbMonitor;
@@ -126,15 +126,8 @@ fn parse_udisksctl_output(stdout: &[u8]) -> Option<String> {
     }
 }
 
-/// Extract the information about a USB device and its signature if it exists
-///
-/// # Argument
-///
-/// `event` - the udev event associated to the USB device connection
-fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow::Error> {
-    // Extract Usb device metadata
-    let device = event.device();
-
+/// Extract the information about a USB device and its signature from a `udev::Device`.
+fn extract_device_info(device: Device) -> Result<(UsbDevice, Option<String>), anyhow::Error> {
     let devnode = device
         .devnode()
         .ok_or_else(|| anyhow!("Devnode not found"))?;
@@ -153,7 +146,6 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         .ok_or_else(|| anyhow!("Serial number not found"))?;
 
     // Walk up the sysfs tree to the parent USB device node.
-    // Its `authorized` attribute is used to deauthorize uncertified devices.
     let usb_syspath = device
         .parent_with_subsystem_devtype(OsStr::new("usb"), OsStr::new("usb_device"))
         .ok()
@@ -162,7 +154,7 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
 
     let usb_device = UsbDevice {
         device_id: devnode.as_os_str().to_os_string(),
-        mnt_point: None, // Partition not mounted yet
+        mnt_point: None,
         vendor: vendor.to_os_string(),
         model: model.to_os_string(),
         revision: revision.to_os_string(),
@@ -170,8 +162,7 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         usb_syspath,
     };
 
-    // The signature is written by keysas-admin at byte offset 512 on the RAW
-    // disk (e.g. /dev/sdb), not on the partition node (e.g. /dev/sdb1).
+    // Signature is at byte offset 512 on the RAW disk (e.g. /dev/sdb).
     // Strip the trailing partition digit to obtain the raw device path.
     let raw_device: std::path::PathBuf = {
         let s = devnode.to_string_lossy();
@@ -187,15 +178,12 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
         raw_device,
         devnode
     );
-    // Try to extract a signature
     let mut f = File::open(&raw_device)?;
-    // First get the signature size
     let mut size_buf = [0u8; 4];
     f.seek(SeekFrom::Start(512))?;
     f.read_exact(&mut size_buf)?;
     let sig_size = u32::from_be_bytes(size_buf);
     log::info!("Signature size read at offset 512: {} bytes", sig_size);
-    // Size must not be greater than 7684 bytes LBA-MBR (8196-512)
     let signature = match sig_size <= 7684 {
         true => {
             let mut sig_buf = vec![0u8; sig_size as usize];
@@ -206,6 +194,146 @@ fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow:
     };
 
     Ok((usb_device, signature))
+}
+
+/// Extract the information about a USB device and its signature if it exists
+///
+/// # Argument
+///
+/// `event` - the udev event associated to the USB device connection
+fn extract_usb_info(event: Event) -> Result<(UsbDevice, Option<String>), anyhow::Error> {
+    extract_device_info(event.device())
+}
+
+/// Scan already-present USB partitions at daemon startup.
+///
+/// After a system reboot the udev "add" events for plugged-in devices fired
+/// before the daemon started.  The udev rule set UDISKS_IGNORE=1 so nothing
+/// was auto-mounted, and /run/keysas/certified/ (tmpfs) was cleared.  This
+/// function enumerates those pre-existing partitions and processes them
+/// exactly like a live plug-in event would.
+///
+/// Devices already recovered by `recover_mounted_devices()` (sentinel present,
+/// device mounted) are skipped via `is_device_tracked()`.
+fn scan_existing_usb_partitions(ctrl: &Arc<Mutex<ServiceController>>) {
+    let mut enumerator = match udev::Enumerator::new() {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("scan_existing_usb_partitions: enumerator init failed: {e}");
+            return;
+        }
+    };
+    if enumerator.match_subsystem("block").is_err()
+        || enumerator.match_property("DEVTYPE", "partition").is_err()
+    {
+        log::warn!("scan_existing_usb_partitions: failed to set enumerator filters");
+        return;
+    }
+
+    let devices = match enumerator.scan_devices() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("scan_existing_usb_partitions: scan failed: {e}");
+            return;
+        }
+    };
+
+    for device in devices {
+        // Only process USB-connected partitions (walk parent chain).
+        let is_usb = device
+            .parent_with_subsystem_devtype(OsStr::new("usb"), OsStr::new("usb_device"))
+            .ok()
+            .flatten()
+            .is_some();
+        if !is_usb {
+            continue;
+        }
+
+        let devnode = match device.devnode() {
+            Some(n) => n.as_os_str().to_os_string(),
+            None => continue,
+        };
+
+        // Skip if already tracked by recover_mounted_devices().
+        if ctrl.lock().unwrap().is_device_tracked(&devnode) {
+            log::info!("scan_existing_usb_partitions: {:?} already tracked, skipping", devnode);
+            continue;
+        }
+
+        log::info!("scan_existing_usb_partitions: processing pre-existing partition {:?}", devnode);
+
+        let (mut usb_device, signature) = match extract_device_info(device) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("scan_existing_usb_partitions: info extraction failed for {:?}: {e}", devnode);
+                continue;
+            }
+        };
+
+        let authorized = match ctrl.lock().unwrap().authorize_usb(&usb_device, signature.as_deref()) {
+            Ok(a) => a,
+            Err(e) => {
+                log::warn!("scan_existing_usb_partitions: authorize_usb failed for {:?}: {e}", devnode);
+                if let Some(ref syspath) = usb_device.usb_syspath {
+                    let auth_path = std::path::Path::new(syspath).join("authorized");
+                    let _ = std::fs::write(&auth_path, b"0\n");
+                }
+                continue;
+            }
+        };
+
+        if authorized {
+            let dev_name = std::path::Path::new(&usb_device.device_id)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "usb".to_string());
+
+            let mnt_result = match mount_certified_via_udisks(&usb_device.device_id, &dev_name) {
+                Ok(mnt) => Ok(mnt),
+                Err(e) => {
+                    log::warn!(
+                        "scan_existing_usb_partitions: udisks2 mount failed for {:?}: {e} — falling back",
+                        usb_device.device_id
+                    );
+                    mount_certified_headless(&usb_device.device_id, &dev_name)
+                }
+            };
+
+            match mnt_result {
+                Ok(mnt_point) => {
+                    usb_device.mnt_point = Some(OsString::from(&mnt_point));
+                    log::info!(
+                        "scan_existing_usb_partitions: certified {:?} mounted at {}",
+                        usb_device.device_id, mnt_point
+                    );
+                    if let Err(e) = ctrl.lock().unwrap().update_usb(&usb_device) {
+                        log::warn!("scan_existing_usb_partitions: update_usb failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "scan_existing_usb_partitions: all mount attempts failed for {:?}: {e}",
+                        usb_device.device_id
+                    );
+                }
+            }
+        } else {
+            // Blocked: deauthorize at kernel level.
+            if let Some(ref syspath) = usb_device.usb_syspath {
+                let auth_path = std::path::Path::new(syspath).join("authorized");
+                match std::fs::write(&auth_path, b"0\n") {
+                    Ok(_) => log::info!(
+                        "scan_existing_usb_partitions: {:?} deauthorized via {:?}",
+                        usb_device.device_id, auth_path
+                    ),
+                    Err(e) => log::warn!(
+                        "scan_existing_usb_partitions: deauthorize {:?} failed: {e}",
+                        usb_device.device_id
+                    ),
+                }
+            }
+        }
+    }
 }
 
 /// Mount a certified USB partition via udisks2 so it appears at the standard
@@ -317,6 +445,12 @@ impl UsbMonitor for LinuxUsbMonitor {
                 .match_subsystem("block")?
                 .match_subsystem_devtype("usb", "usb_device")?
                 .listen()?;
+
+            // Process USB partitions already present before this daemon instance
+            // started (e.g. after a reboot that cleared /run/keysas/certified/).
+            // The monitor is listening above so any events that arrive during the
+            // scan are buffered and will be processed in the event loop below.
+            scan_existing_usb_partitions(&ctrl_hdl);
 
             let mut fds = vec![pollfd {
                 fd: monitor.as_raw_fd(),

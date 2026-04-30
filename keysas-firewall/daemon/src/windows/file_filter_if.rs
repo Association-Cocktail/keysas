@@ -255,23 +255,25 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                             &request.content[16..16 + end],
                         )));
 
-                        let result = {
+                        let certified = {
                             let mut ctrl = ctrl_hdl.lock().unwrap();
-                            match ctrl.authorize_file(&file, true) {
-                                Ok(true) => FileAuthorization::AllowRead,
-                                Ok(false) => FileAuthorization::Block,
-                                Err(e) => {
-                                    println!("SCAN_FILE authorize_file error: {e}");
-                                    FileAuthorization::Block
-                                }
-                            }
+                            ctrl.authorize_file(&file, true).unwrap_or(false)
+                        };
+                        // USER_ALLOW_FILE means the minifilter instance is AUTH_ALLOW_WARNING
+                        // (AllowRW volume).  KfPreWriteHandler only allows writes when the
+                        // file context is AUTH_ALLOW_ALL (5).  Return AUTH_ALLOW_ALL for
+                        // certified files on AllowRW volumes; AUTH_ALLOW_READ (3) for
+                        // certified files on AllowRead volumes (SCAN_FILE).
+                        let auth_kernel: u8 = if certified {
+                            if request.operation == USER_ALLOW_FILE { 5 } else { 3 }
+                        } else {
+                            2 // AUTH_BLOCK
                         };
                         println!(
-                            "SCAN_FILE -> {:?} (kernel={})",
-                            result,
-                            result.to_kernel_u8()
+                            "SCAN_FILE/USER_ALLOW_FILE op={} certified={} kernel={}",
+                            request.operation, certified, auth_kernel
                         );
-                        result.to_kernel_u8()
+                        auth_kernel
                     }
 
                     SCAN_USB => {
