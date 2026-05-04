@@ -229,7 +229,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
 
                 unsafe {
                     if FilterGetMessage(handle, &mut request.header, request_size, None).is_err() {
-                        println!("Failed to get message from driver");
+                        log::error!("FilterGetMessage: failed to get message from driver");
                         continue;
                     }
                 }
@@ -273,8 +273,8 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                         } else {
                             2 // AUTH_BLOCK
                         };
-                        println!(
-                            "SCAN_FILE/USER_ALLOW_FILE op={} allowed={} kernel={}",
+                        log::info!(
+                            "SCAN_FILE/USER_ALLOW_FILE op={} allowed={} kernel_auth={}",
                             request.operation, allowed, auth_kernel
                         );
                         auth_kernel
@@ -289,7 +289,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                             .position(|&c| c == 0)
                             .unwrap_or(request.content.len());
                         let nt_vol = String::from_utf16_lossy(&request.content[..end]);
-                        println!("SCAN_USB for NT volume: {nt_vol}");
+                        log::info!("SCAN_USB for NT volume: {nt_vol}");
 
                         // Reverse-resolve NT path → DOS drive letter → lookup auth.
                         let auth = if let Some(mnt_point) = nt_path_to_mnt_point(&nt_vol) {
@@ -297,15 +297,15 @@ impl FileFilterInterface for WindowsFileFilterInterface {
                             ctrl.get_usb_auth_by_mount(&mnt_point)
                                 .unwrap_or(UsbAuthorization::Block)
                         } else {
-                            println!("SCAN_USB: cannot resolve NT path '{nt_vol}' to drive letter");
+                            log::warn!("SCAN_USB: cannot resolve NT path '{nt_vol}' to drive letter");
                             UsbAuthorization::Block
                         };
-                        println!("SCAN_USB -> {:?} (kernel={})", auth, auth.to_kernel_u8());
+                        log::info!("SCAN_USB -> {:?} (kernel_auth={})", auth, auth.to_kernel_u8());
                         auth.to_kernel_u8()
                     }
 
                     op => {
-                        println!("Unknown minifilter operation {op:#x}, blocking");
+                        log::warn!("Unknown minifilter operation {op:#x}, blocking");
                         2u8 // AUTH_BLOCK
                     }
                 };
@@ -321,7 +321,7 @@ impl FileFilterInterface for WindowsFileFilterInterface {
 
                 unsafe {
                     if FilterReplyMessage(handle, &reply.header, reply_size).is_err() {
-                        println!("Failed to send response to driver");
+                        log::error!("FilterReplyMessage: failed to send response to driver");
                         continue;
                     }
                 }

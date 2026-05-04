@@ -503,16 +503,13 @@ Return Value:
 				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Instance blocked, File authorization BLOCK\n"));
 				break;
 			case AUTH_ALLOW_WARNING:
-				// The tray elevated this certified volume to write mode.  Keep
-				// read-only opens on the normal scan path, and use USER_ALLOW_FILE
-				// only for opens that can write so userland can return AUTH_ALLOW_ALL.
+				// The tray elevated this certified volume to write mode.
+				// Write-capable opens use USER_ALLOW_FILE so the daemon can
+				// grant AUTH_ALLOW_ALL; read-only opens go through SCAN_FILE.
+				ReleaseResource(instanceContext->Resource);
 				if (writeRequested) {
 					operation = USER_ALLOW_FILE;
 				}
-			case AUTH_ALLOW_READ:
-				// Ask the userspace to scan the file
-				ReleaseResource(instanceContext->Resource);
-				// Send the file to further analysis in user space
 				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Send request to userspace\n"));
 				(VOID)KeysasScanFileInUserMode(
 					&msFileName->Name,
@@ -522,6 +519,26 @@ Return Value:
 				);
 				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Received authorization status from userspace: %0x\n",
 					fileContext->Authorization));
+				break;
+			case AUTH_ALLOW_READ:
+				// Write-capable opens are denied immediately: allowing the create
+				// but blocking the write IRP would leave an open write-mode handle
+				// that prevents safe USB removal.  Read-only opens go through SCAN_FILE.
+				ReleaseResource(instanceContext->Resource);
+				if (writeRequested) {
+					fileContext->Authorization = AUTH_BLOCK;
+					KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Write open denied on AllowRead volume\n"));
+				} else {
+					KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Send request to userspace\n"));
+					(VOID)KeysasScanFileInUserMode(
+						&msFileName->Name,
+						fileContext->FileID,
+						operation,
+						&fileContext->Authorization
+					);
+					KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfPostCreateHandler: Received authorization status from userspace: %0x\n",
+						fileContext->Authorization));
+				}
 				break;
 			case AUTH_ALLOW_ALL:
 				// Set the file to allow mode
