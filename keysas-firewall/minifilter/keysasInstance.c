@@ -214,6 +214,13 @@ Return Value:
 
 	replyLength = sizeof(*request);
 
+	// 5-second relative timeout (negative = relative, 100-ns units).
+	// Prevents blocking forever when the daemon is busy (e.g. pre_validate_mount
+	// holds the controller mutex), which would keep FsVolumeHandle open in
+	// KfInstanceSetup and prevent the user from safely ejecting the USB.
+	LARGE_INTEGER timeout;
+	timeout.QuadPart = -50000000LL;
+
 	// Send request to userspace
 	status = FltSendMessage(
 		KeysasData.Filter,
@@ -222,7 +229,7 @@ Return Value:
 		sizeof(request->Operation) + InstanceName->Length + sizeof(WCHAR),
 		request,
 		&replyLength,
-		NULL
+		&timeout
 	);
 
 	if (STATUS_SUCCESS == status) {
@@ -231,7 +238,7 @@ Return Value:
 			*Authorization));
 	}
 	else {
-		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Failed to send request to userspace\n"));
+		KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KeysasScanInstanceInUserMode: Failed to send request to userspace, status=0x%08x\n", status));
 	}
 
 end:
@@ -411,9 +418,20 @@ Return Value:
 		);
 
 		if (!NT_SUCCESS(status)) {
-			KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfInstanceSetup: KeysasScanInstanceInUserMode failed with status = %0x8x\n", status));
-			status = STATUS_FLT_DO_NOT_ATTACH;
-			goto end;
+			if (STATUS_TIMEOUT == status) {
+				// Daemon did not respond within the timeout window (busy with
+				// pre_validate_mount or not yet started).  Attach with the
+				// AUTH_BLOCK default so all file access is denied until the
+				// daemon sends MSG_USB_AUTH, rather than leaving the volume
+				// completely unfiltered by returning DO_NOT_ATTACH.
+				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfInstanceSetup: Scan timed out, attaching with AUTH_BLOCK\n"));
+				status = STATUS_SUCCESS;
+			}
+			else {
+				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "Keysas!KfInstanceSetup: KeysasScanInstanceInUserMode failed 0x%08x\n", status));
+				status = STATUS_FLT_DO_NOT_ATTACH;
+				goto end;
+			}
 		}
 
 		ReleaseResource(instanceContext->Resource);
