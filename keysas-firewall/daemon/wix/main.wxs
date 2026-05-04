@@ -55,11 +55,9 @@
       Policy properties — defaults to 0 (most restrictive).
       All-uppercase names are MSI public properties, transmitted automatically
       from the UI (non-elevated) sequence to the elevated Execute sequence.
-      No SecureCustomProperties or SetFeatureLevel is required.
-      The comp_policy_* components each carry a <Condition> that installs them
-      only when the corresponding property equals "1":
-        checked checkbox → DWORD=1 in registry
-        unchecked         → DWORD absent (daemon reads missing value as 0)
+      When a checkbox is ticked, the corresponding property is set to "1" and
+      a deferred CA (CA_Policy_*) writes DWORD=1 to the registry.
+      When unchecked, no CA runs and the value is absent (daemon reads as 0).
     -->
     <Property Id='DISABLE_UNSIGNED_USB'  Value='0'/>
     <Property Id='ALLOW_USER_USB_AUTH'   Value='0'/>
@@ -148,9 +146,8 @@
           <!--
             Certificate paths — always written regardless of policy choices.
             Policy DWORD values (DisableUnsignedUsb, AllowUser*) are written
-            by the four feat_policy_* sub-feature components below, which use
-            the MSI Feature Level mechanism for reliable UI→Execute transmission.
-            When a feature is absent (box unchecked), no DWORD is written and
+            by deferred CustomActions (CA_Policy_*) in InstallExecuteSequence.
+            When a checkbox is unchecked, no DWORD is written and
             the daemon treats the missing value as 0 (most restrictive default).
           -->
           <Component Id='comp_registry' Guid='BFC665F7-039E-4513-902E-5C436657252C' Win64='yes'>
@@ -169,7 +166,7 @@
             <!--
               RemoveRegistryValues runs BEFORE WriteRegistryValues in the MSI sequence.
               These entries erase any stale policy DWORDs left by a previous install or
-              manual reg add before the feat_policy_* components write the fresh values.
+              manual reg add before the CA_Policy_* actions write the fresh values.
               Return is silent if a value does not exist (MSI ignores missing keys here).
             -->
             <RemoveRegistryValue Root='HKLM'
@@ -187,50 +184,13 @@
           </Component>
 
           <!--
-            Policy DWORD components — one per checkbox option.
-            Each component writes the corresponding DWORD value = 1.
-            They are installed only when the user checks the corresponding box
-            (the feature level is raised to 1 by the SetFeatureLevel dialog event).
-            When absent (feature level 2 > INSTALLLEVEL 1), the DWORD is not
-            written; the daemon treats the missing key as 0.
-            On upgrade, an absent feature removes a previously written DWORD,
-            so unchecking a box during reinstall correctly reverts to 0.
-          -->
-          <!--
-            Each comp_policy_* component carries a Condition element.  MSI
-            evaluates the condition in the Execute sequence using the public
-            property value transmitted from the UI sequence.  The component is
-            installed (DWORD=1 written) only when the condition is true.
+            Policy DWORD values are written by deferred CustomActions
+            (CA_Policy_*) scheduled in InstallExecuteSequence below.
+            This avoids the MSI Condition table, which wixl (msitools)
+            does not process correctly at runtime.
             comp_registry's RemoveRegistryValue entries ensure stale DWORDs
-            from a previous install are wiped before the fresh WriteRegistryValues.
+            from a previous install are wiped before the fresh writes.
           -->
-          <Component Id='comp_policy_disable_usb' Guid='A3D7F089-C152-4B6E-8D4F-2E9A73B1C0F5' Win64='yes'>
-            <Condition>DISABLE_UNSIGNED_USB = "1"</Condition>
-            <RegistryValue Root='HKLM'
-              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
-              Name='DisableUnsignedUsb' Type='integer' Value='1' KeyPath='yes'/>
-          </Component>
-
-          <Component Id='comp_policy_usb_auth' Guid='F5C8B2A4-7D91-4E38-A5C3-9B3D0E8F2A5C' Win64='yes'>
-            <Condition>ALLOW_USER_USB_AUTH = "1"</Condition>
-            <RegistryValue Root='HKLM'
-              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
-              Name='AllowUserUsbAuthorization' Type='integer' Value='1' KeyPath='yes'/>
-          </Component>
-
-          <Component Id='comp_policy_file_read' Guid='2BE1F7A3-9C54-4D82-B6E1-3A8D2C9F6B3E' Win64='yes'>
-            <Condition>ALLOW_USER_FILE_READ = "1"</Condition>
-            <RegistryValue Root='HKLM'
-              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
-              Name='AllowUserFileRead' Type='integer' Value='1' KeyPath='yes'/>
-          </Component>
-
-          <Component Id='comp_policy_file_write' Guid='7C4E9F62-A3B5-4D08-9F2E-6B0A3D8C5E1D' Win64='yes'>
-            <Condition>ALLOW_USER_FILE_WRITE = "1"</Condition>
-            <RegistryValue Root='HKLM'
-              Key='SYSTEM\CurrentControlSet\Services\Keysas Service\config'
-              Name='AllowUserFileWrite' Type='integer' Value='1' KeyPath='yes'/>
-          </Component>
 
           <!--
             Minifilter instance registry keys.
@@ -360,16 +320,6 @@
       <ComponentRef Id='comp_minifilter_sys'/>
       <ComponentRef Id='comp_minifilter_reg'/>
 
-      <!--
-        Policy components — always in the Complete feature (Level=1) so MSI
-        processes them in the Execute sequence.  Each component has a Condition
-        element: the component is installed (DWORD written) only when the
-        corresponding public property equals "1".  No SetFeatureLevel needed.
-      -->
-      <ComponentRef Id='comp_policy_disable_usb'/>
-      <ComponentRef Id='comp_policy_usb_auth'/>
-      <ComponentRef Id='comp_policy_file_read'/>
-      <ComponentRef Id='comp_policy_file_write'/>
     </Feature>
 
     <!-- ──────────────────────────────────────────── force-stop before remove -->
@@ -473,6 +423,45 @@
       These are left empty after RemoveRegistryValues removes individual
       values, so we clean them up explicitly here.
     -->
+    <!--
+      Policy DWORD writes: one deferred CA per checkbox option.
+      Each CA runs reg.exe to write DWORD=1 only when the corresponding
+      public property equals "1" (checkbox was ticked).
+      The condition is evaluated in the Execute sequence where the public
+      property value is available — this avoids the MSI Condition table,
+      which wixl (msitools) does not process reliably.
+      On reinstall: comp_registry's RemoveRegistryValue entries delete the
+      old DWORDs first, then only the CAs whose conditions are true write them back.
+      On uninstall: comp_registry removal handles the DeleteRegistryValues.
+    -->
+    <CustomAction Id='CA_Policy_DisableUnsignedUsb'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config" /v DisableUnsignedUsb /t REG_DWORD /d 1 /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_Policy_AllowUserUsbAuth'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config" /v AllowUserUsbAuthorization /t REG_DWORD /d 1 /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_Policy_AllowUserFileRead'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config" /v AllowUserFileRead /t REG_DWORD /d 1 /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
+    <CustomAction Id='CA_Policy_AllowUserFileWrite'
+      Directory='TARGETDIR'
+      ExeCommand='[System64Folder]reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\Keysas Service\config" /v AllowUserFileWrite /t REG_DWORD /d 1 /f'
+      Execute='deferred'
+      Impersonate='no'
+      Return='ignore'/>
+
     <CustomAction Id='CA_DeleteFirewallRegKey'
       Directory='TARGETDIR'
       ExeCommand='[System64Folder]reg.exe delete "HKLM\SOFTWARE\Keysas\Firewall" /f'
@@ -514,6 +503,12 @@
       <Custom Action='CA_DeleteFirewallRegKey' After='DeleteServices'>REMOVE="ALL"</Custom>
       <Custom Action='CA_DeleteKeysasRegKey'   After='DeleteServices'>REMOVE="ALL"</Custom>
       <!-- No additional folder cleanup needed -->
+      <!-- Write policy DWORDs after WriteRegistryValues; only when the
+           corresponding checkbox was ticked (NOT REMOVE = install/reinstall). -->
+      <Custom Action='CA_Policy_DisableUnsignedUsb'  After='WriteRegistryValues'>NOT REMOVE AND DISABLE_UNSIGNED_USB  = "1"</Custom>
+      <Custom Action='CA_Policy_AllowUserUsbAuth'    After='WriteRegistryValues'>NOT REMOVE AND ALLOW_USER_USB_AUTH   = "1"</Custom>
+      <Custom Action='CA_Policy_AllowUserFileRead'   After='WriteRegistryValues'>NOT REMOVE AND ALLOW_USER_FILE_READ  = "1"</Custom>
+      <Custom Action='CA_Policy_AllowUserFileWrite'  After='WriteRegistryValues'>NOT REMOVE AND ALLOW_USER_FILE_WRITE = "1"</Custom>
       <ScheduleReboot After='InstallFinalize'/>
     </InstallExecuteSequence>
 
@@ -588,8 +583,8 @@
         <!--
           Each CheckBox is bound to its public property (CheckBoxValue='1').
           Checking sets the property to "1"; unchecking sets it to "" (empty).
-          No SetFeatureLevel events — the comp_policy_* Component Conditions
-          read the property directly in the elevated Execute sequence.
+          No SetFeatureLevel events — deferred CustomActions (CA_Policy_*)
+          write the DWORDs in the elevated Execute sequence.
         -->
         <Control Id='chk_disable_usb' Type='CheckBox'
           X='20' Y='58' Width='340' Height='17'
