@@ -233,7 +233,11 @@ Return value
 			 scan = next, next = scan->Flink) {
 
 			fileCtx = CONTAINING_RECORD(scan, KEYSAS_FILE_CTX, FileCtxList);
-			if (32 == RtlCompareMemory(fileCtx->FileID, &inputBuffer[1], 32)) {
+			// FileID is NULL for contexts that are still being initialised
+			// (inserted by FindFileContext before KeysasGetFileNameHash runs).
+			// Skip them to avoid a NULL dereference at DISPATCH_LEVEL.
+			if (fileCtx->FileID != NULL &&
+				32 == RtlCompareMemory(fileCtx->FileID, &inputBuffer[1], 32)) {
 				fileCtx->Authorization = (KEYSAS_AUTHORIZATION)inputBuffer[33];
 				KdPrintEx((DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL,
 					"Keysas!KeysasPortNotify: FILE_AUTH updated to %d\n", inputBuffer[33]));
